@@ -4,7 +4,6 @@ import {
   Schedule,
   cancelAll,
   isPermissionGranted,
-  sendNotification,
 } from "@tauri-apps/plugin-notification";
 import {
   useComprasSettings,
@@ -73,12 +72,23 @@ export function useComprasNotifications() {
 
     let id = 1;
 
+    // NOTE: the plugin's `sendNotification` helper uses the Web Notifications
+    // API (`new window.Notification`) which fires *immediately* and ignores the
+    // `schedule` field. To actually program future alarms via Android
+    // AlarmManager we have to invoke the underlying Rust command directly.
+    const scheduleNotification = (options: {
+      id: number;
+      title: string;
+      body: string;
+      schedule: ReturnType<typeof Schedule.interval> | ReturnType<typeof Schedule.at>;
+    }) => invoke("plugin:notification|notify", { options });
+
     for (const slot of SLOT_ORDER) {
       const time = settings.mealTimes[slot];
       if (!time) continue;
       const [h, m] = time.split(":").map(Number);
       if (!Number.isFinite(h) || !Number.isFinite(m)) continue;
-      sendNotification({
+      await scheduleNotification({
         id: id++,
         title: "¿Qué vas a comer?",
         body: `Es la hora de ${SLOT_PHRASE[slot]}. Registralo en la app.`,
@@ -118,7 +128,7 @@ export function useComprasNotifications() {
       const body = suggested
         ? `${name} vence el ${lot.expiresOn}. Podés cocinar ${suggested}.`
         : `${name} vence el ${lot.expiresOn}.`;
-      sendNotification({
+      await scheduleNotification({
         id: id++,
         title: "Algo se va a vencer",
         body,
@@ -173,7 +183,12 @@ export function useComprasNotifications() {
         const granted = await isPermissionGranted();
         if (granted) {
           setNeedsPermission(false);
-          sendNotification({ title: "Notificaciones activadas", body: "Te voy a avisar de vencimientos y horarios de comida." });
+          await invoke("plugin:notification|notify", {
+            options: {
+              title: "Notificaciones activadas",
+              body: "Te voy a avisar de vencimientos y horarios de comida.",
+            },
+          });
           await schedule();
         }
       } catch {

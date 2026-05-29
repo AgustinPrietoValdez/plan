@@ -4,6 +4,31 @@ All notable changes to **Plan** are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] - 2026-05-29
+
+### Fixed
+- **Spam de notificaciones (Android)** — el plugin `@tauri-apps/plugin-notification`
+  v2.3.3 implementa la función JS `sendNotification(...)` con `new
+  window.Notification(...)` del browser, que **ignora el campo `schedule`** y
+  dispara la notificación al instante. Cada vez que el effect del hook
+  `useComprasNotifications` re-corría (sync de realtime, cambio de inventario,
+  etc.), se mostraban 4 + N notificaciones de golpe. Pensábamos que el cambio
+  de `Schedule.at` → `Schedule.interval` lo había arreglado en 0.7.0, pero el
+  problema raíz era otro: la función JS nunca llegaba al plugin Rust.
+- Fix: invocar `invoke("plugin:notification|notify", { options })` directamente,
+  que sí pasa por `Notification.kt` → `AlarmManager.setExact(...)` con el
+  `nextTrigger` calculado del `DateMatch`. Aplicado a las 3 llamadas
+  (horarios de comida, alertas de vencimiento, "Notificaciones activadas").
+
+### Added
+- **Sugerencias anti-desperdicio "Te conviene cocinar"** — feature #1 de Fase C:
+  cuando hay lotes en inventario que vencen dentro de los próximos 5 días,
+  sugiere recetas propias (sin IA, pura lógica) que usen esos ingredientes,
+  rankeadas por cobertura (qué % de la receta se cubre con lo por vencer) y
+  urgencia. Se muestra como banner ámbar arriba del Dashboard Inicio (desktop),
+  como sección al tope del listado de Recetas (mobile), y se incluye en el
+  cuerpo de las notificaciones de vencimiento ("Podés cocinar X").
+
 ## [0.7.1] - 2026-05-28
 
 ### Added

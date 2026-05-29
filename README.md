@@ -16,8 +16,8 @@ Plan es una app que junta en un solo lugar lo que normalmente vive disperso entr
   - **Lista de la compra** que elige automáticamente la combinación de presentaciones con menor desperdicio.
   - **Plan semanal** por pool de comidas.
   - **Inventario por lotes** con vencimientos. Cada compra es un lote; las recetas descuentan FIFO por urgencia.
-  - **Sugerencias anti-desperdicio**: "Te conviene cocinar X" cuando hay lotes por vencer.
-  - **Notificaciones push** en el celu: vencimientos + recordatorios de horarios de comida.
+  - **Sugerencias anti-desperdicio**: "Te conviene cocinar X" cuando hay lotes por vencer, con el ingrediente sugerido también incluido en la notificación de vencimiento.
+  - **Notificaciones push** en el celu: vencimientos + recordatorios de horarios de comida (Android, fix raíz del bug del plugin v2.3.3).
 - **Offline-first** — todo se guarda local instantáneamente, sincroniza en background, funciona sin internet.
 - **Sync en tiempo real** — abrí la app en otra compu o en el celu y los cambios aparecen al instante.
 
@@ -119,7 +119,7 @@ El plugin `@tauri-apps/plugin-notification` v2.3.3 tiene un bug: su `requestPerm
 
 ## Roadmap
 
-Estado actual: **v0.7.1** — Compras Fase A + B completas, sugerencias anti-desperdicio en el dashboard.
+Estado actual: **v0.7.2** — Compras Fase A + B + sugerencias anti-desperdicio. Bug del plugin de notificaciones (spam) arreglado a nivel del invoke al Rust.
 
 Próximos hitos (Fase C, ver [CHANGELOG.md](CHANGELOG.md) para el histórico):
 - [ ] Cotización USD/DKK en vivo (en vez de manual).
