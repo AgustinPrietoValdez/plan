@@ -72,16 +72,32 @@ export function useComprasNotifications() {
 
     let id = 1;
 
-    // NOTE: the plugin's `sendNotification` helper uses the Web Notifications
-    // API (`new window.Notification`) which fires *immediately* and ignores the
-    // `schedule` field. To actually program future alarms via Android
-    // AlarmManager we have to invoke the underlying Rust command directly.
+    // NOTE: two layers of plugin foot-gun to dodge here.
+    // 1) The plugin's `sendNotification` JS helper uses the Web Notifications
+    //    API (`new window.Notification`), which fires immediately and ignores
+    //    the `schedule` field. So we have to invoke the Rust command directly.
+    // 2) `Schedule.interval(...)`/`Schedule.at(...)` return objects with the
+    //    sibling variants set to `undefined` (e.g. `{at, interval: undefined,
+    //    every: undefined}`). Tauri's IPC bridge turns `undefined` into `null`,
+    //    and serde's externally-tagged `Schedule` enum refuses any payload
+    //    where more than one variant key is present (even if nulled). The
+    //    deserializer silently falls back to `schedule: None`, which makes the
+    //    plugin treat the notification as instant — causing the spam. Strip
+    //    nullish keys before invoking.
     const scheduleNotification = (options: {
       id: number;
       title: string;
       body: string;
       schedule: ReturnType<typeof Schedule.interval> | ReturnType<typeof Schedule.at>;
-    }) => invoke("plugin:notification|notify", { options });
+    }) => {
+      const raw = options.schedule as unknown as Record<string, unknown>;
+      const cleanSchedule = Object.fromEntries(
+        Object.entries(raw).filter(([, v]) => v != null),
+      );
+      return invoke("plugin:notification|notify", {
+        options: { ...options, schedule: cleanSchedule },
+      });
+    };
 
     for (const slot of SLOT_ORDER) {
       const time = settings.mealTimes[slot];

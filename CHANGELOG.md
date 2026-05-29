@@ -4,6 +4,23 @@ All notable changes to **Plan** are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.3] - 2026-05-29
+
+### Fixed
+- **Spam de notificaciones (Android) — fix raíz #2**. La 0.7.2 cambió el
+  `sendNotification` JS por `invoke("plugin:notification|notify", ...)`
+  directo, lo cual sí llegaba al plugin Rust. Pero el `Schedule.interval(...)`
+  / `Schedule.at(...)` del JS devuelven `{at, interval, every}` con dos de
+  los campos en `undefined`. El bridge IPC de Tauri convierte esos
+  `undefined` en `null`, y el deserializer de serde para el enum
+  externally-tagged `Schedule` rechaza el payload (porque ve más de una
+  variante "presente"). Resultado: `schedule` quedaba en `None` y el plugin
+  Android lo trataba como **notificación instantánea** — el mismo síntoma
+  spam que en 0.7.0/0.7.1/0.7.2 pero por otra razón.
+- Fix: filtrar las claves nullish del objeto `schedule` antes de invocar
+  (`Object.fromEntries(Object.entries(s).filter(([, v]) => v != null))`).
+  Diagnóstico vía agente de research sobre el plugin Rust.
+
 ## [0.7.2] - 2026-05-29
 
 ### Fixed
