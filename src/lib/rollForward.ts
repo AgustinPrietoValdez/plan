@@ -1,0 +1,129 @@
+import { useEffect, useRef } from "react";
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
+import type { HabitLog, Task } from "../types";
+import { todayYmd } from "./date";
+import { nextOccurrence } from "./recurrence";
+import { repo } from "./repo";
+
+interface RollResult {
+  rolled: number;
+  missedLogged: number;
+}
+
+/** Advance each recurring task whose scheduled day is in the past (and is not
+ *  done) by creating a new instance for the next occurrence on or after today.
+ *  The old (unfinished) instance is frozen in place — its recurrence is cleared
+ *  so it stays visible on its original day as a "not finished" leftover the user
+ *  can still mark done retroactively. For habit tasks, write a missed log entry
+ *  for each expected day that was skipped. */
+export async function rollForwardRecurringTasks(
+  tasks: Task[],
+  habitLogs: HabitLog[],
+  qc: QueryClient,
+): Promise<RollResult> {
+  const today = todayYmd();
+  let rolled = 0;
+  let missedLogged = 0;
+
+  for (const t of tasks) {
+    if (!t.recurrence) continue;
+    if (!t.day) continue;
+    if (t.done) continue;
+    if (t.day >= today) continue;
+
+    const missed: string[] = [t.day];
+    let next: string | null = nextOccurrence(t.recurrence, t.day);
+    let guard = 0;
+    while (next && next < today && guard < 366) {
+      missed.push(next);
+      const further: string | null = nextOccurrence(t.recurrence, next);
+      if (!further || further === next) break;
+      next = further;
+      guard++;
+    }
+    if (!next) continue;
+
+    if (t.isHabit) {
+      const existing = new Set(
+        habitLogs.filter((l) => l.taskId === t.id).map((l) => l.day),
+      );
+      for (const d of missed) {
+        if (existing.has(d)) continue;
+        try {
+          await repo.upsertHabitLog({ taskId: t.id, day: d, done: false });
+          missedLogged++;
+        } catch (e) {
+          console.error("Failed to log missed habit:", e);
+        }
+      }
+    }
+
+    const parentId = t.recurrenceParentId ?? t.id;
+    const rule = t.recurrence;
+
+    try {
+      // Freeze the old instance on its original day. Clearing the rule stops
+      // it from being rolled again and stops it from showing as an "active"
+      // recurring task — it sticks around as an undone leftover the user can
+      // still tick off.
+      await repo.patchTask(t.id, { recurrence: null });
+
+      // Create the fresh instance at the next due day, carrying the rule
+      // forward so the chain keeps advancing.
+      await repo.createTask({
+        title: t.title,
+        projectId: t.projectId,
+        categoryId: t.categoryId,
+        priority: t.priority,
+        duration: t.duration,
+        day: next,
+        due: null,
+        recurring: true,
+        recurrence: rule,
+        recurrenceParentId: parentId,
+        notes: t.notes,
+        subtasks: t.subtasks.map((s) => ({ ...s, done: false })),
+        isHabit: t.isHabit,
+      });
+      rolled++;
+    } catch (e) {
+      console.error("Failed to roll forward task:", e);
+    }
+  }
+
+  if (rolled > 0) qc.invalidateQueries({ queryKey: ["tasks"] });
+  if (missedLogged > 0) qc.invalidateQueries({ queryKey: ["habit_logs"] });
+  return { rolled, missedLogged };
+}
+
+/** React hook: runs roll-forward once per calendar day. Re-checks every minute
+ *  so an app left open across midnight rolls forward when the date changes. */
+export function useRollForwardRecurringTasks(
+  tasks: Task[] | undefined,
+  habitLogs: HabitLog[] | undefined,
+  enabled: boolean,
+): void {
+  const qc = useQueryClient();
+  const lastRolledDay = useRef<string | null>(null);
+  const inFlight = useRef(false);
+
+  useEffect(() => {
+    if (!enabled) return;
+    if (!tasks || !habitLogs) return;
+
+    const maybeRoll = () => {
+      const today = todayYmd();
+      if (lastRolledDay.current === today) return;
+      if (inFlight.current) return;
+      inFlight.current = true;
+      lastRolledDay.current = today;
+      void rollForwardRecurringTasks(tasks, habitLogs, qc).finally(() => {
+        inFlight.current = false;
+      });
+    };
+
+    maybeRoll();
+    const id = window.setInterval(maybeRoll, 60_000);
+    return () => window.clearInterval(id);
+  }, [enabled, tasks, habitLogs, qc]);
+}

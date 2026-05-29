@@ -1,0 +1,27 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capability for the main window",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "opener:default",
+    "notification:default",
+    {
+      "identifier": "sql:allow-load",
+      "allow": [{ "name": "sqlite:calendar.db" }]
+    },
+    {
+      "identifier": "sql:allow-execute",
+      "allow": [{ "name": "sqlite:calendar.db" }]
+    },
+    {
+      "identifier": "sql:allow-select",
+      "allow": [{ "name": "sqlite:calendar.db" }]
+    },
+    {
+      "identifier": "sql:allow-close",
+      "allow": [{ "name": "sqlite:calendar.db" }]
+    }
+  ]
+}

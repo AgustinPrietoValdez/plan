@@ -1,0 +1,39 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Plan",
+  "version": "0.7.1",
+  "identifier": "com.agusp.calendarapp",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Plan",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 980,
+        "minHeight": 640
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "shortDescription": "Drag-and-drop calendar for personal organization",
+    "longDescription": "Plan is a personal task and calendar app — drag tasks between an inbox and a calendar, group by project and category, track recurring tasks, and see how your actual time compares to your estimates."
+  }
+}
