@@ -119,7 +119,7 @@ El plugin `@tauri-apps/plugin-notification` v2.3.3 tiene un bug: su `requestPerm
 
 ## Roadmap
 
-Estado actual: **v0.7.2** — Compras Fase A + B + sugerencias anti-desperdicio. Bug del plugin de notificaciones (spam) arreglado a nivel del invoke al Rust.
+Estado actual: **v0.7.5** — Compras Fase A + B + sugerencias anti-desperdicio. Spam de notificaciones Android arreglado (sweep de las legacy del 0.7.0 que registraban `setRepeating` con interval chiquito). Pendiente: las notificaciones legítimas todavía no se programan en el `AlarmManager` después del sweep — debugging requiere build especial con WebView debugging habilitado.
 
 Próximos hitos (Fase C, ver [CHANGELOG.md](CHANGELOG.md) para el histórico):
 - [ ] Cotización USD/DKK en vivo (en vez de manual).
