@@ -4,6 +4,27 @@ All notable changes to **Plan** are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.5] - 2026-05-29
+
+### Fixed
+- **Las notificaciones legítimas no se programaban después del sweep de 0.7.4**.
+  Verificado con `dumpsys alarm`: tras cancelar las legacy, el AlarmManager
+  quedaba sin alarms pendientes para el app, así que los recordatorios de
+  horario de comida nunca disparaban. Tres fixes defensivos combinados:
+  1. Esperar a que `useComprasSettings` resuelva (`.isSuccess`) antes de
+     decidir si hay que cancelar o schedulear. Sin eso, en el primer render
+     mobile `settings.data` es `undefined`, el hook va al branch
+     "no enabled → cancelAll() → return", y si el user cierra la app antes
+     de que settings sincronice de Supabase, nada se programa nunca.
+  2. Usar `invoke("plugin:notification|is_permission_granted")` directo en
+     lugar del helper JS del plugin, que lee `window.Notification.permission`
+     primero y en Android WebView puede devolver `'denied'` aunque el OS
+     sí concedió el permiso real.
+  3. Cambiar el `for` con `await` secuencial por `Promise.all`. Si Android
+     freezea el proceso al medio (porque el user volvió a la home), los
+     await pendientes pueden no completar todos los slots; en paralelo es
+     más probable que el dispatch al plugin Rust llegue antes.
+
 ## [0.7.4] - 2026-05-29
 
 ### Fixed

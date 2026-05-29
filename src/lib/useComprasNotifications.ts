@@ -1,10 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import {
-  Schedule,
-  cancelAll,
-  isPermissionGranted,
-} from "@tauri-apps/plugin-notification";
+import { Schedule, cancelAll } from "@tauri-apps/plugin-notification";
+
+/** Tauri-side permission check that bypasses the plugin's JS helper.
+ *  The helper reads `window.Notification.permission` first, which in the
+ *  Android WebView can be `'denied'` even when the OS-level POST_NOTIFICATIONS
+ *  permission is granted — making the hook think there's no permission and
+ *  skip scheduling. Going straight to the Rust command returns the real
+ *  Android permission state. */
+async function realIsPermissionGranted(): Promise<boolean> {
+  const v = await invoke<boolean | null>("plugin:notification|is_permission_granted");
+  return v === true;
+}
 import {
   useComprasSettings,
   useIngredients,
@@ -112,17 +119,22 @@ export function useComprasNotifications() {
       });
     };
 
+    // Run all scheduling in parallel — sequentially awaiting each one means a
+    // background freeze (Android suspends the JS engine when the activity goes
+    // off-screen) can interrupt halfway, leaving some slots unprogrammed.
+    const pending: Promise<unknown>[] = [];
+
     for (const slot of SLOT_ORDER) {
       const time = settings.mealTimes[slot];
       if (!time) continue;
       const [h, m] = time.split(":").map(Number);
       if (!Number.isFinite(h) || !Number.isFinite(m)) continue;
-      await scheduleNotification({
+      pending.push(scheduleNotification({
         id: id++,
         title: "¿Qué vas a comer?",
         body: `Es la hora de ${SLOT_PHRASE[slot]}. Registralo en la app.`,
         schedule: Schedule.interval({ hour: h, minute: m, second: 0 }, true),
-      });
+      }));
     }
 
     const nameById = new Map((ingredients ?? []).map((i) => [i.id, i.name]));
@@ -157,16 +169,25 @@ export function useComprasNotifications() {
       const body = suggested
         ? `${name} vence el ${lot.expiresOn}. Podés cocinar ${suggested}.`
         : `${name} vence el ${lot.expiresOn}.`;
-      await scheduleNotification({
+      pending.push(scheduleNotification({
         id: id++,
         title: "Algo se va a vencer",
         body,
         schedule: Schedule.at(warn, false, true),
-      });
+      }));
     }
+
+    await Promise.all(pending);
   }, [settings, inventory, ingredients, recipes, recipeIngredients]);
 
   useEffect(() => {
+    // Wait for the settings query to actually resolve before doing anything.
+    // If we run while `settingsQ.data` is still `undefined` (initial load on
+    // mobile cold-start), we'd hit the `!notificationsEnabled` branch, fire a
+    // `cancelAll()`, return — and if the user closes the app before the
+    // settings finish syncing from Supabase, nothing else ever runs and the
+    // AlarmManager stays empty.
+    if (!settingsQ.isSuccess) return;
     let cancelled = false;
     void (async () => {
       try {
@@ -175,7 +196,7 @@ export function useComprasNotifications() {
           if (!cancelled) setNeedsPermission(false);
           return;
         }
-        const granted = await isPermissionGranted();
+        const granted = await realIsPermissionGranted();
         if (cancelled) return;
         if (granted) {
           setNeedsPermission(false);
@@ -193,7 +214,7 @@ export function useComprasNotifications() {
     // configKey collapses inventory/ingredient array identity churn into a
     // stable string; schedule is re-derived but only used when the key changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [configKey]);
+  }, [configKey, settingsQ.isSuccess]);
 
   /** Call from a user gesture: triggers our MainActivity-side permission
    *  launcher (which works, unlike the plugin's broken one), or opens the
@@ -209,7 +230,7 @@ export function useComprasNotifications() {
     // the next render of the banner stays visible and the user can re-tap.
     setTimeout(async () => {
       try {
-        const granted = await isPermissionGranted();
+        const granted = await realIsPermissionGranted();
         if (granted) {
           setNeedsPermission(false);
           await invoke("plugin:notification|notify", {
