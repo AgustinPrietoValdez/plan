@@ -4,6 +4,21 @@ All notable changes to **Plan** are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.4] - 2026-05-29
+
+### Fixed
+- **Spam de notificaciones (Android) — fix raíz #3 (la real)**. Diagnosticado
+  con `dumpsys alarm`: el celu tenía 4 alarms del `AlarmManager` con
+  `repeatInterval` chico (la de ~5 min causaba el spam) registradas desde
+  la 0.7.0, que usaba `Schedule.at(date, repeating=true)` y eso terminaba
+  en `alarmManager.setRepeating(RTC, date, date - now, pi)`. Como `date ≈ now`,
+  el interval quedaba minúsculo. Esos `PendingIntent`s del sistema persisten
+  cross-reinstall y NO están en el storage interno del plugin, así que
+  `cancelAll()` no los veía. Fix: barrer explícitamente los IDs 1-100 con
+  `invoke("plugin:notification|cancel", { notifications: range })` al inicio
+  de `schedule()`. Quien actualice de <0.7.4 va a tener un primer arranque
+  con `schedule()` que limpia las legacy y queda con un set sano.
+
 ## [0.7.3] - 2026-05-29
 
 ### Fixed

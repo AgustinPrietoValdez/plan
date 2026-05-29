@@ -67,6 +67,19 @@ export function useComprasNotifications() {
   }, [settings, inventory, ingredients, recipes, recipeIngredients]);
 
   const schedule = useCallback(async () => {
+    // 0.7.0 used Schedule.at(date, repeating=true), which registered Android
+    // AlarmManager.setRepeating(...) with the difference between the scheduled
+    // date and "now" as the interval — often a small number, producing
+    // alarms that fire every few minutes. Those PendingIntents persist in the
+    // system AlarmManager across reinstalls and live OUTSIDE the plugin's
+    // internal storage, so cancelAll() can't see them. We sweep the legacy ID
+    // range explicitly so anyone upgrading from <0.7.4 gets a clean slate.
+    const legacyIds = Array.from({ length: 100 }, (_, i) => i + 1);
+    try {
+      await invoke("plugin:notification|cancel", { notifications: legacyIds });
+    } catch {
+      /* ignore — best effort */
+    }
     await cancelAll();
     if (!settings?.notificationsEnabled) return;
 
