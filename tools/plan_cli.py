@@ -107,9 +107,11 @@ def list_tasks(con, project=None, include_done=False):
     return list(con.execute(q, params))
 
 
-def find_task(con, substr, project=None):
+def find_task(con, substr, project=None, on_day=None):
     rows = list_tasks(con, project=project, include_done=True)
     hits = [r for r in rows if substr.lower() in (r["title"] or "").lower()]
+    if on_day:
+        hits = [r for r in hits if r["day"] == on_day]
     if not hits:
         sys.exit(f"Ninguna tarea matchea '{substr}'.")
     if len(hits) > 1:
@@ -258,6 +260,40 @@ def cmd_task(args):
         print(f"    [{i}] {'[x]' if s.get('done') else '[ ]'} {s.get('title','')}")
 
 
+def cmd_delete(args):
+    """Soft-delete (como la app): setea deleted_at + encola outbox. No borra la fila."""
+    con = connect()
+    r = find_task(con, args.substr, project=args.project, on_day=args.on)
+    patch_task(con, r, deleted_at=now_iso())
+    print(f"Tarea '{r['title']}' (dia={r['day']}) -> borrada (soft delete).")
+
+
+def cmd_set(args):
+    """Edita campos sueltos de una tarea: --day YYYY-MM-DD|none, --priority, --notes-add."""
+    con = connect()
+    r = find_task(con, args.substr, project=args.project, on_day=args.on)
+    changes = {}
+    if args.day is not None:
+        if args.day.lower() == "none":
+            changes["day"] = None
+        else:
+            try:
+                datetime.strptime(args.day, "%Y-%m-%d")
+            except ValueError:
+                sys.exit(f"--day debe ser YYYY-MM-DD o 'none' (recibi '{args.day}').")
+            changes["day"] = args.day
+    if args.priority is not None:
+        changes["priority"] = args.priority
+    if args.notes_add is not None:
+        base = (r["notes"] or "").rstrip()
+        changes["notes"] = (base + "\n" if base else "") + args.notes_add
+    if not changes:
+        sys.exit("Nada que cambiar: pasa --day, --priority y/o --notes-add.")
+    patch_task(con, r, **changes)
+    print(f"Tarea '{r['title']}' actualizada: " + ", ".join(
+        f"{k}={changes[k]!r}" for k in changes))
+
+
 def cmd_check(args, value):
     con = connect()
     r = find_task(con, args.substr, project=args.project)
@@ -322,9 +358,20 @@ def main():
     sp = sub.add_parser("complete"); sp.add_argument("substr"); add_project_arg(sp)
     sp = sub.add_parser("reopen"); sp.add_argument("substr"); add_project_arg(sp)
     sp = sub.add_parser("set-subtasks"); sp.add_argument("substr"); sp.add_argument("json"); add_project_arg(sp)
+    sp = sub.add_parser("set"); sp.add_argument("substr")
+    sp.add_argument("--day", default=None, help="YYYY-MM-DD o 'none' (sin fecha)")
+    sp.add_argument("--priority", default=None, choices=["low", "med", "high"])
+    sp.add_argument("--notes-add", default=None, help="agrega una linea a las notas")
+    sp.add_argument("--on", default=None, help="desambiguar por dia actual de la tarea (YYYY-MM-DD)")
+    add_project_arg(sp)
+    sp = sub.add_parser("delete"); sp.add_argument("substr")
+    sp.add_argument("--on", default=None, help="desambiguar por dia actual de la tarea (YYYY-MM-DD)")
+    add_project_arg(sp)
 
     args = p.parse_args()
     if args.cmd == "show": cmd_show(args)
+    elif args.cmd == "set": cmd_set(args)
+    elif args.cmd == "delete": cmd_delete(args)
     elif args.cmd == "task": cmd_task(args)
     elif args.cmd == "check": cmd_check(args, True)
     elif args.cmd == "uncheck": cmd_check(args, False)
