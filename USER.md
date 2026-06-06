@@ -13,7 +13,7 @@ tabla es priorizar y dar el diseño; el codigo lo hace Claude cuando se lo pido.
 | Issue | Problema | Estado | Que me toca a mi |
 |-------|----------|--------|------------------|
 | [#1](https://github.com/AgustinPrietoValdez/plan/issues/1) | Pantalla Automatizaciones: implementar MVP (spec en `AUTOMATIONS_FEATURE_PLAN.md`) | ABIERTO | Aprobar el diseño de la spec y decir "dale" |
-| [#2](https://github.com/AgustinPrietoValdez/plan/issues/2) | `plan_cli.py` vive en cargo_bot_ws y duplica `taskToWire`/outbox a mano | ABIERTO | Decidir: moverlo al repo, o dejarlo y testearlo |
+| [#2](https://github.com/AgustinPrietoValdez/plan/issues/2) | `plan_cli.py` vivia en cargo_bot_ws | CERRADO 2026-06-06 | Nada (movido a `tools/` de este repo; queda el riesgo menor de duplicar `taskToWire`, se testea si pega) |
 
 ## Como marcar un issue como resuelto (asi Claude se entera)
 
@@ -30,22 +30,22 @@ tabla es priorizar y dar el diseño; el codigo lo hace Claude cuando se lo pido.
 
 ## Comandos rapidos (tareas desde la terminal)
 
-CLI multi-proyecto: `C:\Users\agusp\cargo_bot_ws\tools\plan_cli.py`
+CLI multi-proyecto: `C:\Users\agusp\Documentos\Organization_App\calendar-app\tools\plan_cli.py`
 
 ```powershell
 # Board del dia (todos los proyectos, solo titulos)
-python C:\Users\agusp\cargo_bot_ws\tools\plan_cli.py show --today
+python C:\Users\agusp\Documentos\Organization_App\calendar-app\tools\plan_cli.py show --today
 
 # Todas las pendientes / un proyecto puntual
-python C:\Users\agusp\cargo_bot_ws\tools\plan_cli.py show
-python C:\Users\agusp\cargo_bot_ws\tools\plan_cli.py show -p CARGO_BOT
+python C:\Users\agusp\Documentos\Organization_App\calendar-app\tools\plan_cli.py show
+python C:\Users\agusp\Documentos\Organization_App\calendar-app\tools\plan_cli.py show -p CARGO_BOT
 
 # Detalle de una tarea (subtareas + notas)
-python C:\Users\agusp\cargo_bot_ws\tools\plan_cli.py task "tuning"
+python C:\Users\agusp\Documentos\Organization_App\calendar-app\tools\plan_cli.py task "tuning"
 
 # Marcar progreso
-python C:\Users\agusp\cargo_bot_ws\tools\plan_cli.py check "tuning" 0
-python C:\Users\agusp\cargo_bot_ws\tools\plan_cli.py complete "tuning"
+python C:\Users\agusp\Documentos\Organization_App\calendar-app\tools\plan_cli.py check "tuning" 0
+python C:\Users\agusp\Documentos\Organization_App\calendar-app\tools\plan_cli.py complete "tuning"
 ```
 
 Scripts de import/automatizacion (job-search): `C:\Users\agusp\job-search\plan-import\`
@@ -70,7 +70,7 @@ Scripts de import/automatizacion (job-search): `C:\Users\agusp\job-search\plan-i
 |------|------|
 | App (source) | `C:\Users\agusp\Documentos\Organization_App\calendar-app` |
 | DB | `%APPDATA%\com.agusp.calendarapp\calendar.db` |
-| CLI de tareas | `C:\Users\agusp\cargo_bot_ws\tools\plan_cli.py` |
+| CLI de tareas | `C:\Users\agusp\Documentos\Organization_App\calendar-app\tools\plan_cli.py` |
 | Scripts import | `C:\Users\agusp\job-search\plan-import\` |
 | Guia Obsidian | `Documentos\Notas\Guides\Plan_app_guide.md` |
 | Notas de Claude | `AI.md` (junto a este archivo, no va a git) |
