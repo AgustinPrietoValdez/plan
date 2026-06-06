@@ -36,6 +36,7 @@ import { useRealtimeSync } from "./lib/realtime";
 import { useRollForwardRecurringTasks } from "./lib/rollForward";
 import { useSeedDefaultCategories } from "./lib/seedCategories";
 import { useSeedDefaultExpenseCategories } from "./lib/seedExpenseCategories";
+import { useExternalChangesPoller } from "./lib/externalChanges";
 import { useApp } from "./lib/store";
 import { useSyncEngine } from "./lib/sync";
 import type { Task } from "./types";
@@ -78,6 +79,7 @@ function App() {
   const patchTask = usePatchTask();
   const { session } = useSession();
   useSyncEngine(session?.user.id);
+  useExternalChangesPoller(session?.user.id);
   useRealtimeSync(session?.user.id);
   useSeedDefaultCategories(session?.user.id);
   useSeedDefaultExpenseCategories(session?.user.id);

@@ -14,6 +14,7 @@ tabla es priorizar y dar el diseño; el codigo lo hace Claude cuando se lo pido.
 |-------|----------|--------|------------------|
 | [#1](https://github.com/AgustinPrietoValdez/plan/issues/1) | Pantalla Automatizaciones: implementar MVP (spec en `AUTOMATIONS_FEATURE_PLAN.md`) | ABIERTO | Aprobar el diseño de la spec y decir "dale" |
 | [#2](https://github.com/AgustinPrietoValdez/plan/issues/2) | `plan_cli.py` vivia en cargo_bot_ws | CERRADO 2026-06-06 | Nada (movido a `tools/` de este repo; queda el riesgo menor de duplicar `taskToWire`, se testea si pega) |
+| [#3](https://github.com/AgustinPrietoValdez/plan/issues/3) | Escribir desde el CLI sin cerrar la app | IMPLEMENTADO, falta verificar | Rebuild (`npm run tauri dev`), probar `plan_cli.py check` con la app abierta, y si anda cerrar el issue con comentario |
 
 ## Como marcar un issue como resuelto (asi Claude se entera)
 
@@ -53,8 +54,12 @@ Scripts de import/automatizacion (job-search): `C:\Users\agusp\job-search\plan-i
 
 ## Reglas de oro
 
-1. **Cerrar la app antes de cualquier script que ESCRIBA** en la DB (SQLite WAL, un solo
-   escritor). Leer con la app abierta esta OK.
+1. **Ya NO hace falta cerrar la app para escribir desde el CLI** (desde 2026-06-06, issue #3):
+   el CLI espera el lock (`busy_timeout`) y la app detecta cambios externos
+   (`PRAGMA data_version`) y refetchea la UI + drena el outbox sola en ~3s.
+   ⚠️ Vale recien con la app REBUILDEADA (`npm run tauri dev`); con un build viejo,
+   seguir cerrandola. Los scripts de `plan-import/` viejos siguen pidiendo app cerrada
+   hasta que se les agregue busy_timeout.
 2. Los scripts que escriben hacen backup primero y replican el patron outbox (la app
    sincroniza como si lo hubiera tocado yo).
 3. Notas y subtareas en ASCII (sin tildes ni guiones largos).

@@ -14,7 +14,10 @@ La app es offline-first (Tauri + SQLite + Supabase) con patron OUTBOX:
 Este script REPLICA ese patron: cada mutacion bumpea updated_at=now + version+1 y
 encola la fila en `outbox`. Asi la app sincroniza como si lo hubieras tocado vos.
 
-IMPORTANTE: corre esto con la app Plan CERRADA (SQLite WAL: un solo escritor).
+App abierta OK (desde 2026-06-06): el CLI espera el lock (busy_timeout) y la app
+detecta los cambios externos (PRAGMA data_version) -> refetchea UI + drena outbox.
+Requiere la app rebuildeada con src/lib/externalChanges.ts; con una app vieja,
+seguir cerrandola antes de escribir.
 
 DB: %APPDATA%\\com.agusp.calendarapp\\calendar.db
 Proyectos: TODOS por default; filtrar con -p/--project <nombre|substring> (ej -p CARGO_BOT).
@@ -61,6 +64,11 @@ def now_iso() -> str:
 def connect() -> sqlite3.Connection:
     con = sqlite3.connect(str(db_path()))
     con.row_factory = sqlite3.Row
+    # La app puede estar abierta: WAL banca lectores + 1 escritor entre procesos.
+    # Si la app esta commiteando justo ahora, esperar hasta 5s en vez de fallar
+    # con "database is locked". La app detecta nuestros writes via PRAGMA
+    # data_version (src/lib/externalChanges.ts) y refetchea + drena el outbox.
+    con.execute("PRAGMA busy_timeout = 5000")
     return con
 
 
