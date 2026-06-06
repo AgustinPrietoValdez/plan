@@ -39,6 +39,9 @@ src-tauri/gen/apple
 *.deb
 *.AppImage
 
+# Claude internal notes (USER.md is tracked, AI.md is not)
+AI.md
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
