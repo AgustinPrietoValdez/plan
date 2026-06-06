@@ -1,6 +1,6 @@
 [package]
 name = "calendar-app"
-version = "0.7.5"
+version = "0.8.0"
 description = "Plan — drag-and-drop calendar for personal organization"
 authors = ["agusp"]
 edition = "2021"
