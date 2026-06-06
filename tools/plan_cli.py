@@ -40,6 +40,7 @@ import json
 import os
 import sqlite3
 import sys
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -260,6 +261,51 @@ def cmd_task(args):
         print(f"    [{i}] {'[x]' if s.get('done') else '[ ]'} {s.get('title','')}")
 
 
+def cmd_add(args):
+    """Crea una tarea nueva: INSERT + outbox op='insert' (mismo wire que import_tasks.py)."""
+    con = connect()
+    if not args.project:
+        sys.exit("Falta -p/--project (la tarea necesita proyecto; usa el nombre o un substring).")
+    proj = resolve_project(con, args.project)
+    if args.day and args.day.lower() != "none":
+        try:
+            datetime.strptime(args.day, "%Y-%m-%d")
+        except ValueError:
+            sys.exit(f"--day debe ser YYYY-MM-DD o 'none' (recibi '{args.day}').")
+    day = None if (not args.day or args.day.lower() == "none") else args.day
+    ts = now_iso()
+    tid = str(uuid.uuid4())
+    user_id = proj["user_id"]
+    category_id = proj["category_id"]
+    con.execute(
+        """INSERT INTO tasks
+            (id, user_id, title, project_id, category_id, priority, duration,
+             actual_duration, day, due, recurring, recurrence, recurrence_parent_id,
+             notes, subtasks, done, is_habit, completed_at, created_at, updated_at,
+             deleted_at, version)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        [tid, user_id, args.title, proj["id"], category_id, args.priority, args.duration,
+         None, day, None, 0, None, None, args.notes or "", "[]",
+         0, 0, None, ts, ts, None, 1],
+    )
+    wire = {
+        "id": tid, "user_id": user_id, "title": args.title, "project_id": proj["id"],
+        "category_id": category_id, "priority": args.priority, "duration": args.duration,
+        "actual_duration": None, "day": day, "due": None, "recurring": False,
+        "recurrence": None, "recurrence_parent_id": None, "notes": args.notes or "",
+        "subtasks": [], "done": False, "is_habit": False,
+        "completed_at": None, "created_at": ts, "updated_at": ts,
+        "deleted_at": None, "version": 1,
+    }
+    con.execute(
+        "INSERT INTO outbox (user_id, op, entity, entity_id, payload, created_at) "
+        "VALUES (?, 'insert', 'tasks', ?, ?, ?)",
+        (user_id, tid, json.dumps(wire), ts),
+    )
+    con.commit()
+    print(f"Tarea creada en [{proj['name']}]: '{args.title}' (dia={day}, prio={args.priority}, {args.duration}min)")
+
+
 def cmd_delete(args):
     """Soft-delete (como la app): setea deleted_at + encola outbox. No borra la fila."""
     con = connect()
@@ -367,11 +413,18 @@ def main():
     sp = sub.add_parser("delete"); sp.add_argument("substr")
     sp.add_argument("--on", default=None, help="desambiguar por dia actual de la tarea (YYYY-MM-DD)")
     add_project_arg(sp)
+    sp = sub.add_parser("add"); sp.add_argument("title")
+    sp.add_argument("--day", default=None, help="YYYY-MM-DD o 'none'")
+    sp.add_argument("--priority", default="med", choices=["low", "med", "high"])
+    sp.add_argument("--duration", type=int, default=30, help="minutos")
+    sp.add_argument("--notes", default="", help="notas (brief Setup/Execution)")
+    add_project_arg(sp)
 
     args = p.parse_args()
     if args.cmd == "show": cmd_show(args)
     elif args.cmd == "set": cmd_set(args)
     elif args.cmd == "delete": cmd_delete(args)
+    elif args.cmd == "add": cmd_add(args)
     elif args.cmd == "task": cmd_task(args)
     elif args.cmd == "check": cmd_check(args, True)
     elif args.cmd == "uncheck": cmd_check(args, False)
