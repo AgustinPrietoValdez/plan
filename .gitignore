@@ -52,3 +52,5 @@ AI.md
 *.njsproj
 *.sln
 *.sw?
+
+__pycache__/

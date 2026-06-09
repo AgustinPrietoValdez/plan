@@ -12,10 +12,12 @@ interface RollResult {
 
 /** Advance each recurring task whose scheduled day is in the past (and is not
  *  done) by creating a new instance for the next occurrence on or after today.
- *  The old (unfinished) instance is frozen in place — its recurrence is cleared
- *  so it stays visible on its original day as a "not finished" leftover the user
- *  can still mark done retroactively. For habit tasks, write a missed log entry
- *  for each expected day that was skipped. */
+ *  For real tasks, the old (unfinished) instance is frozen in place — its
+ *  recurrence is cleared so it stays visible on its original day as a "not
+ *  finished" leftover the user can still mark done retroactively. For habit
+ *  tasks, write a missed log entry for each expected day that was skipped and
+ *  then drop the old instance: a skipped habit day just lapses (the tracker
+ *  keeps the per-day record), it is not a lingering leftover. */
 export async function rollForwardRecurringTasks(
   tasks: Task[],
   habitLogs: HabitLog[],
@@ -62,11 +64,19 @@ export async function rollForwardRecurringTasks(
     const rule = t.recurrence;
 
     try {
-      // Freeze the old instance on its original day. Clearing the rule stops
-      // it from being rolled again and stops it from showing as an "active"
-      // recurring task — it sticks around as an undone leftover the user can
-      // still tick off.
-      await repo.patchTask(t.id, { recurrence: null });
+      if (t.isHabit) {
+        // A skipped habit day just lapses. The missed log written above is the
+        // record that matters for the tracker, so we do NOT keep the old
+        // instance around as a red "not finished" leftover — drop it. The chain
+        // still advances via the fresh instance created below.
+        await repo.deleteTask(t.id);
+      } else {
+        // Real task: freeze the old instance on its original day. Clearing the
+        // rule stops it from being rolled again and stops it from showing as an
+        // "active" recurring task — it sticks around as an overdue leftover the
+        // user can still tick off.
+        await repo.patchTask(t.id, { recurrence: null });
+      }
 
       // Create the fresh instance at the next due day, carrying the rule
       // forward so the chain keeps advancing.

@@ -76,7 +76,9 @@ export function ProjectView({ onTaskClick, onToggleDone, onAddNew }: Props) {
   const today = todayYmd();
 
   const inbox = open.filter((t) => t.day === null);
-  const overdue = open.filter((t) => t.day !== null && t.day < today);
+  // Habits never go overdue: a skipped habit day just lapses (recorded in the
+  // habit tracker), it is not a red leftover. Only real tasks go overdue.
+  const overdue = open.filter((t) => t.day !== null && t.day < today && !t.isHabit);
   const todayTasks = open.filter((t) => t.day === today);
   const upcoming = open
     .filter((t) => t.day !== null && t.day > today)
