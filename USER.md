@@ -15,6 +15,7 @@ tabla es priorizar y dar el diseño; el codigo lo hace Claude cuando se lo pido.
 | [#1](https://github.com/AgustinPrietoValdez/plan/issues/1) | Pantalla Automatizaciones: implementar MVP (spec en `AUTOMATIONS_FEATURE_PLAN.md`) | ABIERTO | Aprobar el diseño de la spec y decir "dale" |
 | [#2](https://github.com/AgustinPrietoValdez/plan/issues/2) | `plan_cli.py` vivia en cargo_bot_ws | CERRADO 2026-06-06 | Nada (movido a `tools/` de este repo; queda el riesgo menor de duplicar `taskToWire`, se testea si pega) |
 | [#3](https://github.com/AgustinPrietoValdez/plan/issues/3) | Escribir desde el CLI sin cerrar la app | IMPLEMENTADO, falta verificar | Rebuild (`npm run tauri dev`), probar `plan_cli.py check` con la app abierta, y si anda cerrar el issue con comentario |
+| [#4](https://github.com/AgustinPrietoValdez/plan/issues/4) | Habitos no se atrasan: un dia saltado lapsa, no queda leftover rojo | IMPLEMENTADO (commit 35cc7e5), falta verificar | Instalar el build nuevo (wizard), confirmar que los habitos no salen rojos/atrasados y que el tracker sigue bien; cerrar el issue con comentario |
 
 ## Como marcar un issue como resuelto (asi Claude se entera)
 
