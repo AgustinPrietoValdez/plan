@@ -4,6 +4,8 @@ import {
   repo,
   type AutomationCreate, type AutomationPatch,
   type BudgetUpsert,
+  type CoffeeBeanCreate, type CoffeeBeanPatch,
+  type CoffeeRecipeCreate, type CoffeeRecipePatch,
   type CategoryCreate, type CategoryPatch,
   type EventCreate, type EventPatch,
   type ExpenseCategoryCreate, type ExpenseCategoryPatch,
@@ -30,6 +32,8 @@ import {
 
 const KEYS = {
   automations: ["automations"] as const,
+  coffeeBeans: ["coffee_beans"] as const,
+  coffeeRecipes: ["coffee_recipes"] as const,
   events: ["events"] as const,
   tasks: ["tasks"] as const,
   projects: ["projects"] as const,
@@ -820,5 +824,63 @@ export function useDeleteAutomation() {
   return useMutation({
     mutationFn: (id: string) => repo.deleteAutomation(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.automations }),
+  });
+}
+
+export function useCoffeeBeans() {
+  return useQuery({ queryKey: KEYS.coffeeBeans, queryFn: () => repo.listCoffeeBeans() });
+}
+
+export function useCreateCoffeeBean() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CoffeeBeanCreate) => repo.createCoffeeBean(input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.coffeeBeans }),
+  });
+}
+
+export function usePatchCoffeeBean() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: CoffeeBeanPatch }) =>
+      repo.patchCoffeeBean(id, patch),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.coffeeBeans }),
+  });
+}
+
+export function useDeleteCoffeeBean() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => repo.deleteCoffeeBean(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.coffeeBeans }),
+  });
+}
+
+export function useCoffeeRecipes() {
+  return useQuery({ queryKey: KEYS.coffeeRecipes, queryFn: () => repo.listCoffeeRecipes() });
+}
+
+export function useCreateCoffeeRecipe() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CoffeeRecipeCreate) => repo.createCoffeeRecipe(input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.coffeeRecipes }),
+  });
+}
+
+export function usePatchCoffeeRecipe() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: CoffeeRecipePatch }) =>
+      repo.patchCoffeeRecipe(id, patch),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.coffeeRecipes }),
+  });
+}
+
+export function useDeleteCoffeeRecipe() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => repo.deleteCoffeeRecipe(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.coffeeRecipes }),
   });
 }

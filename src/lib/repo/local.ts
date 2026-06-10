@@ -3,6 +3,9 @@ import type {
   Budget,
   CalendarEvent,
   Category,
+  CoffeeBean,
+  CoffeeRecipe,
+  CoffeeRecipeStep,
   ComprasSettings,
   Expense,
   ExpenseCategory,
@@ -38,6 +41,10 @@ import type {
   CategoryCreate,
   AutomationCreate,
   AutomationPatch,
+  CoffeeBeanCreate,
+  CoffeeBeanPatch,
+  CoffeeRecipeCreate,
+  CoffeeRecipePatch,
   EventCreate,
   ExpenseCategoryCreate,
   ExpenseCreate,
@@ -195,7 +202,9 @@ async function enqueue(
     | "meal_log"
     | "compras_settings"
     | "events"
-    | "expense_line_items",
+    | "expense_line_items"
+    | "coffee_beans"
+    | "coffee_recipes",
   entityId: string,
   payload: unknown,
 ): Promise<void> {
@@ -2072,6 +2081,165 @@ export const localRepo: Repo = {
       [ts, ts, id, userId],
     );
   },
+
+  // ---------- coffee beans ----------
+  async listCoffeeBeans() {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const rows = await db.select<DbCoffeeBeanRow[]>(
+      "SELECT * FROM coffee_beans WHERE user_id = ? AND deleted_at IS NULL ORDER BY created_at ASC",
+      [userId],
+    );
+    return rows.map(fromDbCoffeeBean);
+  },
+
+  async createCoffeeBean(input: CoffeeBeanCreate) {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const ts = now();
+    const bean: CoffeeBean = {
+      id: newId(),
+      name: input.name,
+      roaster: input.roaster ?? "",
+      varietal: input.varietal ?? "",
+      country: input.country ?? "",
+      process: input.process ?? "",
+      producer: input.producer ?? "",
+      roastedOn: input.roastedOn ?? null,
+      weightGrams: input.weightGrams ?? 0,
+      notes: input.notes ?? "",
+      createdAt: ts,
+      updatedAt: ts,
+      deletedAt: null,
+      version: 1,
+    };
+    await db.execute(
+      `INSERT INTO coffee_beans
+        (id, user_id, name, roaster, varietal, country, process, producer, roasted_on,
+         weight_grams, notes, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [bean.id, userId, bean.name, bean.roaster, bean.varietal, bean.country, bean.process,
+       bean.producer, bean.roastedOn, bean.weightGrams, bean.notes,
+       bean.createdAt, bean.updatedAt, null, 1],
+    );
+    await enqueue(userId, "insert", "coffee_beans", bean.id, coffeeBeanToWire(bean, userId));
+    return bean;
+  },
+
+  async patchCoffeeBean(id: string, patch: CoffeeBeanPatch) {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const rows = await db.select<DbCoffeeBeanRow[]>(
+      "SELECT * FROM coffee_beans WHERE id = ? AND user_id = ? AND deleted_at IS NULL LIMIT 1",
+      [id, userId],
+    );
+    if (!rows[0]) throw new Error(`CoffeeBean ${id} not found`);
+    const existing = fromDbCoffeeBean(rows[0]);
+    const updated: CoffeeBean = {
+      ...existing, ...patch, id: existing.id, createdAt: existing.createdAt,
+      updatedAt: now(), version: existing.version + 1,
+    };
+    await db.execute(
+      `UPDATE coffee_beans SET name = ?, roaster = ?, varietal = ?, country = ?, process = ?,
+         producer = ?, roasted_on = ?, weight_grams = ?, notes = ?,
+         updated_at = ?, deleted_at = ?, version = ?
+       WHERE id = ? AND user_id = ?`,
+      [updated.name, updated.roaster, updated.varietal, updated.country, updated.process,
+       updated.producer, updated.roastedOn, updated.weightGrams,
+       updated.notes, updated.updatedAt, updated.deletedAt, updated.version, id, userId],
+    );
+    await enqueue(userId, "update", "coffee_beans", id, coffeeBeanToWire(updated, userId));
+    return updated;
+  },
+
+  async deleteCoffeeBean(id: string) {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const ts = now();
+    await db.execute(
+      "UPDATE coffee_beans SET deleted_at = ?, updated_at = ?, version = version + 1 WHERE id = ? AND user_id = ?",
+      [ts, ts, id, userId],
+    );
+    await enqueue(userId, "delete", "coffee_beans", id, null);
+  },
+
+  // ---------- coffee recipes ----------
+  async listCoffeeRecipes() {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const rows = await db.select<DbCoffeeRecipeRow[]>(
+      "SELECT * FROM coffee_recipes WHERE user_id = ? AND deleted_at IS NULL ORDER BY created_at ASC",
+      [userId],
+    );
+    return rows.map(fromDbCoffeeRecipe);
+  },
+
+  async createCoffeeRecipe(input: CoffeeRecipeCreate) {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const ts = now();
+    const recipe: CoffeeRecipe = {
+      id: newId(),
+      name: input.name,
+      coffeeType: input.coffeeType ?? "",
+      ratio: input.ratio ?? 15,
+      tempCelsius: input.tempCelsius ?? 93,
+      grindSize: input.grindSize ?? "",
+      steps: input.steps ?? [],
+      notes: input.notes ?? "",
+      createdAt: ts,
+      updatedAt: ts,
+      deletedAt: null,
+      version: 1,
+    };
+    await db.execute(
+      `INSERT INTO coffee_recipes
+        (id, user_id, name, coffee_type, ratio, temp_celsius, grind_size, steps, notes,
+         created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [recipe.id, userId, recipe.name, recipe.coffeeType, recipe.ratio, recipe.tempCelsius,
+       recipe.grindSize, JSON.stringify(recipe.steps), recipe.notes,
+       recipe.createdAt, recipe.updatedAt, null, 1],
+    );
+    await enqueue(userId, "insert", "coffee_recipes", recipe.id, coffeeRecipeToWire(recipe, userId));
+    return recipe;
+  },
+
+  async patchCoffeeRecipe(id: string, patch: CoffeeRecipePatch) {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const rows = await db.select<DbCoffeeRecipeRow[]>(
+      "SELECT * FROM coffee_recipes WHERE id = ? AND user_id = ? AND deleted_at IS NULL LIMIT 1",
+      [id, userId],
+    );
+    if (!rows[0]) throw new Error(`CoffeeRecipe ${id} not found`);
+    const existing = fromDbCoffeeRecipe(rows[0]);
+    const updated: CoffeeRecipe = {
+      ...existing, ...patch, id: existing.id, createdAt: existing.createdAt,
+      updatedAt: now(), version: existing.version + 1,
+    };
+    await db.execute(
+      `UPDATE coffee_recipes SET name = ?, coffee_type = ?, ratio = ?, temp_celsius = ?,
+         grind_size = ?, steps = ?, notes = ?, updated_at = ?, deleted_at = ?, version = ?
+       WHERE id = ? AND user_id = ?`,
+      [updated.name, updated.coffeeType, updated.ratio, updated.tempCelsius,
+       updated.grindSize, JSON.stringify(updated.steps), updated.notes,
+       updated.updatedAt, updated.deletedAt, updated.version, id, userId],
+    );
+    await enqueue(userId, "update", "coffee_recipes", id, coffeeRecipeToWire(updated, userId));
+    return updated;
+  },
+
+  async deleteCoffeeRecipe(id: string) {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const ts = now();
+    await db.execute(
+      "UPDATE coffee_recipes SET deleted_at = ?, updated_at = ?, version = version + 1 WHERE id = ? AND user_id = ?",
+      [ts, ts, id, userId],
+    );
+    await enqueue(userId, "delete", "coffee_recipes", id, null);
+  },
 };
 
 // ---------- "wire" helpers: shapes that go into the outbox payload to send
@@ -3012,6 +3180,93 @@ interface DbAutomationRow {
   updated_at: string;
   deleted_at: string | null;
   version: number;
+}
+
+interface DbCoffeeBeanRow {
+  id: string;
+  user_id: string;
+  name: string;
+  roaster: string;
+  varietal: string;
+  country: string;
+  process: string;
+  producer: string;
+  roasted_on: string | null;
+  weight_grams: number;
+  notes: string;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+  version: number;
+}
+
+function fromDbCoffeeBean(r: DbCoffeeBeanRow): CoffeeBean {
+  return {
+    id: r.id,
+    name: r.name,
+    roaster: r.roaster,
+    varietal: r.varietal,
+    country: r.country,
+    process: r.process,
+    producer: r.producer,
+    roastedOn: r.roasted_on,
+    weightGrams: r.weight_grams,
+    notes: r.notes,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    deletedAt: r.deleted_at,
+    version: r.version,
+  };
+}
+
+function coffeeBeanToWire(b: CoffeeBean, userId: string) {
+  return {
+    id: b.id, user_id: userId, name: b.name, roaster: b.roaster, varietal: b.varietal,
+    country: b.country, process: b.process, producer: b.producer, roasted_on: b.roastedOn,
+    weight_grams: b.weightGrams, notes: b.notes,
+    created_at: b.createdAt, updated_at: b.updatedAt, deleted_at: b.deletedAt, version: b.version,
+  };
+}
+
+interface DbCoffeeRecipeRow {
+  id: string;
+  user_id: string;
+  name: string;
+  coffee_type: string;
+  ratio: number;
+  temp_celsius: number;
+  grind_size: string;
+  steps: string;
+  notes: string;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+  version: number;
+}
+
+function fromDbCoffeeRecipe(r: DbCoffeeRecipeRow): CoffeeRecipe {
+  return {
+    id: r.id,
+    name: r.name,
+    coffeeType: r.coffee_type,
+    ratio: r.ratio,
+    tempCelsius: r.temp_celsius,
+    grindSize: r.grind_size,
+    steps: parseJson<CoffeeRecipeStep[]>(r.steps, []),
+    notes: r.notes,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    deletedAt: r.deleted_at,
+    version: r.version,
+  };
+}
+
+function coffeeRecipeToWire(r: CoffeeRecipe, userId: string) {
+  return {
+    id: r.id, user_id: userId, name: r.name, coffee_type: r.coffeeType, ratio: r.ratio,
+    temp_celsius: r.tempCelsius, grind_size: r.grindSize, steps: r.steps, notes: r.notes,
+    created_at: r.createdAt, updated_at: r.updatedAt, deleted_at: r.deletedAt, version: r.version,
+  };
 }
 
 function fromDbAutomation(r: DbAutomationRow): Automation {

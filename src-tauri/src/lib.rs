@@ -158,6 +158,18 @@ pub fn run() {
             sql: include_str!("../migrations/0020_automations.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 21,
+            description: "add coffee_beans and coffee_recipes",
+            sql: include_str!("../migrations/0021_coffee.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 22,
+            description: "rebuild coffee_beans without order_threshold_grams",
+            sql: include_str!("../migrations/0022_coffee_fix.sql"),
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()

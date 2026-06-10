@@ -310,6 +310,44 @@ export interface MealLog {
   version: number;
 }
 
+export interface CoffeeBean {
+  id: string;
+  name: string;
+  roaster: string;
+  varietal: string;
+  country: string;
+  process: string;
+  producer: string;
+  roastedOn: string | null;
+  weightGrams: number;
+  notes: string;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+  version: number;
+}
+
+export interface CoffeeRecipeStep {
+  timeSeconds: number;
+  waterGrams: number;
+  description: string;
+}
+
+export interface CoffeeRecipe {
+  id: string;
+  name: string;
+  coffeeType: string;
+  ratio: number;
+  tempCelsius: number;
+  grindSize: string;
+  steps: CoffeeRecipeStep[];
+  notes: string;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+  version: number;
+}
+
 export interface Automation {
   id: string;
   projectId: string | null;

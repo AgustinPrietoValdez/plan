@@ -14,6 +14,7 @@ import {
   useRecipes,
   useRecipeIngredients,
   useIngredients,
+  useCoffeeBeans,
 } from "../lib/queries";
 import { colorsForHue } from "../lib/categoryColor";
 import { suggestRecipesForExpiringLots } from "../lib/compras";
@@ -38,6 +39,7 @@ export function HomeView() {
   const recipes = useRecipes().data ?? [];
   const recipeIngredients = useRecipeIngredients().data ?? [];
   const ingredients = useIngredients().data ?? [];
+  const coffeeBeans = useCoffeeBeans().data ?? [];
 
   // Project → color dot
   const catByProjectId = new Map(
@@ -220,10 +222,7 @@ export function HomeView() {
 
         {/* Café */}
         <Card title="Café" tone="oklch(0.55 0.10 50)" icon={<span style={{ fontSize: 16 }}>☕</span>} onVer={() => setView("cafe")}>
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8 }}>
-            <Empty text="Módulo de café: próximamente (Fase 6)." />
-            <Sub>Va a mostrar tus cafés en rango (3 a 6 semanas) y cuál toca pedir.</Sub>
-          </div>
+          <CafeCardContent beans={coffeeBeans} />
         </Card>
       </div>
     </div>
@@ -359,4 +358,38 @@ function Sub({ children }: { children: ReactNode }) {
 
 function Empty({ text }: { text: string }) {
   return <div style={{ fontSize: "clamp(13px, 1.0vw, 16px)", color: "var(--fg-subtle)", textAlign: "center" }}>{text}</div>;
+}
+
+function CafeCardContent({ beans }: { beans: import("../types").CoffeeBean[] }) {
+  if (beans.length === 0) {
+    return (
+      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <Empty text="Sin granos registrados" />
+      </div>
+    );
+  }
+
+  const today = new Date();
+  const inRange = beans.filter((b) => {
+    if (!b.roastedOn) return false;
+    const days = Math.floor((today.getTime() - new Date(b.roastedOn + "T00:00:00").getTime()) / 86_400_000);
+    return days >= 21 && days <= 42;
+  });
+  const needsOrder = beans.length <= 2 && beans.length > 0;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6, flex: 1, minHeight: 0, overflow: "hidden" }}>
+      <Sub>{inRange.length} de {beans.length} granos en rango (3–6 sem)</Sub>
+      {inRange.slice(0, 3).map((b) => (
+        <TaskRow key={b.id} dotColor="oklch(0.62 0.17 145)">
+          {b.name}{b.roaster ? ` · ${b.roaster}` : ""}
+        </TaskRow>
+      ))}
+      {needsOrder && (
+        <div style={{ fontSize: "clamp(11px, 0.8vw, 14px)", color: "var(--danger)", flexShrink: 0 }}>
+          ⚠ Quedan {beans.length === 1 ? "solo 1 grano" : "solo 2 granos"} — pedí más
+        </div>
+      )}
+    </div>
+  );
 }

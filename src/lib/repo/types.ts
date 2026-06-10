@@ -3,6 +3,8 @@ import type {
   Budget,
   CalendarEvent,
   Category,
+  CoffeeBean,
+  CoffeeRecipe,
   ComprasSettings,
   Expense,
   ExpenseCategory,
@@ -103,6 +105,28 @@ export type MealLogCreate = Pick<MealLog, "eatenOn" | "mealSlot" | "recipeId" | 
 export type ComprasSettingsUpsert = Partial<
   Pick<ComprasSettings, "mealTimes" | "expiryWarnDays" | "notificationsEnabled" | "dkkPerUsd">
 >;
+
+export type CoffeeBeanCreate = Pick<CoffeeBean, "name"> & {
+  roaster?: string;
+  varietal?: string;
+  country?: string;
+  process?: string;
+  producer?: string;
+  roastedOn?: string | null;
+  weightGrams?: number;
+  notes?: string;
+};
+export type CoffeeBeanPatch = Partial<Omit<CoffeeBean, "id" | "createdAt" | "version">>;
+
+export type CoffeeRecipeCreate = Pick<CoffeeRecipe, "name"> & {
+  coffeeType?: string;
+  ratio?: number;
+  tempCelsius?: number;
+  grindSize?: string;
+  steps?: CoffeeRecipe["steps"];
+  notes?: string;
+};
+export type CoffeeRecipePatch = Partial<Omit<CoffeeRecipe, "id" | "createdAt" | "version">>;
 
 export type AutomationCreate = Pick<Automation, "name" | "kind"> & {
   projectId?: string | null;
@@ -259,4 +283,14 @@ export interface Repo {
   createAutomation(input: AutomationCreate): Promise<Automation>;
   patchAutomation(id: string, patch: AutomationPatch): Promise<Automation>;
   deleteAutomation(id: string): Promise<void>;
+
+  listCoffeeBeans(): Promise<CoffeeBean[]>;
+  createCoffeeBean(input: CoffeeBeanCreate): Promise<CoffeeBean>;
+  patchCoffeeBean(id: string, patch: CoffeeBeanPatch): Promise<CoffeeBean>;
+  deleteCoffeeBean(id: string): Promise<void>;
+
+  listCoffeeRecipes(): Promise<CoffeeRecipe[]>;
+  createCoffeeRecipe(input: CoffeeRecipeCreate): Promise<CoffeeRecipe>;
+  patchCoffeeRecipe(id: string, patch: CoffeeRecipePatch): Promise<CoffeeRecipe>;
+  deleteCoffeeRecipe(id: string): Promise<void>;
 }
