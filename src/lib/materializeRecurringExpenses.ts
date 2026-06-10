@@ -57,6 +57,7 @@ export function useMaterializeRecurringExpenses(userId: string | undefined) {
           // Materialize new instance from the most-recent's data, with rule
           // moved forward to it. Clear rule from `mostRecent` (freeze prev).
           await create.mutateAsync({
+            name: mostRecent.name,
             amount: mostRecent.amount,
             currency: mostRecent.currency,
             categoryId: mostRecent.categoryId,

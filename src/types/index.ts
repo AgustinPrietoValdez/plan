@@ -89,6 +89,7 @@ export interface ExpenseCategory {
 
 export interface Expense {
   id: string;
+  name: string;
   amount: number;
   currency: string;
   categoryId: string | null;
@@ -96,6 +97,18 @@ export interface Expense {
   note: string;
   recurrence: RecurrenceRule | null;
   recurrenceParentId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+  version: number;
+}
+
+export interface ExpenseLineItem {
+  id: string;
+  expenseId: string;
+  name: string;
+  quantity: number;
+  unitPrice: number;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
@@ -117,6 +130,8 @@ export interface SavingsGoal {
   id: string;
   name: string;
   targetAmount: number | null;
+  savingsPercent: number;
+  isOverflowTarget: boolean;
   position: number;
   purchasedAt: string | null;
   createdAt: string;

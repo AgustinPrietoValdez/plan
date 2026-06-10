@@ -3,6 +3,11 @@ import { colorsForHue } from "../lib/categoryColor";
 import { fmtMoney } from "../lib/money";
 import type { Expense, ExpenseCategory } from "../types";
 
+interface CategoryBudget {
+  categoryId: string | null;
+  monthlyAmount: number;
+}
+
 interface Props {
   expenses: Expense[];
   categories: ExpenseCategory[];
@@ -12,6 +17,8 @@ interface Props {
   size?: number;
   /** Budget cap. When set, % column shows amount/limit instead of amount/total. */
   limit?: number;
+  /** Per-category budgets. When set, shows "spent / budget" in the legend and colors over-budget amounts red. */
+  budgets?: CategoryBudget[];
 }
 
 interface Slice {
@@ -50,7 +57,7 @@ function arcPath(start: number, end: number, ro: number, ri: number): string {
   ].join(" ");
 }
 
-export function SpendingPie({ expenses, categories, layout = "column", size = SIZE, limit }: Props) {
+export function SpendingPie({ expenses, categories, layout = "column", size = SIZE, limit, budgets }: Props) {
   const [hoverId, setHoverId] = useState<string | null>(null);
   const row = layout === "row";
 
@@ -185,6 +192,8 @@ export function SpendingPie({ expenses, categories, layout = "column", size = SI
             : total > 0 ? Math.round((item.amount / total) * 100) : 0;
           const isHover = hoverId === item.id;
           const dimmed = item.amount === 0;
+          const catBudget = budgets?.find((b) => b.categoryId === item.id);
+          const isOver = catBudget != null && item.amount > catBudget.monthlyAmount;
           return (
             <div
               key={item.id}
@@ -209,8 +218,13 @@ export function SpendingPie({ expenses, categories, layout = "column", size = SI
               <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {item.cat?.name ?? "Uncategorized"}
               </span>
-              <span style={{ fontVariantNumeric: "tabular-nums", fontSize: "clamp(8px,0.75vw,13px)", color: isHover ? "inherit" : "var(--fg-muted)" }}>
+              <span style={{ fontVariantNumeric: "tabular-nums", fontSize: "clamp(8px,0.75vw,13px)", color: isHover ? "inherit" : isOver ? "var(--danger)" : "var(--fg-muted)" }}>
                 {item.amount > 0 ? fmtMoney(item.amount) : "—"}
+                {catBudget != null && (
+                  <span style={{ color: isHover ? "inherit" : "var(--fg-subtle)", opacity: 0.7 }}>
+                    {" / "}{fmtMoney(catBudget.monthlyAmount)}
+                  </span>
+                )}
               </span>
               <span style={{ fontVariantNumeric: "tabular-nums", fontSize: "clamp(8px,0.7vw,12px)", color: isHover ? "inherit" : "var(--fg-subtle)", minWidth: "clamp(20px,1.6vw,36px)", textAlign: "right" }}>
                 {item.amount > 0 ? `${pct}%` : "—"}

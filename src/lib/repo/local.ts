@@ -5,6 +5,7 @@ import type {
   ComprasSettings,
   Expense,
   ExpenseCategory,
+  ExpenseLineItem,
   HabitLog,
   Income,
   Project,
@@ -36,6 +37,7 @@ import type {
   EventCreate,
   ExpenseCategoryCreate,
   ExpenseCreate,
+  ExpenseLineItemCreate,
   HabitLogUpsert,
   IncomeUpsert,
   ProjectCreate,
@@ -186,7 +188,8 @@ async function enqueue(
     | "inventory"
     | "meal_log"
     | "compras_settings"
-    | "events",
+    | "events"
+    | "expense_line_items",
   entityId: string,
   payload: unknown,
 ): Promise<void> {
@@ -564,6 +567,7 @@ export const localRepo: Repo = {
     const ts = now();
     const exp: Expense = {
       id: newId(),
+      name: input.name,
       amount: input.amount,
       currency: input.currency,
       categoryId: input.categoryId,
@@ -578,11 +582,11 @@ export const localRepo: Repo = {
     };
     await db.execute(
       `INSERT INTO expenses
-        (id, user_id, amount, currency, category_id, spent_on, note,
+        (id, user_id, name, amount, currency, category_id, spent_on, note,
          recurrence, recurrence_parent_id, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        exp.id, userId, exp.amount, exp.currency, exp.categoryId, exp.spentOn,
+        exp.id, userId, exp.name, exp.amount, exp.currency, exp.categoryId, exp.spentOn,
         exp.note,
         exp.recurrence ? JSON.stringify(exp.recurrence) : null,
         exp.recurrenceParentId,
@@ -611,11 +615,11 @@ export const localRepo: Repo = {
       version: existing.version + 1,
     };
     await db.execute(
-      `UPDATE expenses SET amount = ?, currency = ?, category_id = ?, spent_on = ?,
+      `UPDATE expenses SET name = ?, amount = ?, currency = ?, category_id = ?, spent_on = ?,
          note = ?, recurrence = ?, recurrence_parent_id = ?, updated_at = ?, deleted_at = ?, version = ?
        WHERE id = ? AND user_id = ?`,
       [
-        updated.amount, updated.currency, updated.categoryId, updated.spentOn,
+        updated.name, updated.amount, updated.currency, updated.categoryId, updated.spentOn,
         updated.note,
         updated.recurrence ? JSON.stringify(updated.recurrence) : null,
         updated.recurrenceParentId,
@@ -636,6 +640,80 @@ export const localRepo: Repo = {
       [ts, ts, id, userId],
     );
     await enqueue(userId, "delete", "expenses", id, null);
+  },
+
+  // ---------- expense_line_items ----------
+  async listExpenseLineItems() {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const rows = await db.select<DbExpenseLineItemRow[]>(
+      "SELECT * FROM expense_line_items WHERE user_id = ? AND deleted_at IS NULL ORDER BY created_at ASC",
+      [userId],
+    );
+    return rows.map(fromDbExpenseLineItem);
+  },
+
+  async createExpenseLineItem(input: ExpenseLineItemCreate) {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const ts = now();
+    const li: ExpenseLineItem = {
+      id: newId(),
+      expenseId: input.expenseId,
+      name: input.name,
+      quantity: input.quantity,
+      unitPrice: input.unitPrice,
+      createdAt: ts,
+      updatedAt: ts,
+      deletedAt: null,
+      version: 1,
+    };
+    await db.execute(
+      `INSERT INTO expense_line_items
+        (id, user_id, expense_id, name, quantity, unit_price, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [li.id, userId, li.expenseId, li.name, li.quantity, li.unitPrice, li.createdAt, li.updatedAt, null, 1],
+    );
+    await enqueue(userId, "insert", "expense_line_items", li.id, expenseLineItemToWire(li, userId));
+    return li;
+  },
+
+  async patchExpenseLineItem(id, patch) {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const rows = await db.select<DbExpenseLineItemRow[]>(
+      "SELECT * FROM expense_line_items WHERE id = ? AND user_id = ? AND deleted_at IS NULL LIMIT 1",
+      [id, userId],
+    );
+    if (!rows[0]) throw new Error(`ExpenseLineItem ${id} not found`);
+    const existing = fromDbExpenseLineItem(rows[0]);
+    const updated: ExpenseLineItem = {
+      ...existing,
+      ...patch,
+      id: existing.id,
+      expenseId: existing.expenseId,
+      createdAt: existing.createdAt,
+      updatedAt: now(),
+      version: existing.version + 1,
+    };
+    await db.execute(
+      `UPDATE expense_line_items SET name = ?, quantity = ?, unit_price = ?,
+         updated_at = ?, deleted_at = ?, version = ? WHERE id = ? AND user_id = ?`,
+      [updated.name, updated.quantity, updated.unitPrice, updated.updatedAt, updated.deletedAt, updated.version, id, userId],
+    );
+    await enqueue(userId, "update", "expense_line_items", id, expenseLineItemToWire(updated, userId));
+    return updated;
+  },
+
+  async deleteExpenseLineItem(id) {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const ts = now();
+    await db.execute(
+      "UPDATE expense_line_items SET deleted_at = ?, updated_at = ?, version = version + 1 WHERE id = ? AND user_id = ?",
+      [ts, ts, id, userId],
+    );
+    await enqueue(userId, "delete", "expense_line_items", id, null);
   },
 
   // ---------- budgets ----------
@@ -725,6 +803,8 @@ export const localRepo: Repo = {
       id: newId(),
       name: input.name,
       targetAmount: input.targetAmount,
+      savingsPercent: input.savingsPercent ?? 0,
+      isOverflowTarget: input.isOverflowTarget ?? false,
       position: input.position ?? 0,
       purchasedAt: null,
       createdAt: ts,
@@ -734,9 +814,9 @@ export const localRepo: Repo = {
     };
     await db.execute(
       `INSERT INTO savings_goals
-        (id, user_id, name, target_amount, position, purchased_at, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [goal.id, userId, goal.name, goal.targetAmount, goal.position, goal.purchasedAt, goal.createdAt, goal.updatedAt, null, 1],
+        (id, user_id, name, target_amount, savings_percent, is_overflow_target, position, purchased_at, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [goal.id, userId, goal.name, goal.targetAmount, goal.savingsPercent, goal.isOverflowTarget ? 1 : 0, goal.position, goal.purchasedAt, goal.createdAt, goal.updatedAt, null, 1],
     );
     await enqueue(userId, "insert", "savings_goals", goal.id, savingsGoalToWire(goal, userId));
     return goal;
@@ -745,6 +825,24 @@ export const localRepo: Repo = {
   async patchSavingsGoal(id, patch) {
     const userId = await requireUserId();
     const db = await getDb();
+
+    // If setting this goal as the overflow target, clear the flag from all others first.
+    if (patch.isOverflowTarget === true) {
+      const others = await db.select<DbSavingsGoalRow[]>(
+        "SELECT * FROM savings_goals WHERE user_id = ? AND is_overflow_target = 1 AND id != ? AND deleted_at IS NULL",
+        [userId, id],
+      );
+      const clearTs = now();
+      for (const other of others) {
+        await db.execute(
+          "UPDATE savings_goals SET is_overflow_target = 0, updated_at = ?, version = version + 1 WHERE id = ? AND user_id = ?",
+          [clearTs, other.id, userId],
+        );
+        const cleared = fromDbSavingsGoal({ ...other, is_overflow_target: 0, updated_at: clearTs, version: other.version + 1 });
+        await enqueue(userId, "update", "savings_goals", other.id, savingsGoalToWire(cleared, userId));
+      }
+    }
+
     const rows = await db.select<DbSavingsGoalRow[]>(
       "SELECT * FROM savings_goals WHERE id = ? AND user_id = ? AND deleted_at IS NULL LIMIT 1",
       [id, userId],
@@ -760,10 +858,12 @@ export const localRepo: Repo = {
       version: existing.version + 1,
     };
     await db.execute(
-      `UPDATE savings_goals SET name = ?, target_amount = ?, position = ?, purchased_at = ?,
-         updated_at = ?, deleted_at = ?, version = ? WHERE id = ? AND user_id = ?`,
+      `UPDATE savings_goals SET name = ?, target_amount = ?, savings_percent = ?, is_overflow_target = ?,
+         position = ?, purchased_at = ?, updated_at = ?, deleted_at = ?, version = ?
+       WHERE id = ? AND user_id = ?`,
       [
-        updated.name, updated.targetAmount, updated.position, updated.purchasedAt,
+        updated.name, updated.targetAmount, updated.savingsPercent, updated.isOverflowTarget ? 1 : 0,
+        updated.position, updated.purchasedAt,
         updated.updatedAt, updated.deletedAt, updated.version,
         id, userId,
       ],
@@ -1878,6 +1978,7 @@ interface DbExpenseCategoryRow {
 interface DbExpenseRow {
   id: string;
   user_id: string;
+  name: string;
   amount: number;
   currency: string;
   category_id: string | null;
@@ -1920,6 +2021,7 @@ function fromDbExpenseCategory(r: DbExpenseCategoryRow): ExpenseCategory {
 function fromDbExpense(r: DbExpenseRow): Expense {
   return {
     id: r.id,
+    name: r.name ?? "",
     amount: r.amount,
     currency: r.currency,
     categoryId: r.category_id,
@@ -1966,6 +2068,7 @@ function expenseToWire(e: Expense, userId: string) {
   return {
     id: e.id,
     user_id: userId,
+    name: e.name,
     amount: e.amount,
     currency: e.currency,
     category_id: e.categoryId,
@@ -1999,6 +2102,8 @@ interface DbSavingsGoalRow {
   user_id: string;
   name: string;
   target_amount: number | null;
+  savings_percent: number;
+  is_overflow_target: number;
   position: number;
   purchased_at: string | null;
   created_at: string;
@@ -2024,6 +2129,8 @@ function fromDbSavingsGoal(r: DbSavingsGoalRow): SavingsGoal {
     id: r.id,
     name: r.name,
     targetAmount: r.target_amount,
+    savingsPercent: r.savings_percent ?? 0,
+    isOverflowTarget: boolFromDb(r.is_overflow_target ?? 0),
     position: r.position,
     purchasedAt: r.purchased_at,
     createdAt: r.created_at,
@@ -2052,6 +2159,8 @@ function savingsGoalToWire(g: SavingsGoal, userId: string) {
     user_id: userId,
     name: g.name,
     target_amount: g.targetAmount,
+    savings_percent: g.savingsPercent,
+    is_overflow_target: g.isOverflowTarget,
     position: g.position,
     purchased_at: g.purchasedAt,
     created_at: g.createdAt,
@@ -2626,5 +2735,47 @@ function eventToWire(e: CalendarEvent, userId: string) {
     updated_at: e.updatedAt,
     deleted_at: e.deletedAt,
     version: e.version,
+  };
+}
+
+interface DbExpenseLineItemRow {
+  id: string;
+  user_id: string;
+  expense_id: string;
+  name: string;
+  quantity: number;
+  unit_price: number;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+  version: number;
+}
+
+function fromDbExpenseLineItem(r: DbExpenseLineItemRow): ExpenseLineItem {
+  return {
+    id: r.id,
+    expenseId: r.expense_id,
+    name: r.name,
+    quantity: r.quantity,
+    unitPrice: r.unit_price,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    deletedAt: r.deleted_at,
+    version: r.version,
+  };
+}
+
+function expenseLineItemToWire(li: ExpenseLineItem, userId: string) {
+  return {
+    id: li.id,
+    user_id: userId,
+    expense_id: li.expenseId,
+    name: li.name,
+    quantity: li.quantity,
+    unit_price: li.unitPrice,
+    created_at: li.createdAt,
+    updated_at: li.updatedAt,
+    deleted_at: li.deletedAt,
+    version: li.version,
   };
 }

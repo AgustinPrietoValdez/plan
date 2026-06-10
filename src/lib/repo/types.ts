@@ -5,6 +5,7 @@ import type {
   ComprasSettings,
   Expense,
   ExpenseCategory,
+  ExpenseLineItem,
   HabitLog,
   Income,
   Ingredient,
@@ -53,13 +54,20 @@ export type ExpenseCategoryPatch = Partial<Omit<ExpenseCategory, "id" | "created
 
 export type ExpenseCreate = Pick<
   Expense,
-  "amount" | "currency" | "categoryId" | "spentOn" | "note" | "recurrence" | "recurrenceParentId"
+  "name" | "amount" | "currency" | "categoryId" | "spentOn" | "note" | "recurrence" | "recurrenceParentId"
 >;
 export type ExpensePatch = Partial<Omit<Expense, "id" | "createdAt" | "version">>;
 
+export type ExpenseLineItemCreate = Pick<ExpenseLineItem, "expenseId" | "name" | "quantity" | "unitPrice">;
+export type ExpenseLineItemPatch = Partial<Omit<ExpenseLineItem, "id" | "expenseId" | "createdAt" | "version">>;
+
 export type BudgetUpsert = Pick<Budget, "categoryId" | "monthlyAmount" | "currency">;
 
-export type SavingsGoalCreate = Pick<SavingsGoal, "name" | "targetAmount"> & { position?: number };
+export type SavingsGoalCreate = Pick<SavingsGoal, "name" | "targetAmount"> & {
+  position?: number;
+  savingsPercent?: number;
+  isOverflowTarget?: boolean;
+};
 export type SavingsGoalPatch = Partial<Omit<SavingsGoal, "id" | "createdAt" | "version">>;
 
 export type SavingsContributionUpsert = Pick<SavingsContribution, "goalId" | "month" | "amount">;
@@ -148,6 +156,11 @@ export interface Repo {
   createExpense(input: ExpenseCreate): Promise<Expense>;
   patchExpense(id: string, patch: ExpensePatch): Promise<Expense>;
   deleteExpense(id: string): Promise<void>;
+
+  listExpenseLineItems(): Promise<ExpenseLineItem[]>;
+  createExpenseLineItem(input: ExpenseLineItemCreate): Promise<ExpenseLineItem>;
+  patchExpenseLineItem(id: string, patch: ExpenseLineItemPatch): Promise<ExpenseLineItem>;
+  deleteExpenseLineItem(id: string): Promise<void>;
 
   listBudgets(): Promise<Budget[]>;
   upsertBudget(input: BudgetUpsert): Promise<Budget>;

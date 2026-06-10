@@ -131,7 +131,7 @@ export function SavingsGoalManager({ onClose }: Props) {
                 key={g.id}
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "minmax(0, 1fr) auto auto auto",
+                  gridTemplateColumns: "minmax(0, 1fr) auto auto auto auto",
                   gap: 12,
                   alignItems: "center",
                   padding: "8px 8px",
@@ -213,6 +213,31 @@ export function SavingsGoalManager({ onClose }: Props) {
                     onChange={(e) => toggleOpenEnded(g.id, e.target.checked, g.targetAmount)}
                   />
                   Open-ended
+                </label>
+                <label
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    fontSize: 11.5,
+                    color: g.isOverflowTarget ? "var(--ok)" : "var(--fg-muted)",
+                    cursor: "pointer",
+                  }}
+                  title="This goal receives all unallocated leftover savings"
+                >
+                  <input
+                    type="checkbox"
+                    checked={g.isOverflowTarget}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        patch.mutate({ id: g.id, patch: { isOverflowTarget: true } });
+                      } else {
+                        patch.mutate({ id: g.id, patch: { isOverflowTarget: false } });
+                      }
+                    }}
+                    disabled={purchased}
+                  />
+                  Overflow
                 </label>
                 <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                   <input

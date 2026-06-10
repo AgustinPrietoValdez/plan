@@ -12,6 +12,8 @@ export type {
   ExpenseCategoryPatch,
   ExpenseCreate,
   ExpensePatch,
+  ExpenseLineItemCreate,
+  ExpenseLineItemPatch,
   HabitLogUpsert,
   IncomeUpsert,
   ProjectCreate,

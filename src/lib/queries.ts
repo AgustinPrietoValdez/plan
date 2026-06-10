@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { CalendarEvent, ShoppingItem, Task } from "../types";
+import type { CalendarEvent, SavingsGoal, ShoppingItem, Task } from "../types";
 import {
   repo,
   type BudgetUpsert,
@@ -7,6 +7,7 @@ import {
   type EventCreate, type EventPatch,
   type ExpenseCategoryCreate, type ExpenseCategoryPatch,
   type ExpenseCreate, type ExpensePatch,
+  type ExpenseLineItemCreate, type ExpenseLineItemPatch,
   type HabitLogUpsert,
   type IncomeUpsert,
   type ProjectCreate, type ProjectPatch,
@@ -32,6 +33,7 @@ const KEYS = {
   categories: ["categories"] as const,
   expenseCategories: ["expense_categories"] as const,
   expenses: ["expenses"] as const,
+  expenseLineItems: ["expense_line_items"] as const,
   budgets: ["budgets"] as const,
   savingsGoals: ["savings_goals"] as const,
   savingsContributions: ["savings_contributions"] as const,
@@ -260,6 +262,36 @@ export function useDeleteExpense() {
   });
 }
 
+// ---------- expense line items ----------
+export function useExpenseLineItems() {
+  return useQuery({ queryKey: KEYS.expenseLineItems, queryFn: () => repo.listExpenseLineItems() });
+}
+
+export function useCreateExpenseLineItem() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ExpenseLineItemCreate) => repo.createExpenseLineItem(input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.expenseLineItems }),
+  });
+}
+
+export function usePatchExpenseLineItem() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: ExpenseLineItemPatch }) =>
+      repo.patchExpenseLineItem(id, patch),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.expenseLineItems }),
+  });
+}
+
+export function useDeleteExpenseLineItem() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => repo.deleteExpenseLineItem(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.expenseLineItems }),
+  });
+}
+
 // ---------- budgets ----------
 export function useBudgets() {
   return useQuery({ queryKey: KEYS.budgets, queryFn: () => repo.listBudgets() });
@@ -299,7 +331,22 @@ export function usePatchSavingsGoal() {
   return useMutation({
     mutationFn: ({ id, patch }: { id: string; patch: SavingsGoalPatch }) =>
       repo.patchSavingsGoal(id, patch),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.savingsGoals }),
+    onMutate: async ({ id, patch }) => {
+      await qc.cancelQueries({ queryKey: KEYS.savingsGoals });
+      const previous = qc.getQueryData<SavingsGoal[]>(KEYS.savingsGoals);
+      if (previous) {
+        qc.setQueryData<SavingsGoal[]>(
+          KEYS.savingsGoals,
+          previous.map((g) => (g.id === id ? { ...g, ...patch } : g)),
+        );
+      }
+      return { previous };
+    },
+    onError: (err, vars, ctx) => {
+      console.error("[patchSavingsGoal] FAILED", vars, err);
+      if (ctx?.previous) qc.setQueryData(KEYS.savingsGoals, ctx.previous);
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: KEYS.savingsGoals }),
   });
 }
 

@@ -33,6 +33,7 @@ const Icon = ({ d, size = 16, stroke = 1.6, fill = "none", children, ...rest }: 
 export const IChevL = (p: IconProps) => <Icon {...p} d="M15 18l-6-6 6-6" />;
 export const IChevR = (p: IconProps) => <Icon {...p} d="M9 6l6 6-6 6" />;
 export const IChevD = (p: IconProps) => <Icon {...p} d="M6 9l6 6 6-6" />;
+export const IChevU = (p: IconProps) => <Icon {...p} d="M18 15l-6-6-6 6" />;
 export const IPlus = (p: IconProps) => <Icon {...p} d="M12 5v14M5 12h14" />;
 export const ISearch = (p: IconProps) => (
   <Icon {...p}>

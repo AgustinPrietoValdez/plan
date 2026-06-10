@@ -3,8 +3,11 @@ import { colorsForHue } from "../lib/categoryColor";
 import { CURRENCY, fmtMoney, parseMoney } from "../lib/money";
 import {
   useCreateExpense,
+  useCreateExpenseLineItem,
   useDeleteExpense,
+  useDeleteExpenseLineItem,
   useExpenseCategories,
+  useExpenseLineItems,
   useExpenses,
   usePatchExpense,
 } from "../lib/queries";
@@ -14,6 +17,7 @@ import { ICheck, IRecurring, ITrash, IX } from "./icons";
 import { RecurrencePicker } from "./RecurrencePicker";
 
 interface DraftFields {
+  name: string;
   amount: number;
   categoryId: string | null;
   spentOn: string;
@@ -23,6 +27,7 @@ interface DraftFields {
 
 function fromExpense(e: Expense): DraftFields {
   return {
+    name: e.name,
     amount: e.amount,
     categoryId: e.categoryId,
     spentOn: e.spentOn,
@@ -50,7 +55,31 @@ export function ExpenseEditor({ mode, expenseId, prefill, onClose }: Props) {
   const create = useCreateExpense();
   const patchMut = usePatchExpense();
   const remove = useDeleteExpense();
+  const lineItemsQ = useExpenseLineItems();
+  const createLineItem = useCreateExpenseLineItem();
+  const deleteLineItem = useDeleteExpenseLineItem();
   const { openExpenseCategoryManager } = useApp();
+
+  const expLineItems = (lineItemsQ.data ?? []).filter(
+    (li) => li.expenseId === expenseId && !li.deletedAt,
+  );
+  const liTotal = expLineItems.reduce((s, li) => s + li.quantity * li.unitPrice, 0);
+
+  const [liName, setLiName] = useState("");
+  const [liQty, setLiQty] = useState("1");
+  const [liPrice, setLiPrice] = useState("");
+
+  const addLineItem = () => {
+    if (!expenseId) return;
+    const name = liName.trim();
+    const qty = parseFloat(liQty.replace(",", "."));
+    const price = parseMoney(liPrice);
+    if (!name || isNaN(qty) || qty <= 0 || price === null || price <= 0) return;
+    createLineItem.mutate({ expenseId, name, quantity: qty, unitPrice: price });
+    setLiName("");
+    setLiQty("1");
+    setLiPrice("");
+  };
 
   const existing = mode === "edit" && expenseId
     ? expenses.find((e) => e.id === expenseId)
@@ -59,10 +88,11 @@ export function ExpenseEditor({ mode, expenseId, prefill, onClose }: Props) {
   const [draft, setDraft] = useState<DraftFields>(() => {
     if (existing) return fromExpense(existing);
     return {
+      name: prefill?.note ?? "",
       amount: prefill?.amount ?? 0,
       categoryId: prefill?.categoryId ?? null,
       spentOn: prefill?.spentOn ?? new Date().toISOString().slice(0, 10),
-      note: prefill?.note ?? "",
+      note: "",
       recurrence: null,
     };
   });
@@ -85,6 +115,7 @@ export function ExpenseEditor({ mode, expenseId, prefill, onClose }: Props) {
       patchMut.mutate({
         id: existing.id,
         patch: {
+          name: draft.name,
           amount: draft.amount,
           categoryId: draft.categoryId,
           spentOn: draft.spentOn,
@@ -94,6 +125,7 @@ export function ExpenseEditor({ mode, expenseId, prefill, onClose }: Props) {
       });
     } else {
       create.mutate({
+        name: draft.name,
         amount: draft.amount,
         currency: CURRENCY,
         categoryId: draft.categoryId,
@@ -156,6 +188,18 @@ export function ExpenseEditor({ mode, expenseId, prefill, onClose }: Props) {
 
         <div className="modal-body">
           <div className="field">
+            <label>Name</label>
+            <input
+              type="text"
+              className="input"
+              placeholder="e.g. Rema 1000, Netflix…"
+              value={draft.name}
+              onChange={(e) => set({ name: e.target.value })}
+              onKeyDown={(e) => { if (e.key === "Enter") save(); }}
+            />
+          </div>
+
+          <div className="field">
             <label>Amount</label>
             <div className="control" style={{ alignItems: "stretch" }}>
               <input
@@ -209,33 +253,7 @@ export function ExpenseEditor({ mode, expenseId, prefill, onClose }: Props) {
           </div>
 
           <div className="field">
-            <label
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                paddingRight: 4,
-              }}
-            >
-              <span>Category</span>
-              <button
-                type="button"
-                onClick={openExpenseCategoryManager}
-                style={{
-                  fontSize: 10.5,
-                  color: "var(--fg-subtle)",
-                  textTransform: "none",
-                  letterSpacing: 0,
-                  fontWeight: 500,
-                  padding: 0,
-                  background: "none",
-                  border: 0,
-                  cursor: "pointer",
-                }}
-              >
-                Manage
-              </button>
-            </label>
+            <label>Category</label>
             <div className="control">
               {categories.length === 0 && (
                 <span style={{ fontSize: 12, color: "var(--fg-subtle)" }}>
@@ -278,6 +296,26 @@ export function ExpenseEditor({ mode, expenseId, prefill, onClose }: Props) {
                   </span>
                 );
               })}
+              {categories.length > 0 && (
+                <button
+                  type="button"
+                  onClick={openExpenseCategoryManager}
+                  style={{
+                    fontSize: 10.5,
+                    color: "var(--fg-subtle)",
+                    textTransform: "none",
+                    letterSpacing: 0,
+                    fontWeight: 500,
+                    padding: "2px 6px",
+                    background: "none",
+                    border: "1px solid var(--line)",
+                    borderRadius: 5,
+                    cursor: "pointer",
+                  }}
+                >
+                  Manage
+                </button>
+              )}
             </div>
           </div>
 
@@ -312,6 +350,68 @@ export function ExpenseEditor({ mode, expenseId, prefill, onClose }: Props) {
               onChange={(e) => set({ note: e.target.value })}
             />
           </div>
+
+          {mode === "edit" && (
+            <div className="field">
+              <label>Items{expLineItems.length > 0 && ` · ${fmtMoney(liTotal)}`}</label>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {expLineItems.map((li) => (
+                  <div
+                    key={li.id}
+                    style={{ display: "grid", gridTemplateColumns: "1fr auto auto auto auto", gap: 8, alignItems: "center", fontSize: 12.5, color: "var(--fg-muted)" }}
+                  >
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{li.name}</span>
+                    <span style={{ fontVariantNumeric: "tabular-nums" }}>{li.quantity}×</span>
+                    <span style={{ fontVariantNumeric: "tabular-nums" }}>{fmtMoney(li.unitPrice)}</span>
+                    <span style={{ color: "var(--fg)", fontWeight: 500, fontVariantNumeric: "tabular-nums" }}>= {fmtMoney(li.quantity * li.unitPrice)}</span>
+                    <button
+                      className="icon-btn"
+                      style={{ color: "var(--fg-subtle)" }}
+                      onClick={() => deleteLineItem.mutate(li.id)}
+                      title="Remove"
+                    >
+                      <ITrash size={12} />
+                    </button>
+                  </div>
+                ))}
+                <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 2 }}>
+                  <input
+                    type="text"
+                    className="input"
+                    placeholder="Item name"
+                    value={liName}
+                    onChange={(e) => setLiName(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") addLineItem(); }}
+                    style={{ flex: 1 }}
+                  />
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    className="input"
+                    placeholder="Qty"
+                    value={liQty}
+                    onChange={(e) => setLiQty(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") addLineItem(); }}
+                    style={{ width: 52, textAlign: "right" }}
+                  />
+                  <span style={{ fontSize: 11, color: "var(--fg-subtle)" }}>×</span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    className="input"
+                    placeholder="Price"
+                    value={liPrice}
+                    onChange={(e) => setLiPrice(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") addLineItem(); }}
+                    style={{ width: 80, textAlign: "right" }}
+                  />
+                  <button className="btn ghost" onClick={addLineItem} style={{ whiteSpace: "nowrap" }}>
+                    Add
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="modal-foot">

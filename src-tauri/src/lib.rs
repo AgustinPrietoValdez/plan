@@ -128,6 +128,12 @@ pub fn run() {
             sql: include_str!("../migrations/0015_events_project_category.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 16,
+            description: "budget v2: expense name, savings percent allocation, expense line items",
+            sql: include_str!("../migrations/0016_budget_v2.sql"),
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
