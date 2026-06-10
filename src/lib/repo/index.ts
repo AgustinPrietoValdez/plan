@@ -3,6 +3,8 @@ import type { Repo } from "./types";
 
 export const repo: Repo = localRepo;
 export type {
+  AutomationCreate,
+  AutomationPatch,
   BudgetUpsert,
   CategoryCreate,
   EventCreate,

@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { CalendarEvent, SavingsGoal, ShoppingItem, Task } from "../types";
 import {
   repo,
+  type AutomationCreate, type AutomationPatch,
   type BudgetUpsert,
   type CategoryCreate, type CategoryPatch,
   type EventCreate, type EventPatch,
@@ -28,6 +29,7 @@ import {
 } from "./repo";
 
 const KEYS = {
+  automations: ["automations"] as const,
   events: ["events"] as const,
   tasks: ["tasks"] as const,
   projects: ["projects"] as const,
@@ -789,5 +791,34 @@ export function useDeleteEvent() {
   return useMutation({
     mutationFn: (id: string) => repo.deleteEvent(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.events }),
+  });
+}
+
+export function useAutomations() {
+  return useQuery({ queryKey: KEYS.automations, queryFn: () => repo.listAutomations() });
+}
+
+export function useCreateAutomation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: AutomationCreate) => repo.createAutomation(input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.automations }),
+  });
+}
+
+export function usePatchAutomation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: AutomationPatch }) =>
+      repo.patchAutomation(id, patch),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.automations }),
+  });
+}
+
+export function useDeleteAutomation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => repo.deleteAutomation(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.automations }),
   });
 }

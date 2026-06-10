@@ -1,4 +1,5 @@
 import type {
+  Automation,
   Budget,
   CalendarEvent,
   Category,
@@ -102,6 +103,16 @@ export type MealLogCreate = Pick<MealLog, "eatenOn" | "mealSlot" | "recipeId" | 
 export type ComprasSettingsUpsert = Partial<
   Pick<ComprasSettings, "mealTimes" | "expiryWarnDays" | "notificationsEnabled" | "dkkPerUsd">
 >;
+
+export type AutomationCreate = Pick<Automation, "name" | "kind"> & {
+  projectId?: string | null;
+  config?: Record<string, unknown>;
+  trigger?: "manual" | "scheduled";
+  schedule?: string | null;
+  enabled?: boolean;
+  notes?: string;
+};
+export type AutomationPatch = Partial<Omit<Automation, "id" | "createdAt" | "version">>;
 
 export type EventCreate = Pick<CalendarEvent, "title" | "day"> & {
   startTime?: string | null;
@@ -243,4 +254,9 @@ export interface Repo {
   createEvent(input: EventCreate): Promise<CalendarEvent>;
   patchEvent(id: string, patch: EventPatch): Promise<CalendarEvent>;
   deleteEvent(id: string): Promise<void>;
+
+  listAutomations(): Promise<Automation[]>;
+  createAutomation(input: AutomationCreate): Promise<Automation>;
+  patchAutomation(id: string, patch: AutomationPatch): Promise<Automation>;
+  deleteAutomation(id: string): Promise<void>;
 }

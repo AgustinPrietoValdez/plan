@@ -310,6 +310,23 @@ export interface MealLog {
   version: number;
 }
 
+export interface Automation {
+  id: string;
+  projectId: string | null;
+  name: string;
+  kind: string;
+  config: Record<string, unknown>;
+  trigger: "manual" | "scheduled";
+  schedule: string | null;
+  enabled: boolean;
+  notes: string;
+  lastRunAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+  version: number;
+}
+
 export interface CalendarEvent {
   id: string;
   title: string;

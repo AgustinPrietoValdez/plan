@@ -112,6 +112,7 @@ export const IAlert = (p: IconProps) => (
     <path d="M12 10v5M12 18h.01" />
   </Icon>
 );
+export const IBolt = (p: IconProps) => <Icon {...p} d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />;
 export const IBox = (p: IconProps) => (
   <Icon {...p}>
     <path d="M21 8v12a1 1 0 01-1 1H4a1 1 0 01-1-1V8" />

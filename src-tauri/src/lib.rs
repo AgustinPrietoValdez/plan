@@ -152,6 +152,12 @@ pub fn run() {
             sql: include_str!("../migrations/0019_ingredients_category_id.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 20,
+            description: "add automations table (local-only)",
+            sql: include_str!("../migrations/0020_automations.sql"),
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()

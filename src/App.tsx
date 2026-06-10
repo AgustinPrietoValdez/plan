@@ -14,6 +14,7 @@ import { CategoryManager } from "./components/CategoryManager";
 import { CompletionModal } from "./components/CompletionModal";
 import { ComprasView } from "./components/ComprasView";
 import { CafeView } from "./components/CafeView";
+import { AutomationsView } from "./components/AutomationsView";
 import { HomeView } from "./components/HomeView";
 import { AreaTabs } from "./components/AreaTabs";
 import { DayView } from "./components/DayView";
@@ -206,7 +207,7 @@ function App() {
           setView(CALENDARIO_TABS[n - 1].view);
         }
       } else if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && (e.metaKey || e.ctrlKey)) {
-        if (view === "home" || view === "cafe" || view === "project" || view === "recurring" || view === "budget" || view === "habits" || view === "compras") return;
+        if (view === "home" || view === "cafe" || view === "project" || view === "recurring" || view === "budget" || view === "habits" || view === "compras" || view === "automations") return;
         const d = fromYmd(viewDate);
         const dir = e.key === "ArrowLeft" ? -1 : 1;
         if (view === "month") d.setMonth(d.getMonth() + dir);
@@ -307,6 +308,7 @@ function App() {
           {view === "habits" && <HabitsView />}
           {view === "compras" && <ComprasView />}
           {view === "cafe" && <CafeView />}
+          {view === "automations" && <AutomationsView />}
         </div>
       </div>
       <DragOverlay dropAnimation={null}>

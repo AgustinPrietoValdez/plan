@@ -5,7 +5,7 @@ import { onSyncStatus, type SyncStatus } from "../lib/sync";
 import { todayYmd } from "../lib/date";
 import { useApp } from "../lib/store";
 import { useCategories, useProjects, useTasks } from "../lib/queries";
-import { IChevD, ICal, ICheck, ICircle, IHabit, IInbox, IList, IPlus, IRecurring, ISearch } from "./icons";
+import { IChevD, ICal, ICheck, ICircle, IHabit, IBolt, IInbox, IList, IPlus, IRecurring, ISearch } from "./icons";
 import { MiniMonth } from "./MiniMonth";
 
 const SIDEBAR_CATEGORIES_LIMIT = 5;
@@ -140,6 +140,13 @@ export function Sidebar() {
             title="Cafe"
           >
             <span style={{ width: 14, textAlign: "center", fontSize: 13, lineHeight: 1 }}>☕</span> Café
+          </div>
+          <div
+            className={`nav-item ${view === "automations" ? "active" : ""}`}
+            onClick={() => setView("automations")}
+            title="Automatizaciones"
+          >
+            <IBolt size={14} /> Automatizaciones
           </div>
         </div>
       </div>

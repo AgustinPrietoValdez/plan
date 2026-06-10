@@ -1,4 +1,5 @@
 import type {
+  Automation,
   Budget,
   CalendarEvent,
   Category,
@@ -35,6 +36,8 @@ import { boolFromDb, getDb, parseJson } from "../db";
 import type {
   BudgetUpsert,
   CategoryCreate,
+  AutomationCreate,
+  AutomationPatch,
   EventCreate,
   ExpenseCategoryCreate,
   ExpenseCreate,
@@ -1983,6 +1986,92 @@ export const localRepo: Repo = {
     );
     await enqueue(userId, "delete", "events", id, null);
   },
+
+  // ---------- automations (local-only — no enqueue) ----------
+  async listAutomations() {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const rows = await db.select<DbAutomationRow[]>(
+      "SELECT * FROM automations WHERE user_id = ? AND deleted_at IS NULL ORDER BY created_at ASC",
+      [userId],
+    );
+    return rows.map(fromDbAutomation);
+  },
+
+  async createAutomation(input: AutomationCreate) {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const ts = now();
+    const automation: Automation = {
+      id: newId(),
+      projectId: input.projectId ?? null,
+      name: input.name,
+      kind: input.kind,
+      config: input.config ?? {},
+      trigger: input.trigger ?? "manual",
+      schedule: input.schedule ?? null,
+      enabled: input.enabled ?? true,
+      notes: input.notes ?? "",
+      lastRunAt: null,
+      createdAt: ts,
+      updatedAt: ts,
+      deletedAt: null,
+      version: 1,
+    };
+    await db.execute(
+      `INSERT INTO automations
+        (id, user_id, project_id, name, kind, config, trigger, schedule, enabled, notes, last_run_at, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        automation.id, userId, automation.projectId, automation.name, automation.kind,
+        JSON.stringify(automation.config), automation.trigger, automation.schedule,
+        automation.enabled ? 1 : 0, automation.notes, null,
+        automation.createdAt, automation.updatedAt, null, 1,
+      ],
+    );
+    return automation;
+  },
+
+  async patchAutomation(id: string, patch: AutomationPatch) {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const rows = await db.select<DbAutomationRow[]>(
+      "SELECT * FROM automations WHERE id = ? AND user_id = ? AND deleted_at IS NULL LIMIT 1",
+      [id, userId],
+    );
+    if (!rows[0]) throw new Error(`Automation ${id} not found`);
+    const existing = fromDbAutomation(rows[0]);
+    const updated: Automation = {
+      ...existing,
+      ...patch,
+      id: existing.id,
+      createdAt: existing.createdAt,
+      updatedAt: now(),
+      version: existing.version + 1,
+    };
+    await db.execute(
+      `UPDATE automations SET project_id = ?, name = ?, kind = ?, config = ?, trigger = ?,
+         schedule = ?, enabled = ?, notes = ?, last_run_at = ?, updated_at = ?, deleted_at = ?, version = ?
+       WHERE id = ? AND user_id = ?`,
+      [
+        updated.projectId, updated.name, updated.kind, JSON.stringify(updated.config),
+        updated.trigger, updated.schedule, updated.enabled ? 1 : 0, updated.notes,
+        updated.lastRunAt, updated.updatedAt, updated.deletedAt, updated.version,
+        id, userId,
+      ],
+    );
+    return updated;
+  },
+
+  async deleteAutomation(id: string) {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const ts = now();
+    await db.execute(
+      "UPDATE automations SET deleted_at = ?, updated_at = ?, version = version + 1 WHERE id = ? AND user_id = ?",
+      [ts, ts, id, userId],
+    );
+  },
 };
 
 // ---------- "wire" helpers: shapes that go into the outbox payload to send
@@ -2904,5 +2993,42 @@ function expenseLineItemToWire(li: ExpenseLineItem, userId: string) {
     updated_at: li.updatedAt,
     deleted_at: li.deletedAt,
     version: li.version,
+  };
+}
+
+interface DbAutomationRow {
+  id: string;
+  user_id: string;
+  project_id: string | null;
+  name: string;
+  kind: string;
+  config: string;
+  trigger: "manual" | "scheduled";
+  schedule: string | null;
+  enabled: number;
+  notes: string;
+  last_run_at: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+  version: number;
+}
+
+function fromDbAutomation(r: DbAutomationRow): Automation {
+  return {
+    id: r.id,
+    projectId: r.project_id,
+    name: r.name,
+    kind: r.kind,
+    config: parseJson<Record<string, unknown>>(r.config, {}),
+    trigger: r.trigger,
+    schedule: r.schedule,
+    enabled: boolFromDb(r.enabled),
+    notes: r.notes,
+    lastRunAt: r.last_run_at,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    deletedAt: r.deleted_at,
+    version: r.version,
   };
 }

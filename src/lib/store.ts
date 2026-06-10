@@ -12,7 +12,8 @@ export type View =
   | "budget"
   | "habits"
   | "compras"
-  | "cafe";
+  | "cafe"
+  | "automations";
 
 /** The 4 top-level areas (the Home cards). "home" is the dashboard container. */
 export type Area = "home" | "calendario" | "presupuesto" | "compras" | "cafe";
@@ -29,6 +30,7 @@ export const AREA_OF_VIEW: Record<View, Area> = {
   budget: "presupuesto",
   compras: "compras",
   cafe: "cafe",
+  automations: "home",
 };
 
 /** Default leaf view when entering an area (e.g. from a Home card or Shift+N). */
