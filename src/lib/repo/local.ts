@@ -14,6 +14,7 @@ import type {
   SavingsGoal,
   ShoppingItem,
   Ingredient,
+  IngredientCategory,
   IngredientDimension,
   IngredientPresentation,
   InventoryItem,
@@ -45,6 +46,7 @@ import type {
   SavingsContributionUpsert,
   SavingsGoalCreate,
   ShoppingItemCreate,
+  IngredientCategoryCreate,
   IngredientCreate,
   IngredientPresentationCreate,
   RecipeCreate,
@@ -172,6 +174,7 @@ async function enqueue(
     | "projects"
     | "categories"
     | "expense_categories"
+    | "ingredient_categories"
     | "expenses"
     | "budgets"
     | "savings_goals"
@@ -1176,6 +1179,84 @@ export const localRepo: Repo = {
   },
 
   // ---------- ingredients ----------
+  // ---------- ingredient categories ----------
+  async listIngredientCategories() {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const rows = await db.select<DbIngredientCategoryRow[]>(
+      "SELECT * FROM ingredient_categories WHERE user_id = ? AND deleted_at IS NULL ORDER BY position ASC",
+      [userId],
+    );
+    return rows.map(fromDbIngredientCategory);
+  },
+
+  async createIngredientCategory(input: IngredientCategoryCreate) {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const ts = now();
+    const cat: IngredientCategory = {
+      id: newId(),
+      name: input.name,
+      hue: input.hue,
+      position: input.position ?? 0,
+      archived: false,
+      createdAt: ts,
+      updatedAt: ts,
+      deletedAt: null,
+      version: 1,
+    };
+    await db.execute(
+      `INSERT INTO ingredient_categories
+        (id, user_id, name, hue, position, archived, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [cat.id, userId, cat.name, cat.hue, cat.position, 0, cat.createdAt, cat.updatedAt, null, 1],
+    );
+    await enqueue(userId, "insert", "ingredient_categories", cat.id, ingredientCategoryToWire(cat, userId));
+    return cat;
+  },
+
+  async patchIngredientCategory(id, patch) {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const rows = await db.select<DbIngredientCategoryRow[]>(
+      "SELECT * FROM ingredient_categories WHERE id = ? AND user_id = ? AND deleted_at IS NULL LIMIT 1",
+      [id, userId],
+    );
+    if (!rows[0]) throw new Error(`Ingredient category ${id} not found`);
+    const existing = fromDbIngredientCategory(rows[0]);
+    const updated: IngredientCategory = {
+      ...existing,
+      ...patch,
+      id: existing.id,
+      createdAt: existing.createdAt,
+      updatedAt: now(),
+      version: existing.version + 1,
+    };
+    await db.execute(
+      `UPDATE ingredient_categories SET name = ?, hue = ?, position = ?, archived = ?, updated_at = ?, deleted_at = ?, version = ?
+       WHERE id = ? AND user_id = ?`,
+      [
+        updated.name, updated.hue, updated.position, updated.archived ? 1 : 0,
+        updated.updatedAt, updated.deletedAt, updated.version,
+        id, userId,
+      ],
+    );
+    await enqueue(userId, "update", "ingredient_categories", id, ingredientCategoryToWire(updated, userId));
+    return updated;
+  },
+
+  async deleteIngredientCategory(id) {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const ts = now();
+    await db.execute(
+      "UPDATE ingredient_categories SET deleted_at = ?, updated_at = ?, version = version + 1 WHERE id = ? AND user_id = ?",
+      [ts, ts, id, userId],
+    );
+    await enqueue(userId, "delete", "ingredient_categories", id, null);
+  },
+
+  // ---------- ingredients ----------
   async listIngredients() {
     const userId = await requireUserId();
     const db = await getDb();
@@ -1193,6 +1274,7 @@ export const localRepo: Repo = {
     const ing: Ingredient = {
       id: newId(),
       name: input.name,
+      categoryId: input.categoryId ?? null,
       dimension: input.dimension,
       shelfLifeDays: input.shelfLifeDays,
       createdAt: ts,
@@ -1202,9 +1284,9 @@ export const localRepo: Repo = {
     };
     await db.execute(
       `INSERT INTO ingredients
-        (id, user_id, name, dimension, shelf_life_days, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [ing.id, userId, ing.name, ing.dimension, ing.shelfLifeDays, ing.createdAt, ing.updatedAt, null, 1],
+        (id, user_id, name, category_id, dimension, shelf_life_days, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [ing.id, userId, ing.name, ing.categoryId, ing.dimension, ing.shelfLifeDays, ing.createdAt, ing.updatedAt, null, 1],
     );
     await enqueue(userId, "insert", "ingredients", ing.id, ingredientToWire(ing, userId));
     return ing;
@@ -1228,10 +1310,10 @@ export const localRepo: Repo = {
       version: existing.version + 1,
     };
     await db.execute(
-      `UPDATE ingredients SET name = ?, dimension = ?, shelf_life_days = ?, updated_at = ?, deleted_at = ?, version = ?
+      `UPDATE ingredients SET name = ?, category_id = ?, dimension = ?, shelf_life_days = ?, updated_at = ?, deleted_at = ?, version = ?
        WHERE id = ? AND user_id = ?`,
       [
-        updated.name, updated.dimension, updated.shelfLifeDays,
+        updated.name, updated.categoryId, updated.dimension, updated.shelfLifeDays,
         updated.updatedAt, updated.deletedAt, updated.version,
         id, userId,
       ],
@@ -2316,10 +2398,53 @@ function shoppingItemToWire(s: ShoppingItem, userId: string) {
   };
 }
 
+interface DbIngredientCategoryRow {
+  id: string;
+  user_id: string;
+  name: string;
+  hue: number;
+  position: number;
+  archived: number;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+  version: number;
+}
+
+function fromDbIngredientCategory(r: DbIngredientCategoryRow): IngredientCategory {
+  return {
+    id: r.id,
+    name: r.name,
+    hue: r.hue,
+    position: r.position,
+    archived: boolFromDb(r.archived),
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    deletedAt: r.deleted_at,
+    version: r.version,
+  };
+}
+
+function ingredientCategoryToWire(c: IngredientCategory, userId: string) {
+  return {
+    id: c.id,
+    user_id: userId,
+    name: c.name,
+    hue: c.hue,
+    position: c.position,
+    archived: c.archived ? 1 : 0,
+    created_at: c.createdAt,
+    updated_at: c.updatedAt,
+    deleted_at: c.deletedAt,
+    version: c.version,
+  };
+}
+
 interface DbIngredientRow {
   id: string;
   user_id: string;
   name: string;
+  category_id: string | null;
   dimension: string;
   shelf_life_days: number | null;
   created_at: string;
@@ -2332,6 +2457,7 @@ function fromDbIngredient(r: DbIngredientRow): Ingredient {
   return {
     id: r.id,
     name: r.name,
+    categoryId: r.category_id ?? null,
     dimension: r.dimension as IngredientDimension,
     shelfLifeDays: r.shelf_life_days,
     createdAt: r.created_at,
@@ -2346,6 +2472,7 @@ function ingredientToWire(i: Ingredient, userId: string) {
     id: i.id,
     user_id: userId,
     name: i.name,
+    category_id: i.categoryId,
     dimension: i.dimension,
     shelf_life_days: i.shelfLifeDays,
     created_at: i.createdAt,

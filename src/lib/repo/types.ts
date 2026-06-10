@@ -9,6 +9,7 @@ import type {
   HabitLog,
   Income,
   Ingredient,
+  IngredientCategory,
   IngredientPresentation,
   InventoryItem,
   MealLog,
@@ -51,6 +52,9 @@ export type CategoryPatch = Partial<Omit<Category, "id" | "createdAt" | "version
 
 export type ExpenseCategoryCreate = Pick<ExpenseCategory, "name" | "hue"> & { position?: number };
 export type ExpenseCategoryPatch = Partial<Omit<ExpenseCategory, "id" | "createdAt" | "version">>;
+
+export type IngredientCategoryCreate = Pick<IngredientCategory, "name" | "hue"> & { position?: number };
+export type IngredientCategoryPatch = Partial<Omit<IngredientCategory, "id" | "createdAt" | "version">>;
 
 export type ExpenseCreate = Pick<
   Expense,
@@ -111,7 +115,7 @@ export type EventCreate = Pick<CalendarEvent, "title" | "day"> & {
 
 export type EventPatch = Partial<Omit<CalendarEvent, "id" | "createdAt" | "version">>;
 
-export type IngredientCreate = Pick<Ingredient, "name" | "dimension" | "shelfLifeDays">;
+export type IngredientCreate = Pick<Ingredient, "name" | "categoryId" | "dimension" | "shelfLifeDays">;
 export type IngredientPatch = Partial<Omit<Ingredient, "id" | "createdAt" | "version">>;
 
 export type IngredientPresentationCreate = Pick<
@@ -187,6 +191,11 @@ export interface Repo {
   createShoppingItem(input: ShoppingItemCreate): Promise<ShoppingItem>;
   patchShoppingItem(id: string, patch: ShoppingItemPatch): Promise<ShoppingItem>;
   deleteShoppingItem(id: string): Promise<void>;
+
+  listIngredientCategories(): Promise<IngredientCategory[]>;
+  createIngredientCategory(input: IngredientCategoryCreate): Promise<IngredientCategory>;
+  patchIngredientCategory(id: string, patch: IngredientCategoryPatch): Promise<IngredientCategory>;
+  deleteIngredientCategory(id: string): Promise<void>;
 
   listIngredients(): Promise<Ingredient[]>;
   createIngredient(input: IngredientCreate): Promise<Ingredient>;

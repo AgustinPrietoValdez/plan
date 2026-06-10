@@ -14,6 +14,7 @@ import {
   type SavingsContributionUpsert,
   type SavingsGoalCreate, type SavingsGoalPatch,
   type ShoppingItemCreate, type ShoppingItemPatch,
+  type IngredientCategoryCreate, type IngredientCategoryPatch,
   type IngredientCreate, type IngredientPatch,
   type IngredientPresentationCreate, type IngredientPresentationPatch,
   type RecipeCreate, type RecipePatch,
@@ -40,6 +41,7 @@ const KEYS = {
   incomes: ["incomes"] as const,
   habitLogs: ["habit_logs"] as const,
   shoppingItems: ["shopping_items"] as const,
+  ingredientCategories: ["ingredient_categories"] as const,
   ingredients: ["ingredients"] as const,
   ingredientPresentations: ["ingredient_presentations"] as const,
   recipes: ["recipes"] as const,
@@ -461,6 +463,39 @@ export function useDeleteShoppingItem() {
   return useMutation({
     mutationFn: (id: string) => repo.deleteShoppingItem(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.shoppingItems }),
+  });
+}
+
+// ---------- ingredient categories ----------
+export function useIngredientCategories() {
+  return useQuery({ queryKey: KEYS.ingredientCategories, queryFn: () => repo.listIngredientCategories() });
+}
+
+export function useCreateIngredientCategory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: IngredientCategoryCreate) => repo.createIngredientCategory(input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.ingredientCategories }),
+  });
+}
+
+export function usePatchIngredientCategory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: IngredientCategoryPatch }) =>
+      repo.patchIngredientCategory(id, patch),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.ingredientCategories }),
+  });
+}
+
+export function useDeleteIngredientCategory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => repo.deleteIngredientCategory(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEYS.ingredientCategories });
+      qc.invalidateQueries({ queryKey: KEYS.ingredients });
+    },
   });
 }
 

@@ -87,6 +87,18 @@ export interface ExpenseCategory {
   version: number;
 }
 
+export interface IngredientCategory {
+  id: string;
+  name: string;
+  hue: number;
+  position: number;
+  archived: boolean;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+  version: number;
+}
+
 export interface Expense {
   id: string;
   name: string;
@@ -201,6 +213,7 @@ export type IngredientDimension = "weight" | "volume" | "count";
 export interface Ingredient {
   id: string;
   name: string;
+  categoryId: string | null;
   dimension: IngredientDimension;
   shelfLifeDays: number | null;
   createdAt: string;

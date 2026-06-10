@@ -21,7 +21,7 @@ import {
   useUpsertIncome,
 } from "../lib/queries";
 import { useApp } from "../lib/store";
-import type { Expense, ExpenseCategory, ExpenseLineItem, SavingsContribution, SavingsGoal } from "../types";
+import type { Expense, ExpenseCategory, ExpenseLineItem, SavingsGoal } from "../types";
 import { IChevD, IChevL, IChevR, IChevU, IPlus, IRecurring } from "./icons";
 import { SpendingPie } from "./SpendingPie";
 

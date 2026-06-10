@@ -10,6 +10,8 @@ export type {
   CategoryPatch,
   ExpenseCategoryCreate,
   ExpenseCategoryPatch,
+  IngredientCategoryCreate,
+  IngredientCategoryPatch,
   ExpenseCreate,
   ExpensePatch,
   ExpenseLineItemCreate,

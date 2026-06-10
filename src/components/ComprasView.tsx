@@ -19,6 +19,7 @@ import {
   useDeleteSavedList,
   useDeleteShoppingItem,
   useIngredientPresentations,
+  useIngredientCategories,
   useIngredients,
   useInventory,
   useMealLogs,
@@ -35,7 +36,6 @@ import {
   aggregateNeed,
   findMergeTarget,
   neededToShoppingItems,
-  suggestRecipesForExpiringLots,
 } from "../lib/compras";
 import type { ShoppingItemCreate } from "../lib/repo";
 import { fmtMoney, fmtUsdFromDkk } from "../lib/money";
@@ -53,6 +53,7 @@ import {
 } from "../lib/units";
 import type {
   Ingredient,
+  IngredientCategory,
   IngredientDimension,
   IngredientPresentation,
   MealSlot,
@@ -61,7 +62,9 @@ import type {
   RecipeIngredient,
   ShoppingItem,
 } from "../types";
-import { IAlert, IBox, ICart, IChevD, IChevL, IChevR, IFork, IPlus, ITrash, IX } from "./icons";
+import { colorsForHue } from "../lib/categoryColor";
+import { IngredientCategoryManager } from "./IngredientCategoryManager";
+import { IChevD, IChevL, IChevR, IPlus, ITrash, IX } from "./icons";
 
 const MEAL_TYPE_LABELS: Record<MealType, string> = {
   breakfast_snack: "Desayuno / Merienda",
@@ -129,10 +132,9 @@ function IconBtn({ onClick, title, children, danger }: { onClick: () => void; ti
   );
 }
 
-type Tab = "inicio" | "ingredientes" | "recetas" | "listas" | "plan" | "inventario" | "ajustes";
+type Tab = "ingredientes" | "recetas" | "listas" | "plan" | "inventario" | "ajustes";
 
 const TABS: { id: Tab; label: string; ready: boolean }[] = [
-  { id: "inicio", label: "Inicio", ready: true },
   { id: "ingredientes", label: "Ingredientes", ready: true },
   { id: "recetas", label: "Recetas", ready: true },
   { id: "listas", label: "Listas", ready: true },
@@ -142,7 +144,7 @@ const TABS: { id: Tab; label: string; ready: boolean }[] = [
 ];
 
 export function ComprasView() {
-  const [tab, setTab] = useState<Tab>("inicio");
+  const [tab, setTab] = useState<Tab>("listas");
 
   return (
     <div className="day-view-main" style={{ flex: 1, minHeight: 0 }}>
@@ -221,12 +223,10 @@ export function ComprasView() {
           flex: 1,
           display: "flex",
           flexDirection: "column",
-          overflowY: tab === "inicio" ? "hidden" : "auto",
+          overflowY: "auto",
         }}
       >
-        {tab === "inicio" ? (
-          <DashboardPanel onGoTo={setTab} />
-        ) : tab === "ingredientes" ? (
+        {tab === "ingredientes" ? (
           <IngredientesPanel />
         ) : tab === "recetas" ? (
           <RecetasPanel />
@@ -239,324 +239,6 @@ export function ComprasView() {
         ) : (
           <AjustesPanel />
         )}
-      </div>
-    </div>
-  );
-}
-
-// ---------------- Dashboard (Inicio) ----------------
-
-function DashCard({
-  title,
-  icon,
-  tone,
-  onVer,
-  children,
-}: {
-  title: string;
-  icon: ReactNode;
-  tone: string;
-  onVer?: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <div
-      className="compras-dash-card"
-      role={onVer ? "button" : undefined}
-      tabIndex={onVer ? 0 : undefined}
-      onClick={onVer}
-      onKeyDown={onVer ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onVer(); } } : undefined}
-      style={{ ["--card-tone" as string]: tone, background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: 12, padding: "clamp(14px, 1.4vw, 28px)", display: "flex", flexDirection: "column", gap: 10, height: "100%", minHeight: 0, overflow: "hidden", position: "relative", cursor: onVer ? "pointer" : "default", transition: "transform .15s, border-color .15s, box-shadow .15s" }}
-    >
-      <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 4, background: tone, borderRadius: "12px 0 0 12px" }} />
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <span style={{
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          width: 28,
-          height: 28,
-          borderRadius: 8,
-          color: tone,
-          background: `color-mix(in oklch, ${tone} 18%, var(--bg))`,
-        }}>{icon}</span>
-        <div style={{ fontSize: "clamp(12px, 0.95vw, 16px)", textTransform: "uppercase", letterSpacing: ".06em", color: tone, fontWeight: 700, flex: 1 }}>{title}</div>
-        {onVer && (
-          <span
-            aria-hidden
-            style={{
-              border: `1px solid color-mix(in oklch, ${tone} 40%, transparent)`,
-              background: `color-mix(in oklch, ${tone} 12%, transparent)`,
-              color: tone,
-              fontSize: 11,
-              fontWeight: 600,
-              padding: "3px 9px",
-              borderRadius: 999,
-            }}
-          >
-            Ver →
-          </span>
-        )}
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1, minHeight: 0, overflowY: "auto" }}>
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function DashEmpty({ text, cta, onCta }: { text: string; cta?: string; onCta?: () => void }) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 10, color: "var(--fg-subtle)" }}>
-      <div style={{ fontSize: "clamp(13px, 1.3vmin, 18px)" }}>{text}</div>
-      {cta && onCta && (
-        <button className="btn ghost" style={{ fontSize: "clamp(12px, 1.2vmin, 16px)" }} onClick={onCta}>
-          {cta}
-        </button>
-      )}
-    </div>
-  );
-}
-
-const SUGGEST_TONE = "oklch(0.68 0.16 60)";
-
-function DashboardPanel({ onGoTo }: { onGoTo: (t: Tab) => void }) {
-  const weekStart = mondayOfThisWeek();
-  const recipesQ = useRecipes();
-  const recipeIngredientsQ = useRecipeIngredients();
-  const entriesQ = useMealPlanEntries();
-  const mealLogsQ = useMealLogs();
-  const itemsQ = useShoppingItems();
-  const presentationsQ = useIngredientPresentations();
-  const inventoryQ = useInventory();
-  const ingredientsQ = useIngredients();
-  const usdRate = useUsdRate();
-
-  const recipeById = useMemo(() => {
-    const m = new Map<string, Recipe>();
-    for (const r of recipesQ.data ?? []) m.set(r.id, r);
-    return m;
-  }, [recipesQ.data]);
-  const ingredientById = useMemo(() => {
-    const m = new Map<string, Ingredient>();
-    for (const i of ingredientsQ.data ?? []) m.set(i.id, i);
-    return m;
-  }, [ingredientsQ.data]);
-  const priceById = useMemo(() => {
-    const m = new Map<string, number | null>();
-    for (const p of presentationsQ.data ?? []) m.set(p.id, p.price);
-    return m;
-  }, [presentationsQ.data]);
-
-  const entries = useMemo(
-    () => (entriesQ.data ?? []).filter((e) => e.weekStart === weekStart),
-    [entriesQ.data, weekStart],
-  );
-  const eatenByRecipe = useMemo(() => {
-    const weekEnd = shiftWeek(weekStart, 1);
-    const m = new Map<string, number>();
-    for (const log of mealLogsQ.data ?? []) {
-      if (log.eatenOn >= weekStart && log.eatenOn < weekEnd) m.set(log.recipeId, (m.get(log.recipeId) ?? 0) + log.servings);
-    }
-    return m;
-  }, [mealLogsQ.data, weekStart]);
-
-  const items = itemsQ.data ?? [];
-  const pending = items.filter((i) => !i.bought);
-  const listTotal = items.reduce((s, it) => s + (it.presentationId ? (priceById.get(it.presentationId) ?? 0) * it.quantity : 0), 0);
-  const remainingEntries = entries.filter((e) => e.targetServings - (eatenByRecipe.get(e.recipeId) ?? 0) > 0);
-  const recetasRestantes = remainingEntries.length;
-  const lotsCount = inventoryQ.data?.length ?? 0;
-
-  const today = todayYmd();
-  const soonLimit = ymd((() => { const d = fromYmd(today); d.setDate(d.getDate() + 3); return d; })());
-  const expiringSoon = useMemo(
-    () => (inventoryQ.data ?? [])
-      .filter((l) => l.expiresOn != null && l.expiresOn <= soonLimit)
-      .sort((a, b) => (a.expiresOn ?? "").localeCompare(b.expiresOn ?? "")),
-    [inventoryQ.data, soonLimit],
-  );
-
-  const planHasContent = remainingEntries.length > 0;
-
-  const suggestions = useMemo(
-    () => suggestRecipesForExpiringLots(
-      inventoryQ.data ?? [],
-      recipesQ.data ?? [],
-      recipeIngredientsQ.data ?? [],
-      5,
-    ).slice(0, 3),
-    [inventoryQ.data, recipesQ.data, recipeIngredientsQ.data],
-  );
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16, flex: 1, minHeight: 0 }}>
-      {suggestions.length > 0 && (
-        <div
-          role="button"
-          tabIndex={0}
-          onClick={() => onGoTo("recetas")}
-          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onGoTo("recetas"); } }}
-          className="compras-dash-card"
-          style={{
-            ["--card-tone" as string]: SUGGEST_TONE,
-            background: "var(--bg-elev)",
-            border: "1px solid var(--line)",
-            borderRadius: 12,
-            padding: "12px 16px",
-            display: "flex",
-            alignItems: "center",
-            gap: 14,
-            cursor: "pointer",
-            position: "relative",
-            overflow: "hidden",
-            transition: "transform .15s, border-color .15s, box-shadow .15s",
-          }}
-        >
-          <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 4, background: SUGGEST_TONE, borderRadius: "12px 0 0 12px" }} />
-          <span style={{
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            width: 28,
-            height: 28,
-            borderRadius: 8,
-            color: SUGGEST_TONE,
-            background: `color-mix(in oklch, ${SUGGEST_TONE} 18%, var(--bg))`,
-            flex: "none",
-          }}>
-            <IFork size={16} />
-          </span>
-          <div style={{ display: "flex", flexDirection: "column", gap: 2, flex: "none" }}>
-            <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", color: SUGGEST_TONE, fontWeight: 700 }}>
-              Te conviene cocinar
-            </div>
-            <div style={{ fontSize: 11.5, color: "var(--fg-muted)" }}>
-              Usá lo que vence en los próximos 5 días
-            </div>
-          </div>
-          <div style={{ flex: 1, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", justifyContent: "flex-end" }}>
-            {suggestions.map((s) => {
-              const ingNames = s.matchedIngredientIds
-                .map((id) => ingredientById.get(id)?.name)
-                .filter((n): n is string => !!n);
-              const title = `Usa ${ingNames.join(", ")} · vence ${s.earliestExpiry}`;
-              return (
-                <span
-                  key={s.recipe.id}
-                  title={title}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 6,
-                    fontSize: 12.5,
-                    fontWeight: 600,
-                    color: SUGGEST_TONE,
-                    background: `color-mix(in oklch, ${SUGGEST_TONE} 14%, var(--bg))`,
-                    border: `1px solid color-mix(in oklch, ${SUGGEST_TONE} 45%, transparent)`,
-                    padding: "5px 10px",
-                    borderRadius: 999,
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  <span style={{ width: 6, height: 6, borderRadius: "50%", background: SUGGEST_TONE, flex: "none" }} />
-                  {s.recipe.name}
-                </span>
-              );
-            })}
-          </div>
-          <span
-            aria-hidden
-            style={{
-              flex: "none",
-              border: `1px solid color-mix(in oklch, ${SUGGEST_TONE} 40%, transparent)`,
-              background: `color-mix(in oklch, ${SUGGEST_TONE} 12%, transparent)`,
-              color: SUGGEST_TONE,
-              fontSize: 11,
-              fontWeight: 600,
-              padding: "3px 9px",
-              borderRadius: 999,
-            }}
-          >
-            Ver →
-          </span>
-        </div>
-      )}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gridTemplateRows: "1fr 1fr", gap: 16, flex: 1, minHeight: 0 }}>
-      <DashCard title="Plan de la semana" icon={<IFork size={16} />} tone="var(--accent)" onVer={() => onGoTo("plan")}>
-        {planHasContent ? (
-          <>
-            <div style={{ fontSize: "clamp(44px, 9vmin, 180px)", fontWeight: 700, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{recetasRestantes}</div>
-            <div style={{ fontSize: "clamp(14px, 2vmin, 30px)", color: "var(--fg-muted)" }}>recetas restantes</div>
-            {remainingEntries.map((e) => {
-              const r = recipeById.get(e.recipeId);
-              const remaining = Math.max(0, e.targetServings - (eatenByRecipe.get(e.recipeId) ?? 0));
-              return (
-                <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "clamp(15px, 1.9vmin, 28px)" }}>
-                  <span style={{ flex: 1 }}>{r?.name ?? "—"}</span>
-                  <span style={{ color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums" }}>
-                    quedan {remaining}/{e.targetServings}
-                  </span>
-                </div>
-              );
-            })}
-          </>
-        ) : (
-          <DashEmpty
-            text={entries.length === 0 ? "No planeaste recetas esta semana." : "Ya comiste todo lo planeado."}
-            cta={entries.length === 0 ? "Planificar la semana →" : "Ver plan →"}
-            onCta={() => onGoTo("plan")}
-          />
-        )}
-      </DashCard>
-
-      <DashCard title="Lista de la compra" icon={<ICart size={16} />} tone="var(--ok)" onVer={() => onGoTo("listas")}>
-        {pending.length === 0 && items.length === 0 ? (
-          <DashEmpty text="Tu lista está vacía." cta="Armar lista →" onCta={() => onGoTo("listas")} />
-        ) : (
-          <>
-            <div style={{ fontSize: "clamp(44px, 9vmin, 180px)", fontWeight: 700, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{pending.length}</div>
-            <div style={{ fontSize: "clamp(14px, 2vmin, 30px)", color: "var(--fg-muted)" }}>productos por comprar</div>
-            {listTotal > 0 && (
-              <div style={{ fontSize: "clamp(15px, 1.9vmin, 28px)", color: "var(--fg)", fontWeight: 600 }}>
-                {fmtMoney(listTotal)} <span style={{ color: "var(--fg-muted)", fontWeight: 500 }}>≈ {fmtUsdFromDkk(listTotal, usdRate)}</span>
-              </div>
-            )}
-          </>
-        )}
-      </DashCard>
-
-      <DashCard title="Por vencer" icon={<IAlert size={16} />} tone="var(--warn)" onVer={() => onGoTo("inventario")}>
-        {expiringSoon.length === 0 ? (
-          <DashEmpty text="Nada vence en los próximos días." />
-        ) : (
-          <>
-            <div style={{ fontSize: "clamp(44px, 9vmin, 180px)", fontWeight: 700, lineHeight: 1, fontVariantNumeric: "tabular-nums", color: "var(--warn)" }}>{expiringSoon.length}</div>
-            <div style={{ fontSize: "clamp(14px, 2vmin, 30px)", color: "var(--fg-muted)" }}>productos por vencer</div>
-            {expiringSoon.slice(0, 6).map((l) => {
-              const ing = ingredientById.get(l.ingredientId);
-              const expired = l.expiresOn != null && l.expiresOn <= today;
-              return (
-                <div key={l.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "clamp(15px, 1.9vmin, 28px)" }}>
-                  <span style={{ flex: 1 }}>{ing?.name ?? "—"}</span>
-                  <span style={{ color: expired ? "var(--danger)" : "var(--warn)" }}>{expired ? "vencido" : `vence ${l.expiresOn}`}</span>
-                </div>
-              );
-            })}
-          </>
-        )}
-      </DashCard>
-
-      <DashCard title="Inventario" icon={<IBox size={16} />} tone="oklch(0.62 0.17 305)" onVer={() => onGoTo("inventario")}>
-        {lotsCount === 0 ? (
-          <DashEmpty text="No cargaste stock todavía." cta="Cargar inventario →" onCta={() => onGoTo("inventario")} />
-        ) : (
-          <>
-            <div style={{ fontSize: "clamp(44px, 9vmin, 180px)", fontWeight: 700, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{lotsCount}</div>
-            <div style={{ fontSize: "clamp(14px, 2vmin, 30px)", color: "var(--fg-muted)" }}>lotes en stock</div>
-          </>
-        )}
-      </DashCard>
       </div>
     </div>
   );
@@ -676,8 +358,11 @@ function AjustesPanel() {
 function IngredientesPanel() {
   const ingredientsQ = useIngredients();
   const presentationsQ = useIngredientPresentations();
+  const categoriesQ = useIngredientCategories();
   const ingredients = useMemo(() => ingredientsQ.data ?? [], [ingredientsQ.data]);
   const presentations = useMemo(() => presentationsQ.data ?? [], [presentationsQ.data]);
+  const categories = useMemo(() => (categoriesQ.data ?? []).filter((c) => !c.archived), [categoriesQ.data]);
+  const [showCategoryManager, setShowCategoryManager] = useState(false);
 
   const byIngredient = useMemo(() => {
     const m = new Map<string, IngredientPresentation[]>();
@@ -689,25 +374,42 @@ function IngredientesPanel() {
     return m;
   }, [presentations]);
 
+  const categoryById = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12, maxWidth: 720 }}>
-      <NewIngredientForm />
-      {ingredients.length === 0 ? (
-        <div style={{ fontSize: 12.5, color: "var(--fg-subtle)", padding: "8px 2px" }}>
-          Todavía no cargaste ingredientes.
+    <>
+      {showCategoryManager && <IngredientCategoryManager onClose={() => setShowCategoryManager(false)} />}
+      <div style={{ display: "flex", flexDirection: "column", gap: 12, maxWidth: 720 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ flex: 1 }} />
+          <button className="btn ghost" style={{ fontSize: 12 }} onClick={() => setShowCategoryManager(true)}>
+            Categorías
+          </button>
         </div>
-      ) : (
-        ingredients.map((ing) => (
-          <IngredientRow key={ing.id} ingredient={ing} presentations={byIngredient.get(ing.id) ?? []} />
-        ))
-      )}
-    </div>
+        <NewIngredientForm categories={categories} />
+        {ingredients.length === 0 ? (
+          <div style={{ fontSize: 12.5, color: "var(--fg-subtle)", padding: "8px 2px" }}>
+            Todavía no cargaste ingredientes.
+          </div>
+        ) : (
+          ingredients.map((ing) => (
+            <IngredientRow
+              key={ing.id}
+              ingredient={ing}
+              presentations={byIngredient.get(ing.id) ?? []}
+              category={ing.categoryId ? categoryById.get(ing.categoryId) : undefined}
+            />
+          ))
+        )}
+      </div>
+    </>
   );
 }
 
-function NewIngredientForm() {
+function NewIngredientForm({ categories }: { categories: IngredientCategory[] }) {
   const createIngredient = useCreateIngredient();
   const [name, setName] = useState("");
+  const [categoryId, setCategoryId] = useState("");
   const [dimension, setDimension] = useState<IngredientDimension>("count");
   const [shelf, setShelf] = useState("");
 
@@ -717,10 +419,12 @@ function NewIngredientForm() {
     const days = shelf.trim() ? Number(shelf) : null;
     createIngredient.mutate({
       name: trimmed,
+      categoryId: categoryId || null,
       dimension,
       shelfLifeDays: days != null && Number.isFinite(days) ? days : null,
     });
     setName("");
+    setCategoryId("");
     setShelf("");
     setDimension("count");
   };
@@ -751,6 +455,18 @@ function NewIngredientForm() {
       />
       <select
         className="input"
+        value={categoryId}
+        onChange={(e) => setCategoryId(e.target.value)}
+        title="Categoría del ingrediente"
+        style={{ width: 160 }}
+      >
+        <option value="">Sin categoría</option>
+        {categories.map((c) => (
+          <option key={c.id} value={c.id}>{c.name}</option>
+        ))}
+      </select>
+      <select
+        className="input"
         value={dimension}
         onChange={(e) => setDimension(e.target.value as IngredientDimension)}
         title="Tipo de medida"
@@ -779,9 +495,11 @@ function NewIngredientForm() {
 function IngredientRow({
   ingredient,
   presentations,
+  category,
 }: {
   ingredient: Ingredient;
   presentations: IngredientPresentation[];
+  category?: IngredientCategory;
 }) {
   const deleteIngredient = useDeleteIngredient();
   const createPresentation = useCreateIngredientPresentation();
@@ -821,6 +539,9 @@ function IngredientRow({
           <IChevD size={14} />
         </span>
         <span style={{ fontSize: 14, fontWeight: 600, flex: 1 }}>{ingredient.name}</span>
+        {category && (
+          <Pill tone={colorsForHue(category.hue).bg} title="Categoría">{category.name}</Pill>
+        )}
         <Pill tone={DIMENSION_TONE[ingredient.dimension]} title="Tipo de medida">
           {DIMENSION_LABELS[ingredient.dimension]}
         </Pill>
@@ -2004,6 +1725,7 @@ function ListProductAdder({ onAdd }: { onAdd: (it: ShoppingItemCreate) => void }
     if (!name || amt == null || amt <= 0) return;
     const ing = await createIngredient.mutateAsync({
       name,
+      categoryId: null,
       dimension: nDim,
       shelfLifeDays: nShelf.trim() ? Number(nShelf) || null : null,
     });

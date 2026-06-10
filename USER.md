@@ -17,6 +17,9 @@ tabla es priorizar y dar el diseño; el codigo lo hace Claude cuando se lo pido.
 | [#3](https://github.com/AgustinPrietoValdez/plan/issues/3) | Escribir desde el CLI sin cerrar la app | IMPLEMENTADO, falta verificar | Rebuild (`npm run tauri dev`), probar `plan_cli.py check` con la app abierta, y si anda cerrar el issue con comentario |
 | [#4](https://github.com/AgustinPrietoValdez/plan/issues/4) | Habitos no se atrasan: un dia saltado lapsa, no queda leftover rojo | IMPLEMENTADO (commit 35cc7e5), falta verificar | Instalar el build nuevo (wizard), confirmar que los habitos no salen rojos/atrasados y que el tracker sigue bien; cerrar el issue con comentario |
 | [#5](https://github.com/AgustinPrietoValdez/plan/issues/5) | Fase 1 implementada: Home dashboard + navegacion por areas | CERRADO 2026-06-10 | Nada (aprobado y verificado en vivo; commit c379243) |
+| [#6](https://github.com/AgustinPrietoValdez/plan/issues/6) | Fase 2a: Eventos (CalendarEvent) | CERRADO 2026-06-10 | Nada (verificado y aprobado; commit 5a86aaf) |
+| [#7](https://github.com/AgustinPrietoValdez/plan/issues/7) | Fase 3: Presupuesto - rediseno layout, gastos inline, ahorros por % | CERRADO 2026-06-10 | Nada (verificado y aprobado; commit 3973db4) |
+| [#8](https://github.com/AgustinPrietoValdez/plan/issues/8) | Fase 4: Compras - default lista, generacion semanal, categorias ingredientes | ABIERTO | Aprobar el diseño presentado por Claude y decir "dale" |
 
 ## Como marcar un issue como resuelto (asi Claude se entera)
 

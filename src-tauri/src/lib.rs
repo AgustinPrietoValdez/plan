@@ -134,6 +134,24 @@ pub fn run() {
             sql: include_str!("../migrations/0016_budget_v2.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 17,
+            description: "add ingredient_categories + category_id to ingredients",
+            sql: include_str!("../migrations/0017_ingredient_category.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 18,
+            description: "ingredient_categories table (idempotent fallback)",
+            sql: include_str!("../migrations/0018_ingredient_categories_table.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 19,
+            description: "rebuild ingredients table to ensure category_id column",
+            sql: include_str!("../migrations/0019_ingredients_category_id.sql"),
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
