@@ -1,8 +1,9 @@
-import { type ReactNode, useRef, useEffect, useState } from "react";
+import React, { type ReactNode, useRef, useEffect, useState } from "react";
 import { todayYmd, fromYmd, ymd, addDays } from "../lib/date";
 import { useApp } from "../lib/store";
 import {
   useTasks,
+  useEvents,
   useExpenses,
   useExpenseCategories,
   useBudgets,
@@ -18,14 +19,15 @@ import { colorsForHue } from "../lib/categoryColor";
 import { suggestRecipesForExpiringLots } from "../lib/compras";
 import { SpendingPie } from "./SpendingPie";
 import { ICal, ICart } from "./icons";
-import type { Task } from "../types";
+import type { CalendarEvent, Task } from "../types";
 
 export function HomeView() {
-  const { setView, budgetMonth } = useApp();
+  const { setView, budgetMonth, openEventCreate } = useApp();
   const today = todayYmd();
   const soon = ymd(addDays(fromYmd(today), 3));
 
   const tasks = useTasks().data ?? [];
+  const allEvents = useEvents().data ?? [];
   const expenses = useExpenses().data ?? [];
   const expenseCategories = (useExpenseCategories().data ?? []).filter((c) => !c.archived);
   const budgets = useBudgets().data ?? [];
@@ -76,9 +78,11 @@ export function HomeView() {
   }, []);
 
   const todayTasks = tasks.filter((t) => !t.deletedAt && !t.done && t.day === today);
-  const upcoming = tasks
-    .filter((t) => !t.deletedAt && !t.done && t.day !== null && t.day > today)
-    .sort((a, b) => (a.day! < b.day! ? -1 : 1));
+
+  const in7 = ymd(addDays(fromYmd(today), 7));
+  const upcomingEvents = allEvents
+    .filter((e) => !e.deletedAt && e.day >= today && e.day <= in7)
+    .sort((a, b) => a.day < b.day ? -1 : a.day > b.day ? 1 : (a.startTime ?? "") < (b.startTime ?? "") ? -1 : 1);
 
   // ---- Presupuesto ----
   const monthExpenses = expenses.filter((e) => !e.deletedAt && (e.spentOn ?? "").slice(0, 7) === budgetMonth);
@@ -135,19 +139,25 @@ export function HomeView() {
 
             <div style={{ height: 1, background: "var(--line)", flexShrink: 0 }} />
 
-            {/* Próximos */}
+            {/* Próximos eventos */}
             <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
-              <GroupLabel>Próximos días</GroupLabel>
+              <div style={{ display: "flex", alignItems: "center" }}>
+                <GroupLabel style={{ flex: 1 }}>Eventos · {upcomingEvents.length}</GroupLabel>
+                <button
+                  className="icon-btn"
+                  style={{ width: 18, height: 18, marginBottom: 4 }}
+                  onClick={() => openEventCreate({ day: today })}
+                  title="Nuevo evento"
+                >
+                  <span style={{ fontSize: 14, lineHeight: 1 }}>+</span>
+                </button>
+              </div>
               <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
-                {upcoming.length === 0 ? (
-                  <TaskRow dotColor="var(--fg-subtle)" muted>Nada agendado</TaskRow>
+                {upcomingEvents.length === 0 ? (
+                  <TaskRow dotColor="var(--accent)" muted>Sin eventos próximos</TaskRow>
                 ) : (
-                  upcoming.slice(0, calSlots).map((t) => (
-                    <TaskRow key={t.id} dotColor={taskDotColor(t.projectId)} task={t} muted>
-                      <span style={{ opacity: 0.65 }}>{t.day?.slice(5)}</span>
-                      {" · "}
-                      {t.title}
-                    </TaskRow>
+                  upcomingEvents.slice(0, calSlots).map((ev) => (
+                    <EventRow key={ev.id} event={ev} />
                   ))
                 )}
               </div>
@@ -273,10 +283,33 @@ function Card({
 
 // ---- Primitives ----
 
-function GroupLabel({ children }: { children: ReactNode }) {
+function GroupLabel({ children, style }: { children: ReactNode; style?: React.CSSProperties }) {
   return (
-    <div style={{ fontSize: "clamp(11px, 0.85vw, 15px)", textTransform: "uppercase", letterSpacing: ".06em", fontWeight: 700, color: "var(--fg-muted)", flexShrink: 0, paddingBottom: 4 }}>
+    <div style={{ fontSize: "clamp(11px, 0.85vw, 15px)", textTransform: "uppercase", letterSpacing: ".06em", fontWeight: 700, color: "var(--fg-muted)", flexShrink: 0, paddingBottom: 4, ...style }}>
       {children}
+    </div>
+  );
+}
+
+function EventRow({ event }: { event: CalendarEvent }) {
+  const timeStr = event.startTime
+    ? event.endTime
+      ? `${event.startTime}–${event.endTime}`
+      : event.startTime
+    : event.day.slice(5);
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: "clamp(5px, 0.5vw, 10px)",
+      flex: 1, minHeight: 16, overflow: "hidden",
+    }}>
+      <span style={{ width: "clamp(7px, 0.6vw, 11px)", height: "clamp(7px, 0.6vw, 11px)", borderRadius: 3, background: "var(--accent)", flexShrink: 0 }} />
+      <span style={{
+        fontSize: "clamp(11px, 0.85vw, 15px)", color: "var(--fg-muted)",
+        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1,
+      }}>
+        <span style={{ color: "var(--accent)", opacity: 0.85, marginRight: 4 }}>{timeStr}</span>
+        {event.title}
+      </span>
     </div>
   );
 }

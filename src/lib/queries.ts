@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ShoppingItem, Task } from "../types";
+import type { CalendarEvent, ShoppingItem, Task } from "../types";
 import {
   repo,
   type BudgetUpsert,
   type CategoryCreate, type CategoryPatch,
+  type EventCreate, type EventPatch,
   type ExpenseCategoryCreate, type ExpenseCategoryPatch,
   type ExpenseCreate, type ExpensePatch,
   type HabitLogUpsert,
@@ -25,6 +26,7 @@ import {
 } from "./repo";
 
 const KEYS = {
+  events: ["events"] as const,
   tasks: ["tasks"] as const,
   projects: ["projects"] as const,
   categories: ["categories"] as const,
@@ -662,5 +664,48 @@ export function useUpsertComprasSettings() {
   return useMutation({
     mutationFn: (input: ComprasSettingsUpsert) => repo.upsertComprasSettings(input),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.comprasSettings }),
+  });
+}
+
+// ---------- events ----------
+export function useEvents() {
+  return useQuery({ queryKey: KEYS.events, queryFn: () => repo.listEvents() });
+}
+
+export function useCreateEvent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: EventCreate) => repo.createEvent(input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.events }),
+  });
+}
+
+export function usePatchEvent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: EventPatch }) => repo.patchEvent(id, patch),
+    onMutate: async ({ id, patch }) => {
+      await qc.cancelQueries({ queryKey: KEYS.events });
+      const previous = qc.getQueryData<CalendarEvent[]>(KEYS.events);
+      if (previous) {
+        qc.setQueryData<CalendarEvent[]>(
+          KEYS.events,
+          previous.map((e) => (e.id === id ? { ...e, ...patch } : e)),
+        );
+      }
+      return { previous };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.previous) qc.setQueryData(KEYS.events, ctx.previous);
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: KEYS.events }),
+  });
+}
+
+export function useDeleteEvent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => repo.deleteEvent(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.events }),
   });
 }

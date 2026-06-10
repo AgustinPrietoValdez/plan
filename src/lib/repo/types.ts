@@ -1,5 +1,6 @@
 import type {
   Budget,
+  CalendarEvent,
   Category,
   ComprasSettings,
   Expense,
@@ -89,6 +90,18 @@ export type MealLogCreate = Pick<MealLog, "eatenOn" | "mealSlot" | "recipeId" | 
 export type ComprasSettingsUpsert = Partial<
   Pick<ComprasSettings, "mealTimes" | "expiryWarnDays" | "notificationsEnabled" | "dkkPerUsd">
 >;
+
+export type EventCreate = Pick<CalendarEvent, "title" | "day"> & {
+  startTime?: string | null;
+  endTime?: string | null;
+  location?: string;
+  notifyMinutesBefore?: number | null;
+  notes?: string;
+  categoryId?: string | null;
+  projectId?: string | null;
+};
+
+export type EventPatch = Partial<Omit<CalendarEvent, "id" | "createdAt" | "version">>;
 
 export type IngredientCreate = Pick<Ingredient, "name" | "dimension" | "shelfLifeDays">;
 export type IngredientPatch = Partial<Omit<Ingredient, "id" | "createdAt" | "version">>;
@@ -203,4 +216,9 @@ export interface Repo {
 
   getComprasSettings(): Promise<ComprasSettings | null>;
   upsertComprasSettings(input: ComprasSettingsUpsert): Promise<ComprasSettings>;
+
+  listEvents(): Promise<CalendarEvent[]>;
+  createEvent(input: EventCreate): Promise<CalendarEvent>;
+  patchEvent(id: string, patch: EventPatch): Promise<CalendarEvent>;
+  deleteEvent(id: string): Promise<void>;
 }

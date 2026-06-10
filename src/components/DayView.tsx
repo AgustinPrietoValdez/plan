@@ -1,29 +1,35 @@
 import { useDraggable, useDroppable } from "@dnd-kit/core";
+import { useState } from "react";
 import { DOW_SHORT, MONTH_NAME, fromYmd } from "../lib/date";
 import { categoryFor, projectFor } from "../lib/categoryFor";
 import { colorsForCategory } from "../lib/categoryColor";
 import { fmtDuration, priLabel } from "../lib/format";
 import { vars } from "../lib/style";
 import { useApp } from "../lib/store";
-import { useCategories, useProjects, useTasks } from "../lib/queries";
+import { useCategories, useEvents, useProjects, useTasks } from "../lib/queries";
 import { isNotFinished } from "../lib/taskState";
-import type { Category, Project, Task } from "../types";
+import type { CalendarEvent, Category, Project, Task } from "../types";
 import { CategoryPie } from "./CategoryPie";
-import { ICheck, IClock, IRecurring } from "./icons";
+import { ICheck, ICal, IClock, IPlus, IRecurring } from "./icons";
 
 interface Props {
   onTaskClick: (task: Task) => void;
   onToggleDone: (task: Task) => void;
+  onEventClick: (event: CalendarEvent) => void;
+  onNewEvent: (day: string) => void;
 }
 
-export function DayView({ onTaskClick, onToggleDone }: Props) {
+export function DayView({ onTaskClick, onToggleDone, onEventClick, onNewEvent }: Props) {
   const tasksQ = useTasks();
   const projectsQ = useProjects();
   const categoriesQ = useCategories();
+  const eventsQ = useEvents();
   const allTasks = tasksQ.data ?? [];
   const projects = projectsQ.data ?? [];
   const categories = categoriesQ.data ?? [];
-  const { viewDate, filterCategoryId } = useApp();
+  const allEvents = eventsQ.data ?? [];
+  const { viewDate, filterCategoryId, openCreate } = useApp();
+  const [panel, setPanel] = useState<"tasks" | "events">("tasks");
 
   const tasks = filterCategoryId
     ? allTasks.filter((t) => categoryFor(t, categories, projects)?.id === filterCategoryId)
@@ -33,6 +39,9 @@ export function DayView({ onTaskClick, onToggleDone }: Props) {
 
   const vd = fromYmd(viewDate);
   const dayTasks = tasks.filter((t) => t.day === viewDate);
+  const dayEvents = allEvents
+    .filter((e) => !e.deletedAt && e.day === viewDate)
+    .sort((a, b) => (a.startTime ?? "00:00") < (b.startTime ?? "00:00") ? -1 : 1);
   const open = dayTasks.filter((t) => !t.done);
   const done = dayTasks.filter((t) => t.done);
   const totalMin = open.reduce((s, t) => s + (t.duration || 0), 0);
@@ -42,6 +51,11 @@ export function DayView({ onTaskClick, onToggleDone }: Props) {
     const k = t.projectId ?? "_none";
     (byProject[k] = byProject[k] ?? []).push(t);
   });
+
+  const onNew = () => {
+    if (panel === "events") onNewEvent(viewDate);
+    else openCreate({ day: viewDate });
+  };
 
   return (
     <div className="day-view">
@@ -82,85 +96,140 @@ export function DayView({ onTaskClick, onToggleDone }: Props) {
           </div>
         </div>
 
-        {open.length === 0 && done.length === 0 && (
-          <div
-            style={{
-              padding: "40px 12px",
-              textAlign: "center",
-              color: "var(--fg-subtle)",
-              fontSize: 13,
-              border: "1px dashed var(--line)",
-              borderRadius: 10,
-            }}
+        {/* Panel filter */}
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span
+            className={`chip ${panel === "tasks" ? "active" : ""}`}
+            onClick={() => setPanel("tasks")}
+            style={{ cursor: "pointer" }}
           >
-            Nothing scheduled.
-            <br />
-            <span style={{ fontSize: 12 }}>Drag a task from the strip above to plan this day.</span>
-          </div>
-        )}
+            Tareas · {open.length + done.length}
+          </span>
+          <span
+            className={`chip ${panel === "events" ? "active" : ""}`}
+            onClick={() => setPanel("events")}
+            style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}
+          >
+            <ICal size={11} stroke={2} />
+            Eventos · {dayEvents.length}
+          </span>
+          <div style={{ flex: 1 }} />
+          <button
+            className="icon-btn"
+            style={{ width: 24, height: 24 }}
+            onClick={onNew}
+            title={panel === "events" ? "Nuevo evento" : "Nueva tarea"}
+          >
+            <IPlus size={13} />
+          </button>
+        </div>
 
-        {Object.entries(byProject).map(([k, list]) => {
-          const proj = k === "_none" ? null : projects.find((p) => p.id === k) ?? null;
-          const projCat = proj
-            ? categories.find((c) => c.id === proj.categoryId) ?? null
-            : null;
-          const dotBg = projCat ? colorsForCategory(projCat).bg : "var(--bg-sunken)";
-          return (
-            <div key={k} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {panel === "events" ? (
+          <>
+            {dayEvents.length === 0 ? (
               <div
                 style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  fontSize: 11,
-                  color: "var(--fg-muted)",
-                  textTransform: "uppercase",
-                  letterSpacing: ".05em",
-                  fontWeight: 600,
+                  padding: "40px 12px",
+                  textAlign: "center",
+                  color: "var(--fg-subtle)",
+                  fontSize: 13,
+                  border: "1px dashed var(--line)",
+                  borderRadius: 10,
                 }}
               >
-                <span style={{ width: 8, height: 8, borderRadius: 2, background: dotBg }} />
-                {proj ? proj.name : "No project"}
-                <span style={{ color: "var(--fg-subtle)" }}>· {list.length}</span>
+                Sin eventos para este día.
+                <br />
+                <span style={{ fontSize: 12 }}>Tocá + para agregar uno.</span>
               </div>
-              {list.map((t) => (
-                <DayRow
-                  key={t.id}
-                  task={t}
-                  onClick={onTaskClick}
-                  onToggle={onToggleDone}
-                  categories={categories}
-                  projects={projects}
-                />
-              ))}
-            </div>
-          );
-        })}
+            ) : (
+              dayEvents.map((ev) => (
+                <EventRow key={ev.id} event={ev} onClick={onEventClick} />
+              ))
+            )}
+          </>
+        ) : (
+          <>
+            {open.length === 0 && done.length === 0 && (
+              <div
+                style={{
+                  padding: "40px 12px",
+                  textAlign: "center",
+                  color: "var(--fg-subtle)",
+                  fontSize: 13,
+                  border: "1px dashed var(--line)",
+                  borderRadius: 10,
+                }}
+              >
+                Nothing scheduled.
+                <br />
+                <span style={{ fontSize: 12 }}>Drag a task from the strip above to plan this day.</span>
+              </div>
+            )}
 
-        {done.length > 0 && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
-            <div
-              style={{
-                fontSize: 11,
-                color: "var(--fg-subtle)",
-                textTransform: "uppercase",
-                letterSpacing: ".05em",
-                fontWeight: 600,
-              }}
-            >
-              Done · {done.length}
-            </div>
-            {done.map((t) => (
-              <DayRow
-                key={t.id}
-                task={t}
-                onClick={onTaskClick}
-                onToggle={onToggleDone}
-                categories={categories}
-                projects={projects}
-              />
-            ))}
-          </div>
+            {Object.entries(byProject).map(([k, list]) => {
+              const proj = k === "_none" ? null : projects.find((p) => p.id === k) ?? null;
+              const projCat = proj
+                ? categories.find((c) => c.id === proj.categoryId) ?? null
+                : null;
+              const dotBg = projCat ? colorsForCategory(projCat).bg : "var(--bg-sunken)";
+              return (
+                <div key={k} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      fontSize: 11,
+                      color: "var(--fg-muted)",
+                      textTransform: "uppercase",
+                      letterSpacing: ".05em",
+                      fontWeight: 600,
+                    }}
+                  >
+                    <span style={{ width: 8, height: 8, borderRadius: 2, background: dotBg }} />
+                    {proj ? proj.name : "No project"}
+                    <span style={{ color: "var(--fg-subtle)" }}>· {list.length}</span>
+                  </div>
+                  {list.map((t) => (
+                    <DayRow
+                      key={t.id}
+                      task={t}
+                      onClick={onTaskClick}
+                      onToggle={onToggleDone}
+                      categories={categories}
+                      projects={projects}
+                    />
+                  ))}
+                </div>
+              );
+            })}
+
+            {done.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
+                <div
+                  style={{
+                    fontSize: 11,
+                    color: "var(--fg-subtle)",
+                    textTransform: "uppercase",
+                    letterSpacing: ".05em",
+                    fontWeight: 600,
+                  }}
+                >
+                  Done · {done.length}
+                </div>
+                {done.map((t) => (
+                  <DayRow
+                    key={t.id}
+                    task={t}
+                    onClick={onTaskClick}
+                    onToggle={onToggleDone}
+                    categories={categories}
+                    projects={projects}
+                  />
+                ))}
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -273,6 +342,42 @@ function DayRow({
             )}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function EventRow({
+  event,
+  onClick,
+}: {
+  event: CalendarEvent;
+  onClick: (e: CalendarEvent) => void;
+}) {
+  const timeLabel =
+    event.startTime
+      ? event.endTime
+        ? `${event.startTime} – ${event.endTime}`
+        : event.startTime
+      : null;
+  return (
+    <div
+      style={{
+        display: "flex", alignItems: "flex-start", gap: 10, padding: "8px 10px",
+        borderRadius: 8, background: "var(--accent-soft)", cursor: "pointer",
+        border: "1px solid transparent",
+      }}
+      onClick={() => onClick(event)}
+      onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.filter = "brightness(0.95)"; }}
+      onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.filter = ""; }}
+    >
+      <ICal size={14} stroke={1.8} style={{ color: "var(--accent)", flex: "0 0 auto", marginTop: 1 }} />
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={{ fontSize: 13, fontWeight: 500, color: "var(--fg)" }}>{event.title}</div>
+        <div style={{ fontSize: 11, color: "var(--accent)", display: "flex", gap: 8, flexWrap: "wrap", marginTop: 2 }}>
+          {timeLabel && <span>{timeLabel}</span>}
+          {event.location && <span style={{ color: "var(--fg-muted)" }}>@ {event.location}</span>}
+        </div>
       </div>
     </div>
   );

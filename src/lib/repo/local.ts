@@ -1,5 +1,6 @@
 import type {
   Budget,
+  CalendarEvent,
   Category,
   ComprasSettings,
   Expense,
@@ -32,6 +33,7 @@ import { boolFromDb, getDb, parseJson } from "../db";
 import type {
   BudgetUpsert,
   CategoryCreate,
+  EventCreate,
   ExpenseCategoryCreate,
   ExpenseCreate,
   HabitLogUpsert,
@@ -183,7 +185,8 @@ async function enqueue(
     | "meal_plan_entries"
     | "inventory"
     | "meal_log"
-    | "compras_settings",
+    | "compras_settings"
+    | "events",
   entityId: string,
   payload: unknown,
 ): Promise<void> {
@@ -1715,6 +1718,89 @@ export const localRepo: Repo = {
     }
     return merged;
   },
+
+  async listEvents() {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const rows = await db.select<DbEventRow[]>(
+      "SELECT * FROM events WHERE user_id = ? AND deleted_at IS NULL",
+      [userId],
+    );
+    return rows.map(fromDbEvent);
+  },
+
+  async createEvent(input: EventCreate) {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const ts = now();
+    const event: CalendarEvent = {
+      id: newId(),
+      title: input.title,
+      day: input.day,
+      startTime: input.startTime ?? null,
+      endTime: input.endTime ?? null,
+      location: input.location ?? "",
+      notifyMinutesBefore: input.notifyMinutesBefore ?? null,
+      notes: input.notes ?? "",
+      categoryId: input.categoryId ?? null,
+      projectId: input.projectId ?? null,
+      createdAt: ts,
+      updatedAt: ts,
+      deletedAt: null,
+      version: 1,
+    };
+    await db.execute(
+      `INSERT INTO events
+        (id, user_id, title, day, start_time, end_time, location, notify_minutes_before, notes, category_id, project_id, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [event.id, userId, event.title, event.day, event.startTime, event.endTime, event.location,
+       event.notifyMinutesBefore, event.notes, event.categoryId, event.projectId,
+       event.createdAt, event.updatedAt, null, 1],
+    );
+    await enqueue(userId, "insert", "events", event.id, eventToWire(event, userId));
+    return event;
+  },
+
+  async patchEvent(id, patch) {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const rows = await db.select<DbEventRow[]>(
+      "SELECT * FROM events WHERE id = ? AND user_id = ? AND deleted_at IS NULL LIMIT 1",
+      [id, userId],
+    );
+    if (!rows[0]) throw new Error(`Event ${id} not found`);
+    const existing = fromDbEvent(rows[0]);
+    const updated: CalendarEvent = {
+      ...existing,
+      ...patch,
+      id: existing.id,
+      createdAt: existing.createdAt,
+      updatedAt: now(),
+      version: existing.version + 1,
+    };
+    await db.execute(
+      `UPDATE events SET title = ?, day = ?, start_time = ?, end_time = ?, location = ?,
+         notify_minutes_before = ?, notes = ?, category_id = ?, project_id = ?,
+         updated_at = ?, deleted_at = ?, version = ?
+       WHERE id = ? AND user_id = ?`,
+      [updated.title, updated.day, updated.startTime, updated.endTime, updated.location,
+       updated.notifyMinutesBefore, updated.notes, updated.categoryId, updated.projectId,
+       updated.updatedAt, updated.deletedAt, updated.version, id, userId],
+    );
+    await enqueue(userId, "update", "events", id, eventToWire(updated, userId));
+    return updated;
+  },
+
+  async deleteEvent(id) {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const ts = now();
+    await db.execute(
+      "UPDATE events SET deleted_at = ?, updated_at = ?, version = version + 1 WHERE id = ? AND user_id = ?",
+      [ts, ts, id, userId],
+    );
+    await enqueue(userId, "delete", "events", id, null);
+  },
 };
 
 // ---------- "wire" helpers: shapes that go into the outbox payload to send
@@ -2483,5 +2569,62 @@ function comprasSettingsToWire(s: ComprasSettings, userId: string) {
     updated_at: s.updatedAt,
     deleted_at: s.deletedAt,
     version: s.version,
+  };
+}
+
+interface DbEventRow {
+  id: string;
+  user_id: string;
+  title: string;
+  day: string;
+  start_time: string | null;
+  end_time: string | null;
+  location: string;
+  notify_minutes_before: number | null;
+  notes: string;
+  category_id: string | null;
+  project_id: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+  version: number;
+}
+
+function fromDbEvent(r: DbEventRow): CalendarEvent {
+  return {
+    id: r.id,
+    title: r.title,
+    day: r.day,
+    startTime: r.start_time,
+    endTime: r.end_time,
+    location: r.location,
+    notifyMinutesBefore: r.notify_minutes_before,
+    notes: r.notes,
+    categoryId: r.category_id,
+    projectId: r.project_id,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    deletedAt: r.deleted_at,
+    version: r.version,
+  };
+}
+
+function eventToWire(e: CalendarEvent, userId: string) {
+  return {
+    id: e.id,
+    user_id: userId,
+    title: e.title,
+    day: e.day,
+    start_time: e.startTime,
+    end_time: e.endTime,
+    location: e.location,
+    notify_minutes_before: e.notifyMinutesBefore,
+    notes: e.notes,
+    category_id: e.categoryId,
+    project_id: e.projectId,
+    created_at: e.createdAt,
+    updated_at: e.updatedAt,
+    deleted_at: e.deletedAt,
+    version: e.version,
   };
 }

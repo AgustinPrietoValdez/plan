@@ -18,6 +18,7 @@ import { HomeView } from "./components/HomeView";
 import { AreaTabs } from "./components/AreaTabs";
 import { DayView } from "./components/DayView";
 import { ExpenseCategoryManager } from "./components/ExpenseCategoryManager";
+import { EventEditor } from "./components/EventEditor";
 import { ExpenseEditor } from "./components/ExpenseEditor";
 import { HabitsView } from "./components/HabitsView";
 import { MonthView } from "./components/MonthView";
@@ -34,13 +35,14 @@ import { WeekView } from "./components/WeekView";
 import { DragGhost } from "./components/dnd/DragGhost";
 import { useSession } from "./lib/auth";
 import { fromYmd, todayYmd, ymd } from "./lib/date";
+import { useApp, AREA_OF_VIEW, CALENDARIO_TABS, type View } from "./lib/store";
 import { useCategories, useHabitLogs, usePatchTask, useProjects, useTasks } from "./lib/queries";
+import type { CalendarEvent } from "./types";
 import { useRealtimeSync } from "./lib/realtime";
 import { useRollForwardRecurringTasks } from "./lib/rollForward";
 import { useSeedDefaultCategories } from "./lib/seedCategories";
 import { useSeedDefaultExpenseCategories } from "./lib/seedExpenseCategories";
 import { useExternalChangesPoller } from "./lib/externalChanges";
-import { useApp, AREA_OF_VIEW, CALENDARIO_TABS, type View } from "./lib/store";
 import { useSyncEngine } from "./lib/sync";
 import type { Task } from "./types";
 
@@ -70,12 +72,16 @@ function App() {
     closeSavingsGoalManager,
     expenseEditor,
     closeExpenseEditor,
+    eventEditor,
+    closeEventEditor,
+    openEventEdit,
+    openEventCreate,
   } = useApp();
 
   const tasksQ = useTasks();
   const projectsQ = useProjects();
   const categoriesQ = useCategories();
-  const habitLogsQ = useHabitLogs();
+  useHabitLogs();
   const tasks = tasksQ.data ?? [];
   const projects = projectsQ.data ?? [];
   const categories = categoriesQ.data ?? [];
@@ -109,6 +115,8 @@ function App() {
   const onAddNew = () => openCreate({});
   const onAddNewWithPrefill = (prefill: Partial<Task>) => openCreate(prefill);
   const onOpenTask = (t: Task) => openEdit(t.id);
+  const onOpenEvent = (ev: CalendarEvent) => openEventEdit(ev.id);
+  const onNewEvent = (day: string) => openEventCreate({ day });
 
   const onToggleDone = (t: Task) => {
     if (t.done) {
@@ -169,7 +177,8 @@ function App() {
     expenseCategoryManagerOpen ||
     budgetManagerOpen ||
     savingsGoalManagerOpen ||
-    expenseEditor.mode !== "closed";
+    expenseEditor.mode !== "closed" ||
+    eventEditor.mode !== "closed";
 
   // keyboard shortcuts
   useEffect(() => {
@@ -268,10 +277,24 @@ function App() {
               onTaskClick={onOpenTask}
               onDayClick={onMonthDayClick}
               onToggleDone={onToggleDone}
+              onEventClick={onOpenEvent}
             />
           )}
-          {view === "week" && <WeekView onTaskClick={onOpenTask} onToggleDone={onToggleDone} />}
-          {view === "day" && <DayView onTaskClick={onOpenTask} onToggleDone={onToggleDone} />}
+          {view === "week" && (
+            <WeekView
+              onTaskClick={onOpenTask}
+              onToggleDone={onToggleDone}
+              onEventClick={onOpenEvent}
+            />
+          )}
+          {view === "day" && (
+            <DayView
+              onTaskClick={onOpenTask}
+              onToggleDone={onToggleDone}
+              onEventClick={onOpenEvent}
+              onNewEvent={onNewEvent}
+            />
+          )}
           {view === "project" && (
             <ProjectView
               onTaskClick={onOpenTask}
@@ -296,7 +319,12 @@ function App() {
         <TaskEditor mode="edit" task={editingTask} onClose={closeEditor} />
       )}
       {editor.mode === "create" && (
-        <TaskEditor mode="create" prefill={editor.prefill} onClose={closeEditor} />
+        <TaskEditor
+          mode="create"
+          prefill={editor.prefill}
+          onClose={closeEditor}
+          onSwitchToEvent={() => { closeEditor(); openEventCreate({}); }}
+        />
       )}
       {completingTask && (
         <CompletionModal task={completingTask} onClose={closeCompletion} />
@@ -311,6 +339,17 @@ function App() {
       )}
       {expenseEditor.mode === "create" && (
         <ExpenseEditor mode="create" prefill={expenseEditor.prefill} onClose={closeExpenseEditor} />
+      )}
+      {eventEditor.mode === "edit" && (
+        <EventEditor mode="edit" eventId={eventEditor.eventId} onClose={closeEventEditor} />
+      )}
+      {eventEditor.mode === "create" && (
+        <EventEditor
+          mode="create"
+          prefill={eventEditor.prefill}
+          onClose={closeEventEditor}
+          onSwitchToTask={() => { closeEventEditor(); openCreate({}); }}
+        />
       )}
     </DndContext>
   );

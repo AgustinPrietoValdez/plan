@@ -5,6 +5,8 @@ export const repo: Repo = localRepo;
 export type {
   BudgetUpsert,
   CategoryCreate,
+  EventCreate,
+  EventPatch,
   CategoryPatch,
   ExpenseCategoryCreate,
   ExpenseCategoryPatch,

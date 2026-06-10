@@ -70,6 +70,7 @@ interface AppState {
   budgetManagerOpen: boolean;
   savingsGoalManagerOpen: boolean;
   expenseEditor: { mode: "closed" } | { mode: "edit"; expenseId: string } | { mode: "create"; prefill: Partial<{ amount: number; categoryId: string | null; spentOn: string; note: string }> };
+  eventEditor: { mode: "closed" } | { mode: "edit"; eventId: string } | { mode: "create"; prefill: { day?: string } };
   budgetMonth: string;
   filterCategoryId: string | null;
   sidebarOpen: boolean;
@@ -99,6 +100,9 @@ interface AppState {
   openExpenseEdit: (expenseId: string) => void;
   openExpenseCreate: (prefill?: { amount?: number; categoryId?: string | null; spentOn?: string; note?: string }) => void;
   closeExpenseEditor: () => void;
+  openEventEdit: (eventId: string) => void;
+  openEventCreate: (prefill?: { day?: string }) => void;
+  closeEventEditor: () => void;
   setBudgetMonth: (yyyymm: string) => void;
   setFilterCategory: (id: string | null) => void;
   toggleSidebar: () => void;
@@ -119,6 +123,7 @@ export const useApp = create<AppState>((set) => ({
   budgetManagerOpen: false,
   savingsGoalManagerOpen: false,
   expenseEditor: { mode: "closed" },
+  eventEditor: { mode: "closed" },
   budgetMonth: todayYmd().slice(0, 7),
   filterCategoryId: null,
   sidebarOpen: false,
@@ -148,6 +153,9 @@ export const useApp = create<AppState>((set) => ({
   openExpenseEdit: (expenseId) => set({ expenseEditor: { mode: "edit", expenseId } }),
   openExpenseCreate: (prefill = {}) => set({ expenseEditor: { mode: "create", prefill } }),
   closeExpenseEditor: () => set({ expenseEditor: { mode: "closed" } }),
+  openEventEdit: (eventId) => set({ eventEditor: { mode: "edit", eventId } }),
+  openEventCreate: (prefill = {}) => set({ eventEditor: { mode: "create", prefill } }),
+  closeEventEditor: () => set({ eventEditor: { mode: "closed" } }),
   setBudgetMonth: (budgetMonth) => set({ budgetMonth }),
   setFilterCategory: (filterCategoryId) => set({ filterCategoryId }),
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),

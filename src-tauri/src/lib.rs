@@ -116,6 +116,18 @@ pub fn run() {
             sql: include_str!("../migrations/0013_compras_settings.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 14,
+            description: "add events table",
+            sql: include_str!("../migrations/0014_events.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 15,
+            description: "add project_id and category_id to events",
+            sql: include_str!("../migrations/0015_events_project_category.sql"),
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()

@@ -13,24 +13,28 @@ import { colorsForCategory } from "../lib/categoryColor";
 import { fmtDuration } from "../lib/format";
 import { vars } from "../lib/style";
 import { useApp } from "../lib/store";
-import { useCategories, useProjects, useTasks } from "../lib/queries";
+import { useCategories, useEvents, useProjects, useTasks } from "../lib/queries";
 import { isNotFinished } from "../lib/taskState";
-import type { Category, Project, Task } from "../types";
+import type { CalendarEvent, Category, Project, Task } from "../types";
 import { DroppableDayCell } from "./dnd/DroppableDayCell";
+import { EventChip } from "./EventEditor";
 import { ICheck } from "./icons";
 
 interface Props {
   onTaskClick: (task: Task) => void;
   onToggleDone: (task: Task) => void;
+  onEventClick: (event: CalendarEvent) => void;
 }
 
-export function WeekView({ onTaskClick, onToggleDone }: Props) {
+export function WeekView({ onTaskClick, onToggleDone, onEventClick }: Props) {
   const tasksQ = useTasks();
   const projectsQ = useProjects();
   const categoriesQ = useCategories();
+  const eventsQ = useEvents();
   const allTasks = tasksQ.data ?? [];
   const projects = projectsQ.data ?? [];
   const categories = categoriesQ.data ?? [];
+  const allEvents = eventsQ.data ?? [];
   const { viewDate, filterCategoryId } = useApp();
 
   const tasks = filterCategoryId
@@ -47,6 +51,14 @@ export function WeekView({ onTaskClick, onToggleDone }: Props) {
     });
     return m;
   }, [tasks]);
+
+  const eventsByDay = useMemo(() => {
+    const m: Record<string, CalendarEvent[]> = {};
+    allEvents.filter((e) => !e.deletedAt).forEach((e) => {
+      (m[e.day] = m[e.day] ?? []).push(e);
+    });
+    return m;
+  }, [allEvents]);
 
   const today = todayYmd();
 
@@ -95,7 +107,12 @@ export function WeekView({ onTaskClick, onToggleDone }: Props) {
               style={{ padding: "10px 10px 12px" }}
             >
               <div className="day-tasks" style={{ gap: 5 }}>
-                {dayTasks.length === 0 && (
+                {(eventsByDay[dayKey] ?? [])
+                  .sort((a, b) => (a.startTime ?? "") < (b.startTime ?? "") ? -1 : 1)
+                  .map((ev) => (
+                    <EventChip key={ev.id} event={ev} onClick={onEventClick} />
+                  ))}
+                {dayTasks.length === 0 && (eventsByDay[dayKey] ?? []).length === 0 && (
                   <div style={{ fontSize: 11.5, color: "var(--fg-subtle)", padding: "4px 0" }}>—</div>
                 )}
                 {dayTasks.map((t) => (

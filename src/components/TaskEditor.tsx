@@ -68,9 +68,10 @@ interface Props {
   task?: Task;
   prefill?: Partial<Task>;
   onClose: () => void;
+  onSwitchToEvent?: () => void;
 }
 
-export function TaskEditor({ mode, task, prefill, onClose }: Props) {
+export function TaskEditor({ mode, task, prefill, onClose, onSwitchToEvent }: Props) {
   const projectsQ = useProjects();
   const categoriesQ = useCategories();
   const projects = projectsQ.data ?? [];
@@ -168,10 +169,37 @@ export function TaskEditor({ mode, task, prefill, onClose }: Props) {
   return (
     <div className="modal-backdrop" onMouseDown={onBackdropMouseDown}>
       <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
-        <div className={`modal-head ${draft.done ? "done" : ""}`}>
-          <div className="check" onClick={() => set({ done: !draft.done })}>
-            {draft.done && <ICheck size={11} stroke={2.4} />}
+        {mode === "create" && onSwitchToEvent && (
+          <div style={{ display: "flex", gap: 4, padding: "10px 14px 0" }}>
+            <button
+              className="chip active"
+              style={{ cursor: "default" }}
+            >
+              Tarea
+            </button>
+            <button
+              className="chip"
+              style={{ cursor: "pointer" }}
+              onClick={onSwitchToEvent}
+            >
+              Evento
+            </button>
           </div>
+        )}
+        <div className={`modal-head ${mode === "edit" && draft.done ? "done" : ""}`}>
+          {mode === "edit" ? (
+            <div className="check" onClick={() => set({ done: !draft.done })}>
+              {draft.done && <ICheck size={11} stroke={2.4} />}
+            </div>
+          ) : (
+            <div style={{
+              width: 18, height: 18, borderRadius: 5,
+              background: "var(--ok-soft, oklch(0.94 0.06 145))", color: "var(--ok, oklch(0.55 0.15 145))",
+              display: "grid", placeItems: "center", flex: "0 0 auto",
+            }}>
+              <ICheck size={10} stroke={2.5} />
+            </div>
+          )}
           <input
             className="title-input"
             value={draft.title}

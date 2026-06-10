@@ -13,10 +13,11 @@ import { colorsForCategory } from "../lib/categoryColor";
 import { priColor } from "../lib/format";
 import { vars } from "../lib/style";
 import { useApp } from "../lib/store";
-import { useCategories, useProjects, useTasks } from "../lib/queries";
+import { useCategories, useEvents, useProjects, useTasks } from "../lib/queries";
 import { isNotFinished } from "../lib/taskState";
-import type { Category, Project, Task } from "../types";
+import type { CalendarEvent, Category, Project, Task } from "../types";
 import { DroppableDayCell } from "./dnd/DroppableDayCell";
+import { EventChip } from "./EventEditor";
 import { ICheck, IPlus } from "./icons";
 
 const MAX_VISIBLE = 4;
@@ -25,15 +26,18 @@ interface Props {
   onTaskClick: (task: Task) => void;
   onDayClick: (day: string) => void;
   onToggleDone: (task: Task) => void;
+  onEventClick: (event: CalendarEvent) => void;
 }
 
-export function MonthView({ onTaskClick, onDayClick, onToggleDone }: Props) {
+export function MonthView({ onTaskClick, onDayClick, onToggleDone, onEventClick }: Props) {
   const tasksQ = useTasks();
   const projectsQ = useProjects();
   const categoriesQ = useCategories();
+  const eventsQ = useEvents();
   const allTasks = tasksQ.data ?? [];
   const projects = projectsQ.data ?? [];
   const categories = categoriesQ.data ?? [];
+  const allEvents = eventsQ.data ?? [];
   const { viewDate, filterCategoryId } = useApp();
 
   const tasks = filterCategoryId
@@ -48,6 +52,14 @@ export function MonthView({ onTaskClick, onDayClick, onToggleDone }: Props) {
     });
     return m;
   }, [tasks]);
+
+  const eventsByDay = useMemo(() => {
+    const m: Record<string, CalendarEvent[]> = {};
+    allEvents.filter((e) => !e.deletedAt).forEach((e) => {
+      (m[e.day] = m[e.day] ?? []).push(e);
+    });
+    return m;
+  }, [allEvents]);
 
   const today = todayYmd();
   const viewMonth = fromYmd(viewDate).getMonth();
@@ -67,8 +79,14 @@ export function MonthView({ onTaskClick, onDayClick, onToggleDone }: Props) {
           const isToday = dayKey === today;
           const isWeekend = d.getDay() === 0 || d.getDay() === 6;
           const showFirstOfMonth = d.getDate() === 1;
-          const visible = dayTasks.slice(0, MAX_VISIBLE);
-          const hidden = dayTasks.length - visible.length;
+          const dayEvs = (eventsByDay[dayKey] ?? []).sort(
+            (a, b) => (a.startTime ?? "") < (b.startTime ?? "") ? -1 : 1,
+          );
+          const totalItems = dayEvs.length + dayTasks.length;
+          const evVisible = dayEvs.slice(0, Math.min(dayEvs.length, MAX_VISIBLE));
+          const taskSlots = Math.max(0, MAX_VISIBLE - evVisible.length);
+          const visible = dayTasks.slice(0, taskSlots);
+          const hidden = totalItems - evVisible.length - visible.length;
 
           const cellClass = [
             "day-cell",
@@ -100,6 +118,9 @@ export function MonthView({ onTaskClick, onDayClick, onToggleDone }: Props) {
                 </button>
               </div>
               <div className="day-tasks">
+                {evVisible.map((ev) => (
+                  <EventChip key={ev.id} event={ev} onClick={onEventClick} />
+                ))}
                 {visible.map((t) => (
                   <MonthDayTask
                     key={t.id}

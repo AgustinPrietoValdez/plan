@@ -281,3 +281,20 @@ export interface MealLog {
   deletedAt: string | null;
   version: number;
 }
+
+export interface CalendarEvent {
+  id: string;
+  title: string;
+  day: string;
+  startTime: string | null;
+  endTime: string | null;
+  location: string;
+  notifyMinutesBefore: number | null;
+  notes: string;
+  categoryId: string | null;
+  projectId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+  version: number;
+}
