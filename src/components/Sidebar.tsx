@@ -75,6 +75,13 @@ export function Sidebar() {
       <div className="sidebar-section" style={{ paddingTop: 8 }}>
         <div className="nav-list">
           <div
+            className={`nav-item ${view === "home" ? "active" : ""}`}
+            onClick={() => setView("home")}
+            title="Home"
+          >
+            <span style={{ width: 14, textAlign: "center", fontSize: 13, lineHeight: 1 }}>🏠</span> Home
+          </div>
+          <div
             className={`nav-item ${noFilter ? "active" : ""}`}
             onClick={() => {
               setFilterCategory(null);
@@ -126,6 +133,13 @@ export function Sidebar() {
             title="Compras"
           >
             <IList size={14} /> Compras
+          </div>
+          <div
+            className={`nav-item ${view === "cafe" ? "active" : ""}`}
+            onClick={() => setView("cafe")}
+            title="Cafe"
+          >
+            <span style={{ width: 14, textAlign: "center", fontSize: 13, lineHeight: 1 }}>☕</span> Café
           </div>
         </div>
       </div>

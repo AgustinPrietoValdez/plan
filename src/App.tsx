@@ -13,6 +13,9 @@ import { BudgetView } from "./components/BudgetView";
 import { CategoryManager } from "./components/CategoryManager";
 import { CompletionModal } from "./components/CompletionModal";
 import { ComprasView } from "./components/ComprasView";
+import { CafeView } from "./components/CafeView";
+import { HomeView } from "./components/HomeView";
+import { AreaTabs } from "./components/AreaTabs";
 import { DayView } from "./components/DayView";
 import { ExpenseCategoryManager } from "./components/ExpenseCategoryManager";
 import { ExpenseEditor } from "./components/ExpenseEditor";
@@ -37,7 +40,7 @@ import { useRollForwardRecurringTasks } from "./lib/rollForward";
 import { useSeedDefaultCategories } from "./lib/seedCategories";
 import { useSeedDefaultExpenseCategories } from "./lib/seedExpenseCategories";
 import { useExternalChangesPoller } from "./lib/externalChanges";
-import { useApp } from "./lib/store";
+import { useApp, AREA_OF_VIEW, CALENDARIO_TABS, type View } from "./lib/store";
 import { useSyncEngine } from "./lib/sync";
 import type { Task } from "./types";
 
@@ -182,22 +185,20 @@ function App() {
         const t = todayYmd();
         setViewDate(t);
         setSelectedDay(t);
-      } else if (e.key === "1") {
-        setView("day");
-      } else if (e.key === "2") {
-        setView("week");
-      } else if (e.key === "3") {
-        setView("month");
-      } else if (e.key === "4") {
-        setView("project");
-      } else if (e.key === "5") {
-        setView("recurring");
-      } else if (e.key === "6") {
-        setView("budget");
-      } else if (e.key === "7") {
-        setView("habits");
+      } else if (/^Digit[1-9]$/.test(e.code)) {
+        const n = Number(e.code.slice(5));
+        if (e.shiftKey) {
+          // Shift+1..4 = switch top-level area (Calendario / Presupuesto / Compras / Cafe)
+          const areaView: Record<number, View> = { 1: "day", 2: "budget", 3: "compras", 4: "cafe" };
+          const v = areaView[n];
+          if (v) { e.preventDefault(); setView(v); }
+        } else if (AREA_OF_VIEW[view] === "calendario" && CALENDARIO_TABS[n - 1]) {
+          // 1..N = select a tab within the Calendario area
+          e.preventDefault();
+          setView(CALENDARIO_TABS[n - 1].view);
+        }
       } else if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && (e.metaKey || e.ctrlKey)) {
-        if (view === "project" || view === "recurring" || view === "budget" || view === "habits" || view === "compras") return;
+        if (view === "home" || view === "cafe" || view === "project" || view === "recurring" || view === "budget" || view === "habits" || view === "compras") return;
         const d = fromYmd(viewDate);
         const dir = e.key === "ArrowLeft" ? -1 : 1;
         if (view === "month") d.setMonth(d.getMonth() + dir);
@@ -261,6 +262,8 @@ function App() {
               <IChevD size={14} />
             </button>
           )}
+          <AreaTabs />
+          {view === "home" && <HomeView />}
           {view === "month" && (
             <MonthView
               onTaskClick={onOpenTask}
@@ -281,6 +284,7 @@ function App() {
           {view === "budget" && <BudgetView />}
           {view === "habits" && <HabitsView />}
           {view === "compras" && <ComprasView />}
+          {view === "cafe" && <CafeView />}
         </div>
       </div>
       <DragOverlay dropAnimation={null}>

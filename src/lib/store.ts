@@ -2,7 +2,53 @@ import { create } from "zustand";
 import type { Task } from "../types";
 import { todayYmd } from "./date";
 
-export type View = "day" | "week" | "month" | "project" | "recurring" | "budget" | "habits" | "compras";
+export type View =
+  | "home"
+  | "day"
+  | "week"
+  | "month"
+  | "project"
+  | "recurring"
+  | "budget"
+  | "habits"
+  | "compras"
+  | "cafe";
+
+/** The 4 top-level areas (the Home cards). "home" is the dashboard container. */
+export type Area = "home" | "calendario" | "presupuesto" | "compras" | "cafe";
+
+/** Which area a leaf view belongs to (drives the area tab bar + Shift+1..4). */
+export const AREA_OF_VIEW: Record<View, Area> = {
+  home: "home",
+  day: "calendario",
+  week: "calendario",
+  month: "calendario",
+  project: "calendario",
+  recurring: "calendario",
+  habits: "calendario",
+  budget: "presupuesto",
+  compras: "compras",
+  cafe: "cafe",
+};
+
+/** Default leaf view when entering an area (e.g. from a Home card or Shift+N). */
+export const AREA_DEFAULT_VIEW: Record<Area, View> = {
+  home: "home",
+  calendario: "day",
+  presupuesto: "budget",
+  compras: "compras",
+  cafe: "cafe",
+};
+
+/** Tabs shown inside the Calendario area, in order (plain 1..N selects them). */
+export const CALENDARIO_TABS: { view: View; label: string }[] = [
+  { view: "day", label: "Día" },
+  { view: "week", label: "Semana" },
+  { view: "month", label: "Mes" },
+  { view: "project", label: "Proyectos" },
+  { view: "habits", label: "Hábitos" },
+  { view: "recurring", label: "Recurrentes" },
+];
 
 export type EditorState =
   | { mode: "closed" }
@@ -59,7 +105,7 @@ interface AppState {
 }
 
 export const useApp = create<AppState>((set) => ({
-  view: "month",
+  view: "home",
   viewDate: todayYmd(),
   selectedDay: todayYmd(),
   viewProjectId: null,
