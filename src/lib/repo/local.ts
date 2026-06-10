@@ -931,8 +931,11 @@ export const localRepo: Repo = {
     const userId = await requireUserId();
     const db = await getDb();
     const ts = now();
+    // Query without deleted_at filter so we can restore soft-deleted rows —
+    // a plain INSERT would fail on the UNIQUE INDEX (user_id, task_id, day)
+    // even when the conflicting row has deleted_at set.
     const existing = await db.select<DbHabitLogRow[]>(
-      "SELECT * FROM habit_logs WHERE user_id = ? AND task_id = ? AND day = ? AND deleted_at IS NULL LIMIT 1",
+      "SELECT * FROM habit_logs WHERE user_id = ? AND task_id = ? AND day = ? LIMIT 1",
       [userId, input.taskId, input.day],
     );
     if (existing[0]) {
@@ -940,11 +943,12 @@ export const localRepo: Repo = {
       const updated: HabitLog = {
         ...prev,
         done: input.done,
+        deletedAt: null,
         updatedAt: ts,
         version: prev.version + 1,
       };
       await db.execute(
-        `UPDATE habit_logs SET done = ?, updated_at = ?, version = ?
+        `UPDATE habit_logs SET done = ?, deleted_at = NULL, updated_at = ?, version = ?
          WHERE id = ? AND user_id = ?`,
         [updated.done ? 1 : 0, updated.updatedAt, updated.version, updated.id, userId],
       );

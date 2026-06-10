@@ -1,13 +1,12 @@
 import { useEffect, useRef } from "react";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
-import type { HabitLog, Task } from "../types";
+import type { Task } from "../types";
 import { todayYmd } from "./date";
 import { nextOccurrence } from "./recurrence";
 import { repo } from "./repo";
 
 interface RollResult {
   rolled: number;
-  missedLogged: number;
 }
 
 /** Advance each recurring task whose scheduled day is in the past (and is not
@@ -20,12 +19,10 @@ interface RollResult {
  *  keeps the per-day record), it is not a lingering leftover. */
 export async function rollForwardRecurringTasks(
   tasks: Task[],
-  habitLogs: HabitLog[],
   qc: QueryClient,
 ): Promise<RollResult> {
   const today = todayYmd();
   let rolled = 0;
-  let missedLogged = 0;
 
   for (const t of tasks) {
     if (!t.recurrence) continue;
@@ -33,32 +30,15 @@ export async function rollForwardRecurringTasks(
     if (t.done) continue;
     if (t.day >= today) continue;
 
-    const missed: string[] = [t.day];
     let next: string | null = nextOccurrence(t.recurrence, t.day);
     let guard = 0;
     while (next && next < today && guard < 366) {
-      missed.push(next);
       const further: string | null = nextOccurrence(t.recurrence, next);
       if (!further || further === next) break;
       next = further;
       guard++;
     }
     if (!next) continue;
-
-    if (t.isHabit) {
-      const existing = new Set(
-        habitLogs.filter((l) => l.taskId === t.id).map((l) => l.day),
-      );
-      for (const d of missed) {
-        if (existing.has(d)) continue;
-        try {
-          await repo.upsertHabitLog({ taskId: t.id, day: d, done: false });
-          missedLogged++;
-        } catch (e) {
-          console.error("Failed to log missed habit:", e);
-        }
-      }
-    }
 
     const parentId = t.recurrenceParentId ?? t.id;
     const rule = t.recurrence;
@@ -102,15 +82,13 @@ export async function rollForwardRecurringTasks(
   }
 
   if (rolled > 0) qc.invalidateQueries({ queryKey: ["tasks"] });
-  if (missedLogged > 0) qc.invalidateQueries({ queryKey: ["habit_logs"] });
-  return { rolled, missedLogged };
+  return { rolled };
 }
 
 /** React hook: runs roll-forward once per calendar day. Re-checks every minute
  *  so an app left open across midnight rolls forward when the date changes. */
 export function useRollForwardRecurringTasks(
   tasks: Task[] | undefined,
-  habitLogs: HabitLog[] | undefined,
   enabled: boolean,
 ): void {
   const qc = useQueryClient();
@@ -119,7 +97,7 @@ export function useRollForwardRecurringTasks(
 
   useEffect(() => {
     if (!enabled) return;
-    if (!tasks || !habitLogs) return;
+    if (!tasks) return;
 
     const maybeRoll = () => {
       const today = todayYmd();
@@ -127,7 +105,7 @@ export function useRollForwardRecurringTasks(
       if (inFlight.current) return;
       inFlight.current = true;
       lastRolledDay.current = today;
-      void rollForwardRecurringTasks(tasks, habitLogs, qc).finally(() => {
+      void rollForwardRecurringTasks(tasks, qc).finally(() => {
         inFlight.current = false;
       });
     };
@@ -135,5 +113,5 @@ export function useRollForwardRecurringTasks(
     maybeRoll();
     const id = window.setInterval(maybeRoll, 60_000);
     return () => window.clearInterval(id);
-  }, [enabled, tasks, habitLogs, qc]);
+  }, [enabled, tasks, qc]);
 }

@@ -210,6 +210,15 @@
 }
 .icon-btn:hover { background: var(--bg-hover); color: var(--fg); }
 
+/* ---------- habits grid ---------- */
+.habit-seg-btn {
+  appearance: none;
+  font: inherit;
+  outline: none;
+}
+.habit-seg-btn:hover { filter: brightness(0.88); }
+.habit-seg-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
 /* ---------- task strip ---------- */
 .task-strip {
   border-bottom: 1px solid var(--line);

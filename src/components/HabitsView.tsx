@@ -14,6 +14,28 @@ import { useApp } from "../lib/store";
 import type { RecurrenceRule, Task } from "../types";
 import { ICheck, IChevL, IChevR, IHabit } from "./icons";
 
+/** Walk a known chain anchor to the largest expected day at or before doneDay. */
+function habitPeriodStart(rule: RecurrenceRule, anchor: string, doneDay: string): string {
+  let cur = anchor;
+  let guard = 0;
+  if (cur > doneDay) {
+    while (cur > doneDay && guard < 1000) {
+      const prev = previousOccurrence(rule, cur);
+      if (!prev || prev >= cur) break;
+      cur = prev;
+      guard++;
+    }
+  } else {
+    while (guard < 1000) {
+      const next = nextOccurrence(rule, cur);
+      if (!next || next > doneDay) break;
+      cur = next;
+      guard++;
+    }
+  }
+  return cur;
+}
+
 interface Habit {
   rootId: string;
   rule: RecurrenceRule;
@@ -252,15 +274,48 @@ export function HabitsView() {
 
   const onCheck = (h: Habit) => {
     const covered = coveredByHabit.get(h.rootId)?.has(today) ?? false;
+    // Write on the period's expected start day, not on `today`. This ensures
+    // the upsert overwrites any done=false row that rollForward left for the
+    // same day (same DB key), so the two writes never conflict.
+    const periodStart = habitPeriodStart(h.rule, h.anchorDay, today);
     if (covered) {
-      // Deselect today: write an explicit "not done" log entry.
-      upsertLog.mutate({ taskId: h.rootId, day: today, done: false });
+      upsertLog.mutate({ taskId: h.rootId, day: periodStart, done: false });
       return;
     }
     if (h.todayActive) {
       openCompletion(h.todayActive.id);
     } else {
-      upsertLog.mutate({ taskId: h.rootId, day: today, done: true });
+      upsertLog.mutate({ taskId: h.rootId, day: periodStart, done: true });
+    }
+  };
+
+  /**
+   * Toggle a past (or current) period segment by writing a single-day log entry.
+   *
+   * - done   → write done=false on segFirstDay (clears the whole period coverage)
+   * - missed → write done=true  on segFirstDay (marks the whole period as done)
+   * - future containing today → same as the circular check button (onCheck)
+   *
+   * Writing on segFirstDay is safe because the coverage logic resolves the full
+   * period from any day within it via findPeriodStart + nextOccurrence. Even when
+   * segFirstDay is clipped to the visible month window (i.e. the real period start
+   * is before the first displayed day), the log entry still falls within the period
+   * and the uncheck pass removes/adds the entire painted span correctly.
+   *
+   * A segment is only clickable when segFirstDay <= today (not a purely future period).
+   */
+  const onCheckSegment = (
+    h: Habit,
+    segPeriodStart: string,
+    state: "done" | "missed" | "future",
+    containsToday: boolean,
+  ) => {
+    if (containsToday) {
+      onCheck(h);
+    } else if (state === "done") {
+      upsertLog.mutate({ taskId: h.rootId, day: segPeriodStart, done: false });
+    } else if (state === "missed") {
+      upsertLog.mutate({ taskId: h.rootId, day: segPeriodStart, done: true });
     }
   };
 
@@ -578,6 +633,7 @@ export function HabitsView() {
                     state: "done" | "missed" | "future";
                     firstDay: string;
                     lastDay: string;
+                    periodStart: string;
                   }[] = [];
 
                   let fwd = 0;
@@ -614,6 +670,7 @@ export function HabitsView() {
                         state,
                         firstDay: segStart,
                         lastDay: segEnd,
+                        periodStart: cur,
                       });
                     }
 
@@ -638,25 +695,67 @@ export function HabitsView() {
                           ? "1.5px solid var(--accent)"
                           : "1px dashed var(--line)"
                         : "1px solid rgba(0,0,0,0.06)";
+
+                    // A segment is clickable when its start is today or in the
+                    // past (done/missed periods), or when it is the current
+                    // period (future state but contains today).
+                    const isClickable =
+                      seg.state !== "future" || containsToday;
+
+                    const titleText = isClickable
+                      ? seg.state === "done"
+                        ? isFused
+                          ? `${seg.firstDay} → ${seg.lastDay} · Done — click to unmark`
+                          : `${seg.firstDay} · Done — click to unmark`
+                        : seg.state === "missed"
+                          ? isFused
+                            ? `${seg.firstDay} → ${seg.lastDay} · Missed — click to mark done`
+                            : `${seg.firstDay} · Missed — click to mark done`
+                          : containsToday
+                            ? "Current period — click to mark done"
+                            : isFused
+                              ? `${seg.firstDay} → ${seg.lastDay} · ${seg.state}`
+                              : `${seg.firstDay} · ${seg.state}`
+                      : isFused
+                        ? `${seg.firstDay} → ${seg.lastDay} · ${seg.state}`
+                        : `${seg.firstDay} · ${seg.state}`;
+
+                    const sharedStyle: React.CSSProperties = {
+                      gridColumn: `${seg.startIdx + 2} / span ${seg.length}`,
+                      height: "78%",
+                      maxHeight: ROW_MAX - 8,
+                      alignSelf: "center",
+                      borderRadius: 4,
+                      background: bg,
+                      border,
+                      boxSizing: "border-box",
+                      minWidth: 0,
+                    };
+
+                    if (isClickable) {
+                      return (
+                        <button
+                          key={seg.firstDay}
+                          type="button"
+                          title={titleText}
+                          onClick={() =>
+                            onCheckSegment(h, seg.periodStart, seg.state, containsToday)
+                          }
+                          style={{
+                            ...sharedStyle,
+                            cursor: "pointer",
+                            padding: 0,
+                          }}
+                          className="habit-seg-btn"
+                        />
+                      );
+                    }
+
                     return (
                       <div
                         key={seg.firstDay}
-                        title={
-                          isFused
-                            ? `${seg.firstDay} → ${seg.lastDay} · ${seg.state}`
-                            : `${seg.firstDay} · ${seg.state}`
-                        }
-                        style={{
-                          gridColumn: `${seg.startIdx + 2} / span ${seg.length}`,
-                          height: "78%",
-                          maxHeight: ROW_MAX - 8,
-                          alignSelf: "center",
-                          borderRadius: 4,
-                          background: bg,
-                          border,
-                          boxSizing: "border-box",
-                          minWidth: 0,
-                        }}
+                        title={titleText}
+                        style={sharedStyle}
                       />
                     );
                   });

@@ -359,6 +359,7 @@ export function useUpsertHabitLog() {
   return useMutation({
     mutationFn: (input: HabitLogUpsert) => repo.upsertHabitLog(input),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.habitLogs }),
+    onError: (err) => console.error("[upsertHabitLog]", err),
   });
 }
 

@@ -88,8 +88,7 @@ function App() {
   useSeedDefaultExpenseCategories(session?.user.id);
   useRollForwardRecurringTasks(
     tasksQ.data,
-    habitLogsQ.data,
-    Boolean(session?.user.id) && tasksQ.isSuccess && habitLogsQ.isSuccess,
+    Boolean(session?.user.id) && tasksQ.isSuccess,
   );
 
   const sensors = useSensors(

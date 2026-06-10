@@ -16,6 +16,7 @@ tabla es priorizar y dar el diseño; el codigo lo hace Claude cuando se lo pido.
 | [#2](https://github.com/AgustinPrietoValdez/plan/issues/2) | `plan_cli.py` vivia en cargo_bot_ws | CERRADO 2026-06-06 | Nada (movido a `tools/` de este repo; queda el riesgo menor de duplicar `taskToWire`, se testea si pega) |
 | [#3](https://github.com/AgustinPrietoValdez/plan/issues/3) | Escribir desde el CLI sin cerrar la app | IMPLEMENTADO, falta verificar | Rebuild (`npm run tauri dev`), probar `plan_cli.py check` con la app abierta, y si anda cerrar el issue con comentario |
 | [#4](https://github.com/AgustinPrietoValdez/plan/issues/4) | Habitos no se atrasan: un dia saltado lapsa, no queda leftover rojo | IMPLEMENTADO (commit 35cc7e5), falta verificar | Instalar el build nuevo (wizard), confirmar que los habitos no salen rojos/atrasados y que el tracker sigue bien; cerrar el issue con comentario |
+| [#5](https://github.com/AgustinPrietoValdez/plan/issues/5) | Fase 1 implementada: Home dashboard + navegacion por areas | CERRADO 2026-06-10 | Nada (aprobado y verificado en vivo; commit c379243) |
 
 ## Como marcar un issue como resuelto (asi Claude se entera)
 
