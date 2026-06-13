@@ -50,4 +50,5 @@ export type {
   ComprasSettingsUpsert,
   TaskCreate,
   TaskPatch,
+  BrewSessionCreate,
 } from "./types";

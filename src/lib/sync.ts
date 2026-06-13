@@ -25,7 +25,9 @@ type Entity =
   | "meal_plan_entries"
   | "inventory"
   | "meal_log"
-  | "compras_settings";
+  | "compras_settings"
+  | "coffee_beans"
+  | "coffee_recipes";
 
 interface OutboxRow {
   id: number;
@@ -196,6 +198,8 @@ export async function pullDeltas(userId: string, qc: QueryClient): Promise<void>
     any = (await pullEntity(userId, "inventory")) || any;
     any = (await pullEntity(userId, "meal_log")) || any;
     any = (await pullEntity(userId, "compras_settings")) || any;
+    try { any = (await pullEntity(userId, "coffee_beans")) || any; } catch (e) { console.warn("coffee_beans pull skipped:", e); }
+    try { any = (await pullEntity(userId, "coffee_recipes")) || any; } catch (e) { console.warn("coffee_recipes pull skipped:", e); }
     if (any) {
       qc.invalidateQueries({ queryKey: ["tasks"] });
       qc.invalidateQueries({ queryKey: ["projects"] });
@@ -217,6 +221,8 @@ export async function pullDeltas(userId: string, qc: QueryClient): Promise<void>
       qc.invalidateQueries({ queryKey: ["inventory"] });
       qc.invalidateQueries({ queryKey: ["meal_log"] });
       qc.invalidateQueries({ queryKey: ["compras_settings"] });
+      qc.invalidateQueries({ queryKey: ["coffee_beans"] });
+      qc.invalidateQueries({ queryKey: ["coffee_recipes"] });
     }
     if (currentStatus === "syncing") setStatus("idle");
   } catch (e) {
@@ -476,6 +482,28 @@ async function upsertLocal(
         typeof row.meal_times === "string" ? row.meal_times : JSON.stringify(row.meal_times ?? {}),
         row.expiry_warn_days, row.notifications_enabled ? 1 : 0, row.dkk_per_usd,
         row.created_at, row.updated_at, row.deleted_at, row.version,
+      ],
+    );
+  } else if (entity === "coffee_beans") {
+    await db.execute(
+      `INSERT OR REPLACE INTO coffee_beans
+        (id, user_id, name, roaster, varietal, country, process, producer, roasted_on, weight_grams, notes, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        row.id, row.user_id, row.name, row.roaster ?? "", row.varietal ?? "", row.country ?? "",
+        row.process ?? "", row.producer ?? "", row.roasted_on ?? null, row.weight_grams ?? 0, row.notes ?? "",
+        row.created_at, row.updated_at, row.deleted_at, row.version,
+      ],
+    );
+  } else if (entity === "coffee_recipes") {
+    await db.execute(
+      `INSERT OR REPLACE INTO coffee_recipes
+        (id, user_id, name, coffee_type, ratio, temp_celsius, grind_size, steps, notes, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        row.id, row.user_id, row.name, row.coffee_type ?? "", row.ratio ?? 15, row.temp_celsius ?? 93,
+        row.grind_size ?? "", typeof row.steps === "string" ? row.steps : JSON.stringify(row.steps ?? []),
+        row.notes ?? "", row.created_at, row.updated_at, row.deleted_at, row.version,
       ],
     );
   }

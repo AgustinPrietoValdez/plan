@@ -54,3 +54,7 @@ AI.md
 *.sw?
 
 __pycache__/
+
+# Claude worktrees + Supabase CLI temp state
+.claude/
+supabase/.temp/

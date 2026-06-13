@@ -9,9 +9,11 @@ import {
   useDeleteCoffeeRecipe,
   usePatchCoffeeBean,
   usePatchCoffeeRecipe,
+  useBrewSessions,
+  useDeleteBrewSession,
 } from "../lib/queries";
 import { addDays, fromYmd, todayYmd, ymd } from "../lib/date";
-import type { CoffeeBean, CoffeeRecipe, CoffeeRecipeStep } from "../types";
+import type { CoffeeBean, CoffeeRecipe, CoffeeRecipeStep, CoffeeStepType, WaterMode, BrewSession, BrewDatapoint } from "../types";
 import type { CoffeeBeanCreate, CoffeeRecipeCreate } from "../lib/repo";
 import { IPlus, ITrash, IChevD, IChevU, IX } from "./icons";
 
@@ -133,9 +135,22 @@ function recipeFormFromRecipe(r: CoffeeRecipe): RecipeFormState {
 
 const COFFEE_TYPES = ["espresso", "v60", "chemex", "aeropress", "french press", "moka pot", "cold brew"];
 
+function stepPct(s: CoffeeRecipeStep, ratio: number): number {
+  if (s.type !== "pour" || s.waterRatio == null) return 0;
+  if ((s.waterMode ?? "x_cafe") === "pct_agua") return s.waterRatio;
+  return ratio > 0 ? s.waterRatio / ratio * 100 : 0;
+}
+
+function autoCompleteRatio(stepIdx: number, steps: CoffeeRecipeStep[], ratio: number): number {
+  const used = steps
+    .filter((s, i) => i !== stepIdx && s.type === "pour" && !s.autoComplete)
+    .reduce((acc, s) => acc + stepPct(s, ratio), 0);
+  return Math.max(0, 100 - used);
+}
+
 // ---------- main view ----------
 
-type Tab = "granos" | "recetas";
+type Tab = "granos" | "recetas" | "historial";
 type BeanEditor = { open: false } | { open: true; bean: CoffeeBean | null };
 type RecipeEditor = { open: false } | { open: true; recipe: CoffeeRecipe | null };
 
@@ -221,7 +236,10 @@ export function CafeView() {
       ratio: parseFloat(recipeForm.ratio) || 15,
       tempCelsius: parseFloat(recipeForm.tempCelsius) || 93,
       grindSize: recipeForm.grindSize.trim(),
-      steps: recipeForm.steps,
+      steps: recipeForm.steps.map((s, i) => {
+        if (!s.autoComplete || s.type !== "pour") return s;
+        return { ...s, waterRatio: Math.round(autoCompleteRatio(i, recipeForm.steps, parseFloat(recipeForm.ratio) || 15)) };
+      }),
       notes: recipeForm.notes.trim(),
     };
     if (!payload.name) return;
@@ -251,16 +269,18 @@ export function CafeView() {
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
           <span style={{ fontSize: 16 }}>☕</span>
           <h2 style={{ margin: 0, fontSize: 15, fontWeight: 600, flex: 1 }}>Café</h2>
-          <button
-            className="btn primary"
-            style={{ display: "flex", alignItems: "center", gap: 4 }}
-            onClick={tab === "granos" ? openCreateBean : openCreateRecipe}
-          >
-            <IPlus size={13} /> {tab === "granos" ? "Nuevo grano" : "Nueva receta"}
-          </button>
+          {tab !== "historial" && (
+            <button
+              className="btn primary"
+              style={{ display: "flex", alignItems: "center", gap: 4 }}
+              onClick={tab === "granos" ? openCreateBean : openCreateRecipe}
+            >
+              <IPlus size={13} /> {tab === "granos" ? "Nuevo grano" : "Nueva receta"}
+            </button>
+          )}
         </div>
         <div role="tablist" style={{ display: "flex", gap: 2 }}>
-          {(["granos", "recetas"] as Tab[]).map((t) => (
+          {(["granos", "recetas", "historial"] as Tab[]).map((t) => (
             <button
               key={t}
               role="tab"
@@ -298,6 +318,7 @@ export function CafeView() {
             onDeleteRequest={setDeleteRecipe}
           />
         )}
+        {tab === "historial" && <BrewHistorialTab />}
       </div>
 
       {/* Bean editor */}
@@ -342,6 +363,225 @@ export function CafeView() {
           onCancel={() => setDeleteRecipe(null)}
         />
       )}
+    </div>
+  );
+}
+
+// ---------- Brew Historial tab ----------
+
+const SESSION_COLORS = [
+  "#4caf50", "#2196f3", "#ff9800", "#e91e63",
+  "#9c27b0", "#00bcd4", "#ff5722", "#607d8b",
+];
+
+function fmtDate(iso: string): string {
+  const d = new Date(iso);
+  return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+function fmtDuration(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+function BrewOverlayChart({
+  sessions,
+  dataBySession,
+  maxWeight,
+  maxTimeSec,
+}: {
+  sessions: BrewSession[];
+  dataBySession: Record<string, BrewDatapoint[]>;
+  maxWeight: number;
+  maxTimeSec: number;
+}) {
+  const W = 480, H = 200, PAD = { t: 10, r: 10, b: 30, l: 40 };
+  const cw = W - PAD.l - PAD.r;
+  const ch = H - PAD.t - PAD.b;
+
+  const xScale = (ms: number) => PAD.l + (ms / 1000 / Math.max(maxTimeSec, 1)) * cw;
+  const yScale = (g: number) => PAD.t + ch - (g / Math.max(maxWeight, 1)) * ch;
+
+  // Y axis ticks
+  const yTicks = [0, 25, 50, 75, 100].map(pct => maxWeight * pct / 100).filter(v => v > 0);
+  // X axis ticks (every 30s)
+  const xTicks: number[] = [];
+  for (let t = 0; t <= maxTimeSec; t += 30) xTicks.push(t);
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }}>
+      {/* grid lines */}
+      {yTicks.map((v) => (
+        <line key={v} x1={PAD.l} y1={yScale(v)} x2={W - PAD.r} y2={yScale(v)}
+          stroke="var(--line)" strokeWidth={0.5} strokeDasharray="3,3" />
+      ))}
+      {xTicks.map((t) => (
+        <line key={t} x1={xScale(t * 1000)} y1={PAD.t} x2={xScale(t * 1000)} y2={H - PAD.b}
+          stroke="var(--line)" strokeWidth={0.5} strokeDasharray="3,3" />
+      ))}
+
+      {/* data lines */}
+      {sessions.map((s, i) => {
+        const pts = dataBySession[s.id];
+        if (!pts || pts.length === 0) return null;
+        const d = pts
+          .map((p, j) => `${j === 0 ? "M" : "L"}${xScale(p.timerMs).toFixed(1)},${yScale(p.weightG ?? 0).toFixed(1)}`)
+          .join(" ");
+        return (
+          <path key={s.id} d={d} fill="none"
+            stroke={SESSION_COLORS[i % SESSION_COLORS.length]}
+            strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" />
+        );
+      })}
+
+      {/* Y axis */}
+      <line x1={PAD.l} y1={PAD.t} x2={PAD.l} y2={H - PAD.b} stroke="var(--fg-subtle)" strokeWidth={1} />
+      {yTicks.map((v) => (
+        <text key={v} x={PAD.l - 4} y={yScale(v)} textAnchor="end" dominantBaseline="middle"
+          fontSize={8} fill="var(--fg-muted)">{v.toFixed(0)}</text>
+      ))}
+
+      {/* X axis */}
+      <line x1={PAD.l} y1={H - PAD.b} x2={W - PAD.r} y2={H - PAD.b} stroke="var(--fg-subtle)" strokeWidth={1} />
+      {xTicks.map((t) => (
+        <text key={t} x={xScale(t * 1000)} y={H - PAD.b + 10} textAnchor="middle"
+          fontSize={8} fill="var(--fg-muted)">{`${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`}</text>
+      ))}
+    </svg>
+  );
+}
+
+function BrewHistorialTab() {
+  const { data: sessions = [] } = useBrewSessions();
+  const deleteSession = useDeleteBrewSession();
+  const [viewingSessions, setViewingSessions] = useState<BrewSession[] | null>(null);
+  const [chartSessionIds, setChartSessionIds] = useState<string[]>([]);
+
+  // load datapoints for chart sessions
+  const [chartData, setChartData] = useState<Record<string, BrewDatapoint[]>>({});
+
+  async function openChart(ids: string[]) {
+    setChartSessionIds(ids);
+    const { repo } = await import("../lib/repo");
+    const entries = await Promise.all(ids.map(async (id) => [id, await repo.getBrewDatapoints(id)] as const));
+    setChartData(Object.fromEntries(entries));
+  }
+
+  // group sessions by recipe
+  const byRecipe = sessions.reduce<Record<string, BrewSession[]>>((acc, s) => {
+    const key = s.recipeId ?? "__none__";
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(s);
+    return acc;
+  }, {});
+
+  const recipeGroups = Object.entries(byRecipe).map(([rid, ss]) => ({
+    recipeId: rid === "__none__" ? null : rid,
+    recipeName: ss[0]?.recipeName || "Sin receta",
+    sessions: ss,
+  }));
+
+  const chartSessions = viewingSessions?.filter(s => chartSessionIds.includes(s.id)) ?? [];
+  const allPoints = Object.values(chartData).flat();
+  const maxWeight = Math.max(...allPoints.map(p => p.weightG ?? 0), 10);
+  const maxTimeSec = Math.max(...allPoints.map(p => p.timerMs / 1000), 60);
+
+  if (chartSessionIds.length > 0) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <button className="btn ghost" style={{ fontSize: 12 }}
+            onClick={() => { setChartSessionIds([]); setChartData({}); }}>← Volver</button>
+          <span style={{ fontSize: 14, fontWeight: 600 }}>
+            Comparación — {viewingSessions?.[0]?.recipeName}
+          </span>
+        </div>
+
+        <BrewOverlayChart
+          sessions={chartSessions}
+          dataBySession={chartData}
+          maxWeight={maxWeight}
+          maxTimeSec={maxTimeSec}
+        />
+
+        {/* legend */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          {chartSessions.map((s, i) => (
+            <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12 }}>
+              <span style={{ width: 12, height: 3, background: SESSION_COLORS[i % SESSION_COLORS.length], display: "inline-block", borderRadius: 2 }} />
+              <span style={{ color: "var(--fg-muted)" }}>{fmtDate(s.createdAt)}</span>
+              <span>· {s.doseGrams.toFixed(1)}g · {fmtDuration(s.durationMs)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (viewingSessions) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <button className="btn ghost" style={{ fontSize: 12 }}
+            onClick={() => setViewingSessions(null)}>← Todas</button>
+          <span style={{ fontSize: 14, fontWeight: 600 }}>{viewingSessions[0]?.recipeName}</span>
+        </div>
+
+        {viewingSessions.length >= 2 && (
+          <button className="btn primary" style={{ fontSize: 12, padding: "8px 14px", alignSelf: "flex-start" }}
+            onClick={() => void openChart(viewingSessions.map(s => s.id))}>
+            Comparar pours ({viewingSessions.length} sesiones)
+          </button>
+        )}
+
+        {viewingSessions.map((s, i) => (
+          <div key={s.id} style={{
+            background: "var(--bg-sunken)", borderRadius: 10, padding: "12px 14px",
+            display: "flex", justifyContent: "space-between", alignItems: "center",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ width: 8, height: 8, borderRadius: "50%", background: SESSION_COLORS[i % SESSION_COLORS.length], display: "inline-block" }} />
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>{fmtDate(s.createdAt)}</div>
+                <div style={{ fontSize: 11, color: "var(--fg-muted)" }}>
+                  Dosis: {s.doseGrams.toFixed(1)} g · Agua: {s.totalWaterGrams.toFixed(0)} g · {fmtDuration(s.durationMs)}
+                  {s.beanName && ` · ${s.beanName}`}
+                </div>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 6 }}>
+              <button className="btn ghost" style={{ fontSize: 11, padding: "4px 8px" }}
+                onClick={() => void openChart([s.id])}>Ver</button>
+              <button className="btn ghost" style={{ fontSize: 11, padding: "4px 8px", color: "var(--danger)" }}
+                onClick={() => deleteSession.mutate(s.id)}>
+                <ITrash size={12} />
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {sessions.length === 0 && (
+        <div style={{ textAlign: "center", padding: "40px 0", color: "var(--fg-subtle)", fontSize: 14, lineHeight: 1.7 }}>
+          No hay brews registrados todavía.<br />
+          Usá el tab Café en la app mobile para iniciar un brew.
+        </div>
+      )}
+
+      {recipeGroups.map(({ recipeId, recipeName, sessions: ss }) => (
+        <button key={recipeId ?? "__none__"} className="btn"
+          style={{ textAlign: "left", padding: "12px 14px", fontSize: 14 }}
+          onClick={() => { setViewingSessions(ss); }}>
+          <div style={{ fontWeight: 600 }}>{recipeName}</div>
+          <div style={{ fontSize: 12, color: "var(--fg-muted)", marginTop: 2 }}>
+            {ss.length} brew{ss.length !== 1 ? "s" : ""} · Último: {fmtDate(ss[0]?.createdAt ?? "")}
+          </div>
+        </button>
+      ))}
     </div>
   );
 }
@@ -490,7 +730,7 @@ function RecipeCard({ recipe: r, onEdit, onDelete }: {
   onDelete: (id: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const totalWater = r.steps.reduce((s, step) => s + step.waterGrams, 0);
+  const totalWater = r.steps.reduce((s, step) => s + (step.waterGrams ?? 0), 0);
 
   return (
     <div style={{ background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: 10, overflow: "hidden" }}>
@@ -528,14 +768,29 @@ function RecipeCard({ recipe: r, onEdit, onDelete }: {
           <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase", color: "var(--fg-subtle)", marginBottom: 6 }}>Pasos</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             {r.steps.map((step, i) => (
-              <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 13 }}>
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13 }}>
                 <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--accent)", width: 36, flexShrink: 0 }}>
                   {fmtTime(step.timeSeconds)}
                 </span>
-                <span style={{ fontWeight: 500, color: "var(--fg-muted)", width: 40, flexShrink: 0 }}>
-                  {step.waterGrams}g
+                <span style={{
+                  fontSize: 10, fontWeight: 700, padding: "1px 5px", borderRadius: 4, flexShrink: 0,
+                  background: step.type === "pour" ? "color-mix(in srgb, var(--accent) 15%, transparent)" : "var(--bg-sunken)",
+                  color: step.type === "pour" ? "var(--accent)" : "var(--fg-subtle)",
+                }}>
+                  {step.type === "pour" ? "pour" : "acción"}
                 </span>
                 <span style={{ color: "var(--fg)", flex: 1 }}>{step.description}</span>
+                {step.type === "pour" && step.waterRatio != null && (
+                  <span style={{ fontSize: 12, color: "var(--fg-muted)", flexShrink: 0 }}>
+                    {(step.waterMode ?? "x_cafe") === "pct_agua" ? `${step.waterRatio}%` : `×${step.waterRatio}`}
+                  </span>
+                )}
+                {step.type === "pour" && step.waterRatio == null && (step.waterGrams ?? 0) > 0 && (
+                  <span style={{ fontSize: 12, color: "var(--fg-muted)", flexShrink: 0 }}>{step.waterGrams}g</span>
+                )}
+                {step.type === "pour" && step.flowTarget != null && (
+                  <span style={{ fontSize: 11, color: "var(--fg-subtle)", flexShrink: 0 }}>{step.flowTarget} g/s</span>
+                )}
               </div>
             ))}
           </div>
@@ -620,17 +875,25 @@ function RecipeModal({ form, isEdit, saving, error, onChange, onStepsChange, onS
   onSave: () => void;
   onClose: () => void;
 }) {
+  const [dosisRef, setDosisRef] = useState(15);
+
   function addStep() {
-    const lastTime = form.steps.length > 0 ? form.steps[form.steps.length - 1].timeSeconds : 0;
-    onStepsChange([...form.steps, { timeSeconds: lastTime + 30, waterGrams: 0, description: "" }]);
+    const last = form.steps.length > 0 ? form.steps[form.steps.length - 1] : null;
+    const type: CoffeeStepType = last ? last.type : "pour";
+    onStepsChange([...form.steps, { type, timeSeconds: last?.timeSeconds ?? 20, description: "" }]);
   }
 
   function removeStep(i: number) {
     onStepsChange(form.steps.filter((_, idx) => idx !== i));
   }
 
-  function patchStep(i: number, key: keyof CoffeeRecipeStep, value: string | number) {
-    onStepsChange(form.steps.map((s, idx) => idx === i ? { ...s, [key]: value } : s));
+  function patchStep(i: number, patch: Partial<CoffeeRecipeStep>) {
+    onStepsChange(form.steps.map((s, idx) => idx === i ? { ...s, ...patch } : s));
+  }
+
+  function toggleStepType(i: number) {
+    const s = form.steps[i];
+    patchStep(i, { type: s.type === "pour" ? "action" : "pour" });
   }
 
   return (
@@ -668,7 +931,20 @@ function RecipeModal({ form, isEdit, saving, error, onChange, onStepsChange, onS
         {/* Steps */}
         <div>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-            <label style={{ fontSize: 12, fontWeight: 500, color: "var(--fg-muted)" }}>Pasos</label>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <label style={{ fontSize: 12, fontWeight: 500, color: "var(--fg-muted)" }}>Pasos</label>
+              <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
+                <span style={{ fontSize: 11, color: "var(--fg-subtle)" }}>dosis ref.:</span>
+                <input
+                  className="input"
+                  type="number" min="1" step="1"
+                  value={dosisRef}
+                  onChange={(e) => setDosisRef(parseFloat(e.target.value) || 15)}
+                  style={{ width: 48, fontSize: 11, padding: "2px 6px" }}
+                />
+                <span style={{ fontSize: 11, color: "var(--fg-subtle)" }}>g</span>
+              </div>
+            </div>
             <button className="btn ghost" style={{ fontSize: 11, padding: "2px 8px" }} onClick={addStep}>
               + Agregar paso
             </button>
@@ -678,43 +954,187 @@ function RecipeModal({ form, isEdit, saving, error, onChange, onStepsChange, onS
               Sin pasos — la receta es libre
             </div>
           )}
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {form.steps.map((step, i) => (
-              <div key={i} style={{ display: "grid", gridTemplateColumns: "70px 70px 1fr 28px", gap: 6, alignItems: "center" }}>
-                <Field label={i === 0 ? "Tiempo" : ""}>
-                  <input
-                    className="input"
-                    value={fmtTime(step.timeSeconds)}
-                    onChange={(e) => patchStep(i, "timeSeconds", parseMmSs(e.target.value))}
-                    placeholder="0:00"
-                    style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}
-                  />
-                </Field>
-                <Field label={i === 0 ? "Agua (g)" : ""}>
-                  <input
-                    className="input"
-                    type="number"
-                    min="0"
-                    value={step.waterGrams}
-                    onChange={(e) => patchStep(i, "waterGrams", parseFloat(e.target.value) || 0)}
-                  />
-                </Field>
-                <Field label={i === 0 ? "Descripción" : ""}>
-                  <input
-                    className="input"
-                    value={step.description}
-                    onChange={(e) => patchStep(i, "description", e.target.value)}
-                    placeholder="ej. Bloom"
-                  />
-                </Field>
-                <div style={{ paddingTop: i === 0 ? 18 : 0 }}>
-                  <button className="icon-btn" style={{ color: "var(--danger)" }} onClick={() => removeStep(i)}>
-                    <IX size={12} />
-                  </button>
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            {form.steps.map((step, i) => {
+              const isPour = step.type === "pour";
+              const stepWaterMode = step.waterMode ?? "x_cafe";
+              const ratio = parseFloat(form.ratio) || 15;
+              const autoCompletePct = step.autoComplete ? autoCompleteRatio(i, form.steps, ratio) : null;
+              const derivedGrams = dosisRef > 0
+                ? step.autoComplete
+                  ? Math.round((autoCompletePct! / 100) * ratio * dosisRef)
+                  : step.waterRatio
+                    ? stepWaterMode === "x_cafe"
+                      ? Math.round(step.waterRatio * dosisRef)
+                      : Math.round((step.waterRatio / 100) * ratio * dosisRef)
+                    : null
+                : null;
+              return (
+                <div key={i} style={{ display: "flex", flexDirection: "column", gap: 5, padding: "8px 0", borderBottom: "1px solid var(--line)" }}>
+                  {/* Row 1: type toggle + time + description + delete */}
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <button
+                      type="button"
+                      onClick={() => toggleStepType(i)}
+                      style={{
+                        flexShrink: 0, fontSize: 11, fontWeight: 700, padding: "2px 9px", borderRadius: 20,
+                        border: "none", cursor: "pointer",
+                        background: isPour ? "color-mix(in srgb, var(--accent) 18%, transparent)" : "var(--bg-sunken)",
+                        color: isPour ? "var(--accent)" : "var(--fg-muted)",
+                      }}
+                    >
+                      {isPour ? "pour" : "acción"}
+                    </button>
+                    <input
+                      className="input"
+                      value={fmtTime(step.timeSeconds)}
+                      onChange={(e) => patchStep(i, { timeSeconds: parseMmSs(e.target.value) })}
+                      placeholder="0:00"
+                      style={{ width: 58, fontFamily: "var(--font-mono)", fontSize: 12, flexShrink: 0 }}
+                    />
+                    <input
+                      className="input"
+                      value={step.description}
+                      onChange={(e) => patchStep(i, { description: e.target.value })}
+                      placeholder={isPour ? "ej. Bloom" : "ej. Revolver, esperar…"}
+                      style={{ flex: 1 }}
+                    />
+                    <button className="icon-btn" style={{ color: "var(--danger)", flexShrink: 0 }} onClick={() => removeStep(i)}>
+                      <IX size={12} />
+                    </button>
+                  </div>
+                  {/* Row 2: pour fields (agua ratio + derived grams + flow) */}
+                  {isPour && (
+                    <div style={{ display: "flex", gap: 12, alignItems: "center", paddingLeft: 6 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        <span style={{ fontSize: 11, color: "var(--fg-subtle)", whiteSpace: "nowrap" }}>Agua</span>
+                        {step.autoComplete ? (
+                          /* auto mode: badge read-only + deactivate button */
+                          <>
+                            <span style={{
+                              fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 10,
+                              background: "color-mix(in srgb, var(--accent) 18%, transparent)",
+                              color: "var(--accent)", whiteSpace: "nowrap",
+                            }}>
+                              auto · {Math.round(autoCompletePct!)}%
+                            </span>
+                            <button type="button" onClick={() => patchStep(i, { autoComplete: false })} style={{
+                              fontSize: 10, padding: "1px 5px", borderRadius: 4, border: "1px solid var(--line)",
+                              background: "transparent", color: "var(--fg-subtle)", cursor: "pointer",
+                            }}>×</button>
+                          </>
+                        ) : (
+                          /* normal mode: toggle + input + autocompletar button */
+                          <>
+                            <div style={{ display: "flex", gap: 1, background: "var(--bg-sunken)", borderRadius: 5, padding: 1 }}>
+                              {(["x_cafe", "pct_agua"] as WaterMode[]).map((m) => (
+                                <button key={m} type="button" onClick={() => patchStep(i, { waterMode: m })} style={{
+                                  fontSize: 10, padding: "1px 6px", borderRadius: 4, border: "none", cursor: "pointer",
+                                  background: stepWaterMode === m ? "var(--bg)" : "transparent",
+                                  color: stepWaterMode === m ? "var(--fg)" : "var(--fg-subtle)",
+                                  fontWeight: stepWaterMode === m ? 600 : 400,
+                                }}>
+                                  {m === "x_cafe" ? "×café" : "%"}
+                                </button>
+                              ))}
+                            </div>
+                            <input
+                              className="input"
+                              type="number" min="0"
+                              step={stepWaterMode === "x_cafe" ? "0.1" : "1"}
+                              value={step.waterRatio ?? ""}
+                              onChange={(e) => patchStep(i, { waterRatio: parseFloat(e.target.value) || undefined })}
+                              placeholder={stepWaterMode === "x_cafe" ? "ej. 2.0" : "ej. 30"}
+                              style={{ width: 60 }}
+                            />
+                            {stepWaterMode === "pct_agua" && step.waterRatio != null && (
+                              <span style={{ fontSize: 11, color: "var(--fg-subtle)" }}>%</span>
+                            )}
+                            {(() => {
+                              const restRaw = autoCompleteRatio(i, form.steps, ratio);
+                              const restRounded = Math.round(restRaw);
+                              if (restRaw <= 0) return null;
+                              return (
+                                <button type="button" onClick={() => {
+                                  onStepsChange(form.steps.map((s, idx) =>
+                                    idx === i
+                                      ? { ...s, autoComplete: true, waterMode: "pct_agua" as WaterMode }
+                                      : { ...s, autoComplete: false }
+                                  ));
+                                }} style={{
+                                  fontSize: 10, padding: "1px 6px", borderRadius: 4, border: "1px dashed var(--line)",
+                                  background: "transparent", color: "var(--fg-muted)", cursor: "pointer", whiteSpace: "nowrap",
+                                }}>
+                                  autocompletar · {restRounded}%
+                                </button>
+                              );
+                            })()}
+                          </>
+                        )}
+                        {derivedGrams != null && (
+                          <span style={{ fontSize: 12, color: "var(--fg-muted)", whiteSpace: "nowrap" }}>
+                            ≈ {derivedGrams} g
+                            {!step.autoComplete && stepWaterMode === "x_cafe" && step.waterRatio != null && ratio > 0 && (
+                              <span style={{ color: "var(--fg-subtle)", marginLeft: 4 }}>
+                                ({Math.round(step.waterRatio / ratio * 100)}%)
+                              </span>
+                            )}
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        <span style={{ fontSize: 11, color: "var(--fg-subtle)", whiteSpace: "nowrap" }}>Flow (g/s)</span>
+                        <input
+                          className="input"
+                          type="number" min="0" step="0.5"
+                          value={step.flowTarget ?? ""}
+                          onChange={(e) => patchStep(i, { flowTarget: parseFloat(e.target.value) || undefined })}
+                          placeholder="ej. 4.0"
+                          style={{ width: 65 }}
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
+          {/* pct_agua balance indicator */}
+          {(() => {
+            const hasTracked = form.steps.some(
+              (s) => s.type === "pour" && ((s.waterMode ?? "x_cafe") === "pct_agua" || s.autoComplete)
+            );
+            if (!hasTracked) return null;
+            const ratio = parseFloat(form.ratio) || 15;
+            const sum = form.steps.reduce((acc, s, i) => {
+              if (s.type !== "pour") return acc;
+              if (s.autoComplete) return acc + autoCompleteRatio(i, form.steps, ratio);
+              if ((s.waterMode ?? "x_cafe") === "pct_agua") return acc + (s.waterRatio ?? 0);
+              return acc + (s.waterRatio != null && ratio > 0 ? s.waterRatio / ratio * 100 : 0);
+            }, 0);
+            const rounded = Math.round(sum);
+            const diff = 100 - rounded;
+            const isOver = diff < 0;
+            const isExact = diff === 0;
+            return (
+              <div style={{
+                marginTop: 6, padding: "5px 10px", borderRadius: 6, fontSize: 12,
+                background: isOver
+                  ? "color-mix(in srgb, var(--danger) 10%, transparent)"
+                  : isExact
+                  ? "color-mix(in srgb, #4caf50 10%, transparent)"
+                  : "var(--bg-sunken)",
+                color: isOver ? "var(--danger)" : isExact ? "#4caf50" : "var(--fg-muted)",
+                display: "flex", alignItems: "center", gap: 6,
+              }}>
+                <span style={{ fontWeight: 600 }}>% total pours: {rounded}%</span>
+                {!isExact && (
+                  <span>— {isOver ? `sobrás ${-diff}%` : `falta ${diff}%`}</span>
+                )}
+                {isExact && <span>✓ completo</span>}
+              </div>
+            );
+          })()}
         </div>
 
         <Field label="Notas">

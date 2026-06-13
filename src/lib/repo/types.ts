@@ -1,5 +1,7 @@
 import type {
   Automation,
+  BrewDatapoint,
+  BrewSession,
   Budget,
   CalendarEvent,
   Category,
@@ -127,6 +129,17 @@ export type CoffeeRecipeCreate = Pick<CoffeeRecipe, "name"> & {
   notes?: string;
 };
 export type CoffeeRecipePatch = Partial<Omit<CoffeeRecipe, "id" | "createdAt" | "version">>;
+
+export type BrewSessionCreate = {
+  recipeId?: string | null;
+  recipeName?: string;
+  beanId?: string | null;
+  beanName?: string;
+  doseGrams: number;
+  totalWaterGrams?: number;
+  durationMs?: number;
+  notes?: string;
+};
 
 export type AutomationCreate = Pick<Automation, "name" | "kind"> & {
   projectId?: string | null;
@@ -293,4 +306,10 @@ export interface Repo {
   createCoffeeRecipe(input: CoffeeRecipeCreate): Promise<CoffeeRecipe>;
   patchCoffeeRecipe(id: string, patch: CoffeeRecipePatch): Promise<CoffeeRecipe>;
   deleteCoffeeRecipe(id: string): Promise<void>;
+
+  listBrewSessions(recipeId?: string): Promise<BrewSession[]>;
+  createBrewSession(input: BrewSessionCreate): Promise<BrewSession>;
+  addBrewDatapoints(sessionId: string, points: Omit<BrewDatapoint, "id" | "sessionId">[]): Promise<void>;
+  getBrewDatapoints(sessionId: string): Promise<BrewDatapoint[]>;
+  deleteBrewSession(id: string): Promise<void>;
 }

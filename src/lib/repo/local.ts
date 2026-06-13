@@ -1,5 +1,7 @@
 import type {
   Automation,
+  BrewDatapoint,
+  BrewSession,
   Budget,
   CalendarEvent,
   Category,
@@ -37,6 +39,7 @@ import type {
 import { supabase } from "../supabase";
 import { boolFromDb, getDb, parseJson } from "../db";
 import type {
+  BrewSessionCreate,
   BudgetUpsert,
   CategoryCreate,
   AutomationCreate,
@@ -204,7 +207,8 @@ async function enqueue(
     | "events"
     | "expense_line_items"
     | "coffee_beans"
-    | "coffee_recipes",
+    | "coffee_recipes"
+    | "brew_sessions",
   entityId: string,
   payload: unknown,
 ): Promise<void> {
@@ -2240,6 +2244,116 @@ export const localRepo: Repo = {
     );
     await enqueue(userId, "delete", "coffee_recipes", id, null);
   },
+
+  // ── Brew sessions ──────────────────────────────────────────────────────────
+
+  async listBrewSessions(recipeId?: string) {
+    const userId = await requireUserId();
+    const db = await getDb();
+    interface Row {
+      id: string; recipe_id: string | null; recipe_name: string;
+      bean_id: string | null; bean_name: string; dose_grams: number;
+      total_water_grams: number; duration_ms: number; notes: string;
+      created_at: string; updated_at: string; deleted_at: string | null; version: number;
+    }
+    const rows = recipeId
+      ? await db.select<Row[]>(
+          "SELECT * FROM brew_sessions WHERE user_id = ? AND recipe_id = ? AND deleted_at IS NULL ORDER BY created_at DESC",
+          [userId, recipeId],
+        )
+      : await db.select<Row[]>(
+          "SELECT * FROM brew_sessions WHERE user_id = ? AND deleted_at IS NULL ORDER BY created_at DESC",
+          [userId],
+        );
+    return rows.map((r): BrewSession => ({
+      id: r.id, recipeId: r.recipe_id, recipeName: r.recipe_name,
+      beanId: r.bean_id, beanName: r.bean_name, doseGrams: r.dose_grams,
+      totalWaterGrams: r.total_water_grams, durationMs: r.duration_ms,
+      notes: r.notes, createdAt: r.created_at, updatedAt: r.updated_at,
+      deletedAt: r.deleted_at, version: r.version,
+    }));
+  },
+
+  async createBrewSession(input: BrewSessionCreate) {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const ts = now();
+    const session: BrewSession = {
+      id: newId(),
+      recipeId: input.recipeId ?? null,
+      recipeName: input.recipeName ?? "",
+      beanId: input.beanId ?? null,
+      beanName: input.beanName ?? "",
+      doseGrams: input.doseGrams,
+      totalWaterGrams: input.totalWaterGrams ?? 0,
+      durationMs: input.durationMs ?? 0,
+      notes: input.notes ?? "",
+      createdAt: ts, updatedAt: ts, deletedAt: null, version: 1,
+    };
+    await db.execute(
+      `INSERT INTO brew_sessions
+        (id, user_id, recipe_id, recipe_name, bean_id, bean_name,
+         dose_grams, total_water_grams, duration_ms, notes,
+         created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [session.id, userId, session.recipeId, session.recipeName,
+       session.beanId, session.beanName, session.doseGrams,
+       session.totalWaterGrams, session.durationMs, session.notes,
+       session.createdAt, session.updatedAt, null, 1],
+    );
+    await enqueue(userId, "insert", "brew_sessions", session.id, {
+      id: session.id, user_id: userId, recipe_id: session.recipeId,
+      recipe_name: session.recipeName, bean_id: session.beanId,
+      bean_name: session.beanName, dose_grams: session.doseGrams,
+      total_water_grams: session.totalWaterGrams, duration_ms: session.durationMs,
+      notes: session.notes, created_at: session.createdAt,
+      updated_at: session.updatedAt, deleted_at: null, version: 1,
+    });
+    return session;
+  },
+
+  async addBrewDatapoints(
+    sessionId: string,
+    points: Omit<BrewDatapoint, "id" | "sessionId">[],
+  ) {
+    if (points.length === 0) return;
+    const db = await getDb();
+    // batch insert in chunks of 100 to avoid SQLite limits
+    for (let i = 0; i < points.length; i += 100) {
+      const chunk = points.slice(i, i + 100);
+      for (const p of chunk) {
+        await db.execute(
+          "INSERT INTO brew_datapoints (session_id, timer_ms, weight_g, flow_g_s, step_idx) VALUES (?, ?, ?, ?, ?)",
+          [sessionId, p.timerMs, p.weightG ?? null, p.flowGs ?? null, p.stepIdx],
+        );
+      }
+    }
+  },
+
+  async getBrewDatapoints(sessionId: string) {
+    const db = await getDb();
+    interface Row { id: number; session_id: string; timer_ms: number; weight_g: number | null; flow_g_s: number | null; step_idx: number }
+    const rows = await db.select<Row[]>(
+      "SELECT * FROM brew_datapoints WHERE session_id = ? ORDER BY timer_ms ASC",
+      [sessionId],
+    );
+    return rows.map((r): BrewDatapoint => ({
+      id: r.id, sessionId: r.session_id, timerMs: r.timer_ms,
+      weightG: r.weight_g, flowGs: r.flow_g_s, stepIdx: r.step_idx,
+    }));
+  },
+
+  async deleteBrewSession(id: string) {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const ts = now();
+    await db.execute(
+      "UPDATE brew_sessions SET deleted_at = ?, updated_at = ?, version = version + 1 WHERE id = ? AND user_id = ?",
+      [ts, ts, id, userId],
+    );
+    await db.execute("DELETE FROM brew_datapoints WHERE session_id = ?", [id]);
+    await enqueue(userId, "delete", "brew_sessions", id, null);
+  },
 };
 
 // ---------- "wire" helpers: shapes that go into the outbox payload to send
@@ -3236,6 +3350,7 @@ interface DbCoffeeRecipeRow {
   ratio: number;
   temp_celsius: number;
   grind_size: string;
+  water_mode: string;
   steps: string;
   notes: string;
   created_at: string;
@@ -3245,6 +3360,18 @@ interface DbCoffeeRecipeRow {
 }
 
 function fromDbCoffeeRecipe(r: DbCoffeeRecipeRow): CoffeeRecipe {
+  type RawStep = Partial<CoffeeRecipeStep> & { waterGrams?: number };
+  const rawSteps = parseJson<RawStep[]>(r.steps, []);
+  const steps: CoffeeRecipeStep[] = rawSteps.map((s) => ({
+    type: s.type ?? ((s.waterGrams ?? 0) > 0 ? "pour" : "action"),
+    timeSeconds: s.timeSeconds ?? 0,
+    description: s.description ?? "",
+    waterMode: s.waterMode,
+    waterRatio: s.waterRatio,
+    autoComplete: s.autoComplete,
+    flowTarget: s.flowTarget,
+    waterGrams: s.waterGrams,
+  }));
   return {
     id: r.id,
     name: r.name,
@@ -3252,7 +3379,7 @@ function fromDbCoffeeRecipe(r: DbCoffeeRecipeRow): CoffeeRecipe {
     ratio: r.ratio,
     tempCelsius: r.temp_celsius,
     grindSize: r.grind_size,
-    steps: parseJson<CoffeeRecipeStep[]>(r.steps, []),
+    steps,
     notes: r.notes,
     createdAt: r.created_at,
     updatedAt: r.updated_at,

@@ -327,10 +327,18 @@ export interface CoffeeBean {
   version: number;
 }
 
+export type CoffeeStepType = "action" | "pour";
+export type WaterMode = "x_cafe" | "pct_agua";
+
 export interface CoffeeRecipeStep {
+  type: CoffeeStepType;
   timeSeconds: number;
-  waterGrams: number;
   description: string;
+  waterMode?: WaterMode;    // por paso; default "x_cafe" si ausente
+  waterRatio?: number;      // × café (x_cafe) o % del agua total (pct_agua)
+  autoComplete?: boolean;   // toma el % que sobra de los otros pours automaticamente
+  flowTarget?: number;      // g/s objetivo (banda lento/bien/rápido)
+  waterGrams?: number;      // campo legacy — recetas creadas antes de 6b-1
 }
 
 export interface CoffeeRecipe {
@@ -346,6 +354,31 @@ export interface CoffeeRecipe {
   updatedAt: string;
   deletedAt: string | null;
   version: number;
+}
+
+export interface BrewSession {
+  id: string;
+  recipeId: string | null;
+  recipeName: string;
+  beanId: string | null;
+  beanName: string;
+  doseGrams: number;
+  totalWaterGrams: number;
+  durationMs: number;
+  notes: string;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+  version: number;
+}
+
+export interface BrewDatapoint {
+  id: number;
+  sessionId: string;
+  timerMs: number;
+  weightG: number | null;
+  flowGs: number | null;
+  stepIdx: number;
 }
 
 export interface Automation {

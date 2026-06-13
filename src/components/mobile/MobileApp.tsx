@@ -5,12 +5,14 @@ import { useSyncEngine } from "../../lib/sync";
 import { useComprasNotifications } from "../../lib/useComprasNotifications";
 import { ShoppingListView } from "./ShoppingListView";
 import { RecipesView } from "./RecipesView";
+import { BrewView } from "./BrewView";
 
-type Tab = "list" | "recipes" | "receipts";
+type Tab = "list" | "recipes" | "cafe" | "receipts";
 
 const TITLES: Record<Tab, string> = {
   list: "Lista de la compra",
   recipes: "Recetas",
+  cafe: "Café",
   receipts: "Tickets",
 };
 
@@ -42,6 +44,8 @@ export function MobileApp() {
           <ShoppingListView />
         ) : tab === "recipes" ? (
           <RecipesView />
+        ) : tab === "cafe" ? (
+          <BrewView />
         ) : (
           <p className="m-empty">Próximamente: cargá un ticket y completá los precios.</p>
         )}
@@ -61,6 +65,13 @@ export function MobileApp() {
           onClick={() => setTab("recipes")}
         >
           Recetas
+        </button>
+        <button
+          className={`m-tab${tab === "cafe" ? " is-active" : ""}`}
+          type="button"
+          onClick={() => setTab("cafe")}
+        >
+          Café
         </button>
         <button
           className="m-tab is-disabled"

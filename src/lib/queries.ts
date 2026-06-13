@@ -28,6 +28,7 @@ import {
   type MealLogCreate,
   type ComprasSettingsUpsert,
   type TaskCreate, type TaskPatch,
+  type BrewSessionCreate,
 } from "./repo";
 
 const KEYS = {
@@ -57,6 +58,8 @@ const KEYS = {
   inventory: ["inventory"] as const,
   mealLogs: ["meal_log"] as const,
   comprasSettings: ["compras_settings"] as const,
+  brewSessions: ["brew_sessions"] as const,
+  brewDatapoints: (sessionId: string) => ["brew_datapoints", sessionId] as const,
 };
 
 export function useTasks() {
@@ -882,5 +885,36 @@ export function useDeleteCoffeeRecipe() {
   return useMutation({
     mutationFn: (id: string) => repo.deleteCoffeeRecipe(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.coffeeRecipes }),
+  });
+}
+
+export function useBrewSessions(recipeId?: string) {
+  return useQuery({
+    queryKey: recipeId ? [...KEYS.brewSessions, recipeId] : KEYS.brewSessions,
+    queryFn: () => repo.listBrewSessions(recipeId),
+  });
+}
+
+export function useBrewDatapoints(sessionId: string | null) {
+  return useQuery({
+    queryKey: KEYS.brewDatapoints(sessionId ?? ""),
+    queryFn: () => (sessionId ? repo.getBrewDatapoints(sessionId) : Promise.resolve([])),
+    enabled: !!sessionId,
+  });
+}
+
+export function useCreateBrewSession() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BrewSessionCreate) => repo.createBrewSession(input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.brewSessions }),
+  });
+}
+
+export function useDeleteBrewSession() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => repo.deleteBrewSession(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.brewSessions }),
   });
 }
