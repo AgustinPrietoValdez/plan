@@ -20,6 +20,8 @@ tabla es priorizar y dar el diseño; el codigo lo hace Claude cuando se lo pido.
 | [#6](https://github.com/AgustinPrietoValdez/plan/issues/6) | Fase 2a: Eventos (CalendarEvent) | CERRADO 2026-06-10 | Nada (verificado y aprobado; commit 5a86aaf) |
 | [#7](https://github.com/AgustinPrietoValdez/plan/issues/7) | Fase 3: Presupuesto - rediseno layout, gastos inline, ahorros por % | CERRADO 2026-06-10 | Nada (verificado y aprobado; commit 3973db4) |
 | [#8](https://github.com/AgustinPrietoValdez/plan/issues/8) | Fase 4: Compras - default lista, generacion semanal, categorias ingredientes | CERRADO 2026-06-10 | Nada (tab inicio eliminado + categorias de ingredientes; recetas genericas DIFERIDO) |
+| [#9](https://github.com/AgustinPrietoValdez/plan/issues/9) | Telemetria cafe: sincronizar brew_datapoints phone->compu + rebuild desktop | ABIERTO | Nada por ahora (Claude implementa); decidir si lo priorizas |
+| [#10](https://github.com/AgustinPrietoValdez/plan/issues/10) | Cafe 6c: ranking/review de granos | ABIERTO | **Definir el diseno** (campos de review/puntaje) y decir "dale" |
 
 ## Como marcar un issue como resuelto (asi Claude se entera)
 
