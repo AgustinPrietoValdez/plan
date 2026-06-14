@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type MouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { colorsForCategory } from "../lib/categoryColor";
 import {
   useCategories,
@@ -8,7 +8,15 @@ import {
   useProjects,
   useTasks,
 } from "../lib/queries";
+import { scaffoldProjectGuide } from "../lib/obsidian";
+import type { Milestone } from "../types";
 import { IPlus, ITrash, IX } from "./icons";
+
+// Mirror the desktop/mobile check from main.tsx (Obsidian scaffolding is
+// desktop-only; on mobile there is no vault).
+const isMobile =
+  /android/i.test(navigator.userAgent) ||
+  new URLSearchParams(window.location.search).has("mobile");
 
 interface Props {
   onClose: () => void;
@@ -35,6 +43,14 @@ export function ProjectManager({ onClose }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  // Create form
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newCategoryId, setNewCategoryId] = useState<string>("");
+  const [newObjetivo, setNewObjetivo] = useState("");
+  const [newMilestones, setNewMilestones] = useState<Milestone[]>([]);
+  const milestoneCounter = useRef(0);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -63,15 +79,51 @@ export function ProjectManager({ onClose }: Props) {
     setDraftName("");
   };
 
-  const onAdd = () => {
+  const openCreate = () => {
     if (categories.length === 0) {
-      alert("Create a category first.");
+      alert("Crea una categoría primero.");
       return;
     }
-    createProject.mutate({
-      name: "Untitled project",
-      categoryId: categories[0].id,
+    setNewName("");
+    setNewObjetivo("");
+    setNewMilestones([]);
+    setNewCategoryId(categories[0].id);
+    setCreating(true);
+  };
+
+  const cancelCreate = () => {
+    setCreating(false);
+    setNewName("");
+    setNewObjetivo("");
+    setNewMilestones([]);
+  };
+
+  const submitCreate = async () => {
+    const name = newName.trim();
+    if (name.length === 0 || !newCategoryId) return;
+    const milestones = newMilestones
+      .map((m) => ({ ...m, title: m.title.trim(), description: m.description.trim() }))
+      .filter((m) => m.title.length > 0);
+    const objetivo = newObjetivo.trim();
+
+    await createProject.mutateAsync({
+      name,
+      categoryId: newCategoryId,
+      objetivo,
+      milestones,
     });
+
+    // Desktop only: scaffold the Obsidian guide. A missing vault / Android
+    // never blocks project creation, so swallow any error.
+    if (!isMobile) {
+      try {
+        await scaffoldProjectGuide({ name, objetivo, estado: "activo", milestones });
+      } catch (err) {
+        console.warn("[scaffoldProjectGuide] skipped:", err);
+      }
+    }
+
+    cancelCreate();
   };
 
   const onConfirmDelete = (id: string) => {
@@ -95,7 +147,127 @@ export function ProjectManager({ onClose }: Props) {
         </div>
 
         <div className="modal-body">
-          {projects.length === 0 && (
+          {creating && (
+            <div
+              style={{
+                border: "1px solid var(--accent)",
+                borderRadius: 8,
+                padding: "12px",
+                background: "var(--bg-elev)",
+                display: "flex",
+                flexDirection: "column",
+                gap: 10,
+                marginBottom: 4,
+              }}
+            >
+              <div style={{ fontSize: 12.5, fontWeight: 600 }}>Nuevo proyecto</div>
+              <input
+                autoFocus
+                className="input"
+                placeholder="Nombre del proyecto"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+              />
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {categories.map((c) => {
+                  const swatch = colorsForCategory(c);
+                  const active = c.id === newCategoryId;
+                  return (
+                    <span
+                      key={c.id}
+                      className={`pill-select ${active ? "active" : ""}`}
+                      style={
+                        active
+                          ? { background: swatch.bg, color: swatch.fg, borderColor: "transparent" }
+                          : undefined
+                      }
+                      onClick={() => setNewCategoryId(c.id)}
+                    >
+                      <span
+                        className="swatch"
+                        style={{ background: swatch.bg, border: "1px solid rgba(0,0,0,0.06)" }}
+                      />
+                      {c.name}
+                    </span>
+                  );
+                })}
+              </div>
+              <textarea
+                className="input"
+                placeholder="Objetivo del proyecto (que se busca lograr)"
+                value={newObjetivo}
+                onChange={(e) => setNewObjetivo(e.target.value)}
+                rows={2}
+                style={{ resize: "vertical", minHeight: 48 }}
+              />
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span
+                  style={{
+                    fontSize: 10.5,
+                    color: "var(--fg-muted)",
+                    textTransform: "uppercase",
+                    letterSpacing: ".05em",
+                    fontWeight: 600,
+                  }}
+                >
+                  Hitos
+                </span>
+                {newMilestones.map((m, i) => (
+                  <div key={m.id} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <input
+                      className="input"
+                      placeholder="Titulo del hito"
+                      value={m.title}
+                      onChange={(e) => {
+                        const next = newMilestones.slice();
+                        next[i] = { ...next[i], title: e.target.value };
+                        setNewMilestones(next);
+                      }}
+                      style={{ flex: 1 }}
+                    />
+                    <button
+                      className="icon-btn"
+                      style={{ width: 24, height: 24 }}
+                      onClick={() => setNewMilestones(newMilestones.filter((_, j) => j !== i))}
+                    >
+                      <IX size={11} />
+                    </button>
+                  </div>
+                ))}
+                <button
+                  className="btn ghost"
+                  style={{ alignSelf: "flex-start", padding: "4px 8px", fontSize: 11.5 }}
+                  onClick={() =>
+                    setNewMilestones([
+                      ...newMilestones,
+                      {
+                        id: `new_${Date.now()}_${++milestoneCounter.current}`,
+                        title: "",
+                        description: "",
+                        done: false,
+                      },
+                    ])
+                  }
+                >
+                  <IPlus size={11} /> Agregar hito
+                </button>
+              </div>
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                <button className="btn ghost" onClick={cancelCreate}>
+                  Cancelar
+                </button>
+                <button
+                  className="btn primary"
+                  onClick={submitCreate}
+                  disabled={newName.trim().length === 0}
+                >
+                  Crear proyecto
+                </button>
+              </div>
+            </div>
+          )}
+
+          {projects.length === 0 && !creating && (
             <div
               style={{
                 padding: "20px 12px",
@@ -290,8 +462,8 @@ export function ProjectManager({ onClose }: Props) {
         </div>
 
         <div className="modal-foot">
-          <button className="btn" onClick={onAdd}>
-            <IPlus size={12} /> Add project
+          <button className="btn" onClick={openCreate} disabled={creating}>
+            <IPlus size={12} /> Nuevo proyecto
           </button>
           <div className="actions">
             <button className="btn primary" onClick={onClose}>
