@@ -395,22 +395,27 @@ function BrewOverlayChart({
   sessions,
   dataBySession,
   maxWeight,
+  maxFlow,
   maxTimeSec,
 }: {
   sessions: BrewSession[];
   dataBySession: Record<string, BrewDatapoint[]>;
   maxWeight: number;
+  maxFlow: number;
   maxTimeSec: number;
 }) {
-  const W = 480, H = 200, PAD = { t: 10, r: 10, b: 30, l: 40 };
+  const W = 480, H = 200, PAD = { t: 10, r: 34, b: 30, l: 40 };
   const cw = W - PAD.l - PAD.r;
   const ch = H - PAD.t - PAD.b;
 
   const xScale = (ms: number) => PAD.l + (ms / 1000 / Math.max(maxTimeSec, 1)) * cw;
   const yScale = (g: number) => PAD.t + ch - (g / Math.max(maxWeight, 1)) * ch;
+  const yScaleFlow = (f: number) => PAD.t + ch - (f / Math.max(maxFlow, 1)) * ch;
 
-  // Y axis ticks
+  // Y axis ticks (peso, izquierda)
   const yTicks = [0, 25, 50, 75, 100].map(pct => maxWeight * pct / 100).filter(v => v > 0);
+  // Y axis ticks (flow, derecha)
+  const yTicksFlow = [0, 50, 100].map(pct => maxFlow * pct / 100).filter(v => v > 0);
   // X axis ticks (every 30s)
   const xTicks: number[] = [];
   for (let t = 0; t <= maxTimeSec; t += 30) xTicks.push(t);
@@ -427,7 +432,22 @@ function BrewOverlayChart({
           stroke="var(--line)" strokeWidth={0.5} strokeDasharray="3,3" />
       ))}
 
-      {/* data lines */}
+      {/* flow lines (punteadas, eje derecho) */}
+      {sessions.map((s, i) => {
+        const pts = dataBySession[s.id];
+        if (!pts || pts.length === 0) return null;
+        const d = pts
+          .map((p, j) => `${j === 0 ? "M" : "L"}${xScale(p.timerMs).toFixed(1)},${yScaleFlow(p.flowGs ?? 0).toFixed(1)}`)
+          .join(" ");
+        return (
+          <path key={`flow-${s.id}`} d={d} fill="none"
+            stroke={SESSION_COLORS[i % SESSION_COLORS.length]}
+            strokeWidth={1} strokeOpacity={0.55} strokeDasharray="2,2"
+            strokeLinejoin="round" strokeLinecap="round" />
+        );
+      })}
+
+      {/* weight lines (solidas, eje izquierdo) */}
       {sessions.map((s, i) => {
         const pts = dataBySession[s.id];
         if (!pts || pts.length === 0) return null;
@@ -441,12 +461,21 @@ function BrewOverlayChart({
         );
       })}
 
-      {/* Y axis */}
+      {/* Y axis (peso, izq) */}
       <line x1={PAD.l} y1={PAD.t} x2={PAD.l} y2={H - PAD.b} stroke="var(--fg-subtle)" strokeWidth={1} />
       {yTicks.map((v) => (
         <text key={v} x={PAD.l - 4} y={yScale(v)} textAnchor="end" dominantBaseline="middle"
           fontSize={8} fill="var(--fg-muted)">{v.toFixed(0)}</text>
       ))}
+      <text x={PAD.l - 4} y={PAD.t} textAnchor="end" fontSize={7} fill="var(--fg-subtle)">g</text>
+
+      {/* Y axis (flow, der) */}
+      <line x1={W - PAD.r} y1={PAD.t} x2={W - PAD.r} y2={H - PAD.b} stroke="var(--fg-subtle)" strokeWidth={1} strokeOpacity={0.5} />
+      {yTicksFlow.map((v) => (
+        <text key={v} x={W - PAD.r + 4} y={yScaleFlow(v)} textAnchor="start" dominantBaseline="middle"
+          fontSize={8} fill="var(--fg-muted)">{v.toFixed(1)}</text>
+      ))}
+      <text x={W - PAD.r + 4} y={PAD.t} textAnchor="start" fontSize={7} fill="var(--fg-subtle)">g/s</text>
 
       {/* X axis */}
       <line x1={PAD.l} y1={H - PAD.b} x2={W - PAD.r} y2={H - PAD.b} stroke="var(--fg-subtle)" strokeWidth={1} />
@@ -454,6 +483,12 @@ function BrewOverlayChart({
         <text key={t} x={xScale(t * 1000)} y={H - PAD.b + 10} textAnchor="middle"
           fontSize={8} fill="var(--fg-muted)">{`${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`}</text>
       ))}
+
+      {/* leyenda */}
+      <line x1={PAD.l} y1={H - 4} x2={PAD.l + 14} y2={H - 4} stroke="var(--fg-muted)" strokeWidth={1.5} />
+      <text x={PAD.l + 18} y={H - 4} dominantBaseline="middle" fontSize={7} fill="var(--fg-muted)">peso</text>
+      <line x1={PAD.l + 50} y1={H - 4} x2={PAD.l + 64} y2={H - 4} stroke="var(--fg-muted)" strokeWidth={1} strokeDasharray="2,2" />
+      <text x={PAD.l + 68} y={H - 4} dominantBaseline="middle" fontSize={7} fill="var(--fg-muted)">flow</text>
     </svg>
   );
 }
@@ -491,6 +526,7 @@ function BrewHistorialTab() {
   const chartSessions = viewingSessions?.filter(s => chartSessionIds.includes(s.id)) ?? [];
   const allPoints = Object.values(chartData).flat();
   const maxWeight = Math.max(...allPoints.map(p => p.weightG ?? 0), 10);
+  const maxFlow = Math.max(...allPoints.map(p => p.flowGs ?? 0), 1);
   const maxTimeSec = Math.max(...allPoints.map(p => p.timerMs / 1000), 60);
 
   if (chartSessionIds.length > 0) {
@@ -508,6 +544,7 @@ function BrewHistorialTab() {
           sessions={chartSessions}
           dataBySession={chartData}
           maxWeight={maxWeight}
+          maxFlow={maxFlow}
           maxTimeSec={maxTimeSec}
         />
 

@@ -168,6 +168,11 @@ export function BrewView() {
   const [selectedBean, setSelectedBean] = useState<CoffeeBean | null>(null);
   const [selectedRecipe, setSelectedRecipe] = useState<CoffeeRecipe | null>(null);
   const [doseGrams, setDoseGrams] = useState<number | null>(null);
+  // ajuste "para la proxima" (mixto: campos de receta editables + notas)
+  const [tweakGrind, setTweakGrind] = useState("");
+  const [tweakDose, setTweakDose] = useState("");
+  const [tweakWater, setTweakWater] = useState("");
+  const [tweakTemp, setTweakTemp] = useState("");
   const [tweakNotes, setTweakNotes] = useState("");
   const returnToReadyRef = useRef(false);
 
@@ -287,6 +292,12 @@ export function BrewView() {
     flowConsecutiveRef.current = 0;
     setWaterDetected(false); setBrewTimerMs(0);
     datapointsRef.current = [];
+    // prefill del ajuste con lo que se uso (editable al terminar)
+    setTweakGrind(selectedRecipe.grindSize ?? "");
+    setTweakDose(String(doseGrams));
+    setTweakWater(String(Math.round(selectedRecipe.ratio * doseGrams)));
+    setTweakTemp(selectedRecipe.tempCelsius ? String(selectedRecipe.tempCelsius) : "");
+    setTweakNotes("");
     if (kettleStatus === "on" && selectedRecipe.tempCelsius > 0) {
       try { await sendKettleTemp(selectedRecipe.tempCelsius); } catch { /* best-effort */ }
     }
@@ -305,15 +316,19 @@ export function BrewView() {
           datapoints: datapointsRef.current,
         });
       } catch { /* best-effort */ }
-      // guardar el ajuste en el grano: salta la proxima vez que se levante este cafe
+      // guardar el ajuste en el grano (mixto: campos editados + notas).
+      // salta la proxima vez que se levante este cafe.
       if (selectedBean) {
+        const doseN = parseFloat(tweakDose);
+        const waterN = parseFloat(tweakWater);
+        const tempN = parseFloat(tweakTemp);
         try {
           await repo.patchCoffeeBean(selectedBean.id, {
             lastTweak: {
-              grindSize: selectedRecipe.grindSize || undefined,
-              doseGrams,
-              totalWaterGrams: totalWater,
-              tempCelsius: selectedRecipe.tempCelsius || undefined,
+              grindSize: tweakGrind.trim() || undefined,
+              doseGrams: Number.isFinite(doseN) ? doseN : doseGrams,
+              totalWaterGrams: Number.isFinite(waterN) ? waterN : totalWater,
+              tempCelsius: Number.isFinite(tempN) ? tempN : (selectedRecipe.tempCelsius || undefined),
               notes: tweakNotes.trim(),
               recipeId: selectedRecipe.id,
               at: new Date().toISOString(),
@@ -322,7 +337,8 @@ export function BrewView() {
         } catch { /* best-effort */ }
       }
     }
-    datapointsRef.current = []; setWaterDetected(false); setBrewTimerMs(0); setTweakNotes("");
+    datapointsRef.current = []; setWaterDetected(false); setBrewTimerMs(0);
+    setTweakNotes(""); setTweakGrind(""); setTweakDose(""); setTweakWater(""); setTweakTemp("");
     setPhase("home");
   }
 
@@ -732,14 +748,41 @@ export function BrewView() {
 
           <div style={{ flex: 1 }} />
           {selectedBean && (
-            <textarea
-              className="input"
-              value={tweakNotes}
-              rows={2}
-              style={{ resize: "vertical", fontSize: 13 }}
-              placeholder="Ajuste para la proxima (ej. moler mas fino, menos agua)…"
-              onChange={(e) => setTweakNotes(e.target.value)}
-            />
+            <div style={{ background: "var(--bg-sunken)", borderRadius: 12, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "var(--fg-subtle)" }}>
+                Ajuste para la próxima (sale al levantar este café)
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <label style={{ fontSize: 11, color: "var(--fg-muted)", display: "flex", flexDirection: "column", gap: 2 }}>
+                  Molienda
+                  <input className="input" value={tweakGrind} placeholder="ej. 18 / medio-fino"
+                    onChange={(e) => setTweakGrind(e.target.value)} />
+                </label>
+                <label style={{ fontSize: 11, color: "var(--fg-muted)", display: "flex", flexDirection: "column", gap: 2 }}>
+                  Dosis (g)
+                  <input className="input" type="number" inputMode="decimal" value={tweakDose}
+                    onChange={(e) => setTweakDose(e.target.value)} />
+                </label>
+                <label style={{ fontSize: 11, color: "var(--fg-muted)", display: "flex", flexDirection: "column", gap: 2 }}>
+                  Agua (g)
+                  <input className="input" type="number" inputMode="decimal" value={tweakWater}
+                    onChange={(e) => setTweakWater(e.target.value)} />
+                </label>
+                <label style={{ fontSize: 11, color: "var(--fg-muted)", display: "flex", flexDirection: "column", gap: 2 }}>
+                  Temp (°C)
+                  <input className="input" type="number" inputMode="decimal" value={tweakTemp}
+                    onChange={(e) => setTweakTemp(e.target.value)} />
+                </label>
+              </div>
+              <textarea
+                className="input"
+                value={tweakNotes}
+                rows={2}
+                style={{ resize: "vertical", fontSize: 13 }}
+                placeholder="Notas (ej. quedó ácido, moler más fino la próxima)…"
+                onChange={(e) => setTweakNotes(e.target.value)}
+              />
+            </div>
           )}
           <button className="btn ghost" style={{ fontSize: 14, padding: "12px", borderRadius: 10 }} onClick={finishBrew}>
             Finalizar brew
