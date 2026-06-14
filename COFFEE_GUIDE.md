@@ -54,6 +54,19 @@ Nota: el tiempo total rara vez se fuerza solo; en filtro se controla sobre todo 
 molienda (mas fino = drena mas lento = mas tiempo). (Wikipedia, Coffee extraction; principios
 del Coffee Compass de Matt Perger / Barista Hustle.)
 
+**Importante - las palancas NO son 100% independientes (el ratio tambien toca el tiempo y la
+extraccion):** el ratio es sobre todo fuerza (TDS), pero al cambiarlo se mueve el tiempo y eso
+roza la extraccion. La direccion NO es simetrica:
+- **Subir el AGUA (ratio mas debil, ej 1:15 -> 1:16, misma dosis):** mas solvente por gramo +
+  drawdown mas largo -> la **EXTRACCION (EY) SUBE mas** (y la taza queda mas diluida). Este es el
+  movimiento que mas sube la extraccion.
+- **Subir la DOSIS (ratio mas fuerte, ej 1:16 -> 1:15, misma agua):** lecho mas profundo -> mas
+  lento -> mas tiempo, PERO hay menos agua por gramo -> la taza queda mas fuerte y el **EY puede
+  BAJAR** (riesgo de agrio si te pasas de dosis), no subir.
+- Por eso, al cambiar la dosis conviene **reajustar la molienda** para mantener el tiempo y aislar
+  el efecto de fuerza, y **re-catar** despues de tocar el ratio (moviste dos cosas a la vez).
+(Mecanismo de lecho/flujo: Moroney et al. 2019, PLOS ONE; relacion TDS-EY-ratio: UC Davis.)
+
 ## 2. La caja ideal de la SCA (Brewing Control Chart)
 
 El Brewing Control Chart cruza dos ejes y deja un rectangulo "ideal" en el centro:
