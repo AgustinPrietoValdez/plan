@@ -5,7 +5,7 @@
   "identifier": "com.agusp.calendarapp",
   "build": {
     "beforeDevCommand": "",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://192.168.0.240:1420",
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
   },
