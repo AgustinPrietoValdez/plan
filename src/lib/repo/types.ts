@@ -7,6 +7,7 @@ import type {
   Category,
   CoffeeBean,
   CoffeeRecipe,
+  CoffeeTweak,
   ComprasSettings,
   Expense,
   ExpenseCategory,
@@ -20,6 +21,8 @@ import type {
   MealLog,
   MealPlanEntry,
   Project,
+  ProjectEstado,
+  Milestone,
   Recipe,
   RecipeIngredient,
   SavedList,
@@ -49,7 +52,11 @@ export type TaskPatch = Partial<
   Omit<Task, "id" | "createdAt" | "version">
 >;
 
-export type ProjectCreate = Pick<Project, "name" | "categoryId">;
+export type ProjectCreate = Pick<Project, "name" | "categoryId"> & {
+  objetivo?: string;
+  estado?: ProjectEstado;
+  milestones?: Milestone[];
+};
 export type ProjectPatch = Partial<Omit<Project, "id" | "createdAt" | "version">>;
 
 export type CategoryCreate = Pick<Category, "name" | "hue"> & { position?: number };
@@ -117,6 +124,9 @@ export type CoffeeBeanCreate = Pick<CoffeeBean, "name"> & {
   roastedOn?: string | null;
   weightGrams?: number;
   notes?: string;
+  cataInicial?: string;
+  notaFinal?: string;
+  lastTweak?: CoffeeTweak | null;
 };
 export type CoffeeBeanPatch = Partial<Omit<CoffeeBean, "id" | "createdAt" | "version">>;
 
@@ -139,6 +149,7 @@ export type BrewSessionCreate = {
   totalWaterGrams?: number;
   durationMs?: number;
   notes?: string;
+  datapoints?: Omit<BrewDatapoint, "id" | "sessionId">[];
 };
 
 export type AutomationCreate = Pick<Automation, "name" | "kind"> & {
@@ -177,7 +188,10 @@ export type IngredientPresentationPatch = Partial<
 export type RecipeCreate = Pick<Recipe, "name" | "servings" | "mealType" | "steps">;
 export type RecipePatch = Partial<Omit<Recipe, "id" | "createdAt" | "version">>;
 
-export type RecipeIngredientCreate = Pick<RecipeIngredient, "recipeId" | "ingredientId" | "quantity">;
+export type RecipeIngredientCreate = Pick<RecipeIngredient, "recipeId" | "quantity"> & {
+  ingredientId?: string | null;
+  categoryId?: string | null;
+};
 export type RecipeIngredientPatch = Partial<
   Omit<RecipeIngredient, "id" | "recipeId" | "createdAt" | "version">
 >;

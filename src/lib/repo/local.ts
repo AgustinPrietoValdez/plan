@@ -8,6 +8,7 @@ import type {
   CoffeeBean,
   CoffeeRecipe,
   CoffeeRecipeStep,
+  CoffeeTweak,
   ComprasSettings,
   Expense,
   ExpenseCategory,
@@ -15,6 +16,8 @@ import type {
   HabitLog,
   Income,
   Project,
+  ProjectEstado,
+  Milestone,
   RecurrenceRule,
   SavingsContribution,
   SavingsGoal,
@@ -102,6 +105,9 @@ interface DbProjectRow {
   user_id: string;
   name: string;
   category_id: string;
+  objetivo: string;
+  estado: string;
+  milestones: string;
   archived: number;
   created_at: string;
   updated_at: string;
@@ -150,6 +156,9 @@ const fromDbProject = (r: DbProjectRow): Project => ({
   id: r.id,
   name: r.name,
   categoryId: r.category_id,
+  objetivo: r.objetivo ?? "",
+  estado: (r.estado as ProjectEstado) || "activo",
+  milestones: parseJson<Milestone[]>(r.milestones, []),
   archived: boolFromDb(r.archived),
   createdAt: r.created_at,
   updatedAt: r.updated_at,
@@ -356,6 +365,9 @@ export const localRepo: Repo = {
       id: newId(),
       name: input.name,
       categoryId: input.categoryId,
+      objetivo: input.objetivo ?? "",
+      estado: input.estado ?? "activo",
+      milestones: input.milestones ?? [],
       archived: false,
       createdAt: ts,
       updatedAt: ts,
@@ -364,9 +376,10 @@ export const localRepo: Repo = {
     };
     await db.execute(
       `INSERT INTO projects
-        (id, user_id, name, category_id, archived, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [project.id, userId, project.name, project.categoryId, 0, project.createdAt, project.updatedAt, null, 1],
+        (id, user_id, name, category_id, objetivo, estado, milestones, archived, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [project.id, userId, project.name, project.categoryId, project.objetivo, project.estado,
+       JSON.stringify(project.milestones), 0, project.createdAt, project.updatedAt, null, 1],
     );
     await enqueue(userId, "insert", "projects", project.id, projectToWire(project, userId));
     return project;
@@ -390,10 +403,12 @@ export const localRepo: Repo = {
       version: existing.version + 1,
     };
     await db.execute(
-      `UPDATE projects SET name = ?, category_id = ?, archived = ?, updated_at = ?, deleted_at = ?, version = ?
+      `UPDATE projects SET name = ?, category_id = ?, objetivo = ?, estado = ?, milestones = ?,
+         archived = ?, updated_at = ?, deleted_at = ?, version = ?
        WHERE id = ? AND user_id = ?`,
       [
-        updated.name, updated.categoryId, updated.archived ? 1 : 0,
+        updated.name, updated.categoryId, updated.objetivo, updated.estado,
+        JSON.stringify(updated.milestones), updated.archived ? 1 : 0,
         updated.updatedAt, updated.deletedAt, updated.version,
         id, userId,
       ],
@@ -1522,7 +1537,8 @@ export const localRepo: Repo = {
     const ri: RecipeIngredient = {
       id: newId(),
       recipeId: input.recipeId,
-      ingredientId: input.ingredientId,
+      ingredientId: input.ingredientId ?? null,
+      categoryId: input.categoryId ?? null,
       quantity: input.quantity,
       createdAt: ts,
       updatedAt: ts,
@@ -1531,9 +1547,9 @@ export const localRepo: Repo = {
     };
     await db.execute(
       `INSERT INTO recipe_ingredients
-        (id, user_id, recipe_id, ingredient_id, quantity, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [ri.id, userId, ri.recipeId, ri.ingredientId, ri.quantity, ri.createdAt, ri.updatedAt, null, 1],
+        (id, user_id, recipe_id, ingredient_id, category_id, quantity, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [ri.id, userId, ri.recipeId, ri.ingredientId ?? "", ri.categoryId, ri.quantity, ri.createdAt, ri.updatedAt, null, 1],
     );
     await enqueue(userId, "insert", "recipe_ingredients", ri.id, recipeIngredientToWire(ri, userId));
     return ri;
@@ -1558,10 +1574,10 @@ export const localRepo: Repo = {
       version: existing.version + 1,
     };
     await db.execute(
-      `UPDATE recipe_ingredients SET ingredient_id = ?, quantity = ?, updated_at = ?, deleted_at = ?, version = ?
+      `UPDATE recipe_ingredients SET ingredient_id = ?, category_id = ?, quantity = ?, updated_at = ?, deleted_at = ?, version = ?
        WHERE id = ? AND user_id = ?`,
       [
-        updated.ingredientId, updated.quantity,
+        updated.ingredientId ?? "", updated.categoryId, updated.quantity,
         updated.updatedAt, updated.deletedAt, updated.version,
         id, userId,
       ],
@@ -2112,6 +2128,9 @@ export const localRepo: Repo = {
       roastedOn: input.roastedOn ?? null,
       weightGrams: input.weightGrams ?? 0,
       notes: input.notes ?? "",
+      cataInicial: input.cataInicial ?? "",
+      notaFinal: input.notaFinal ?? "",
+      lastTweak: input.lastTweak ?? null,
       createdAt: ts,
       updatedAt: ts,
       deletedAt: null,
@@ -2120,10 +2139,11 @@ export const localRepo: Repo = {
     await db.execute(
       `INSERT INTO coffee_beans
         (id, user_id, name, roaster, varietal, country, process, producer, roasted_on,
-         weight_grams, notes, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         weight_grams, notes, cata_inicial, nota_final, last_tweak, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [bean.id, userId, bean.name, bean.roaster, bean.varietal, bean.country, bean.process,
        bean.producer, bean.roastedOn, bean.weightGrams, bean.notes,
+       bean.cataInicial, bean.notaFinal, bean.lastTweak ? JSON.stringify(bean.lastTweak) : "",
        bean.createdAt, bean.updatedAt, null, 1],
     );
     await enqueue(userId, "insert", "coffee_beans", bean.id, coffeeBeanToWire(bean, userId));
@@ -2146,11 +2166,14 @@ export const localRepo: Repo = {
     await db.execute(
       `UPDATE coffee_beans SET name = ?, roaster = ?, varietal = ?, country = ?, process = ?,
          producer = ?, roasted_on = ?, weight_grams = ?, notes = ?,
+         cata_inicial = ?, nota_final = ?, last_tweak = ?,
          updated_at = ?, deleted_at = ?, version = ?
        WHERE id = ? AND user_id = ?`,
       [updated.name, updated.roaster, updated.varietal, updated.country, updated.process,
        updated.producer, updated.roastedOn, updated.weightGrams,
-       updated.notes, updated.updatedAt, updated.deletedAt, updated.version, id, userId],
+       updated.notes, updated.cataInicial, updated.notaFinal,
+       updated.lastTweak ? JSON.stringify(updated.lastTweak) : "",
+       updated.updatedAt, updated.deletedAt, updated.version, id, userId],
     );
     await enqueue(userId, "update", "coffee_beans", id, coffeeBeanToWire(updated, userId));
     return updated;
@@ -2290,23 +2313,39 @@ export const localRepo: Repo = {
       notes: input.notes ?? "",
       createdAt: ts, updatedAt: ts, deletedAt: null, version: 1,
     };
+    const points = input.datapoints ?? [];
+    const wirePoints = points.map((p) => ({
+      timer_ms: p.timerMs, weight_g: p.weightG ?? null, flow_g_s: p.flowGs ?? null, step_idx: p.stepIdx,
+    }));
     await db.execute(
       `INSERT INTO brew_sessions
         (id, user_id, recipe_id, recipe_name, bean_id, bean_name,
-         dose_grams, total_water_grams, duration_ms, notes,
+         dose_grams, total_water_grams, duration_ms, notes, datapoints,
          created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [session.id, userId, session.recipeId, session.recipeName,
        session.beanId, session.beanName, session.doseGrams,
        session.totalWaterGrams, session.durationMs, session.notes,
+       JSON.stringify(wirePoints),
        session.createdAt, session.updatedAt, null, 1],
     );
+    // tambien guardar los puntos en la tabla local para lectura rapida del chart
+    if (points.length > 0) {
+      for (let i = 0; i < points.length; i += 100) {
+        for (const p of points.slice(i, i + 100)) {
+          await db.execute(
+            "INSERT INTO brew_datapoints (session_id, timer_ms, weight_g, flow_g_s, step_idx) VALUES (?, ?, ?, ?, ?)",
+            [session.id, p.timerMs, p.weightG ?? null, p.flowGs ?? null, p.stepIdx],
+          );
+        }
+      }
+    }
     await enqueue(userId, "insert", "brew_sessions", session.id, {
       id: session.id, user_id: userId, recipe_id: session.recipeId,
       recipe_name: session.recipeName, bean_id: session.beanId,
       bean_name: session.beanName, dose_grams: session.doseGrams,
       total_water_grams: session.totalWaterGrams, duration_ms: session.durationMs,
-      notes: session.notes, created_at: session.createdAt,
+      notes: session.notes, datapoints: wirePoints, created_at: session.createdAt,
       updated_at: session.updatedAt, deleted_at: null, version: 1,
     });
     return session;
@@ -2392,6 +2431,9 @@ function projectToWire(p: Project, userId: string) {
     user_id: userId,
     name: p.name,
     category_id: p.categoryId,
+    objetivo: p.objetivo,
+    estado: p.estado,
+    milestones: p.milestones,
     archived: p.archived,
     created_at: p.createdAt,
     updated_at: p.updatedAt,
@@ -2942,6 +2984,7 @@ interface DbRecipeIngredientRow {
   user_id: string;
   recipe_id: string;
   ingredient_id: string;
+  category_id: string | null;
   quantity: number;
   created_at: string;
   updated_at: string;
@@ -2953,7 +2996,8 @@ function fromDbRecipeIngredient(r: DbRecipeIngredientRow): RecipeIngredient {
   return {
     id: r.id,
     recipeId: r.recipe_id,
-    ingredientId: r.ingredient_id,
+    ingredientId: r.ingredient_id || null, // '' (slot generico) -> null
+    categoryId: r.category_id ?? null,
     quantity: r.quantity,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
@@ -2967,7 +3011,8 @@ function recipeIngredientToWire(ri: RecipeIngredient, userId: string) {
     id: ri.id,
     user_id: userId,
     recipe_id: ri.recipeId,
-    ingredient_id: ri.ingredientId,
+    ingredient_id: ri.ingredientId || null, // '' / null -> null para el FK del server
+    category_id: ri.categoryId,
     quantity: ri.quantity,
     created_at: ri.createdAt,
     updated_at: ri.updatedAt,
@@ -3308,6 +3353,9 @@ interface DbCoffeeBeanRow {
   roasted_on: string | null;
   weight_grams: number;
   notes: string;
+  cata_inicial: string;
+  nota_final: string;
+  last_tweak: string;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -3326,6 +3374,9 @@ function fromDbCoffeeBean(r: DbCoffeeBeanRow): CoffeeBean {
     roastedOn: r.roasted_on,
     weightGrams: r.weight_grams,
     notes: r.notes,
+    cataInicial: r.cata_inicial ?? "",
+    notaFinal: r.nota_final ?? "",
+    lastTweak: r.last_tweak ? parseJson<CoffeeTweak | null>(r.last_tweak, null) : null,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
     deletedAt: r.deleted_at,
@@ -3338,6 +3389,7 @@ function coffeeBeanToWire(b: CoffeeBean, userId: string) {
     id: b.id, user_id: userId, name: b.name, roaster: b.roaster, varietal: b.varietal,
     country: b.country, process: b.process, producer: b.producer, roasted_on: b.roastedOn,
     weight_grams: b.weightGrams, notes: b.notes,
+    cata_inicial: b.cataInicial, nota_final: b.notaFinal, last_tweak: b.lastTweak,
     created_at: b.createdAt, updated_at: b.updatedAt, deleted_at: b.deletedAt, version: b.version,
   };
 }

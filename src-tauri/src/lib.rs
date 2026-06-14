@@ -155,6 +155,28 @@ fn request_or_open_notification_settings() -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn schedule_event_notification(payload: String) -> Result<bool, String> {
+    #[cfg(target_os = "android")]
+    return jni_bool_s("scheduleEventNotification", &payload);
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = payload;
+        Ok(false) // desktop usa el plugin de notificaciones, no la via nativa
+    }
+}
+
+#[tauri::command]
+async fn cancel_event_notification(id: String) -> Result<bool, String> {
+    #[cfg(target_os = "android")]
+    return jni_bool_s("cancelEventNotification", &id);
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = id;
+        Ok(false)
+    }
+}
+
+#[tauri::command]
 async fn ble_check_permissions() -> Result<bool, String> {
     #[cfg(target_os = "android")]
     return jni_bool("bleCheckPermissions");
@@ -384,6 +406,23 @@ async fn kettle_disconnect() -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn scaffold_project_guide(
+    vault_path: String,
+    file_name: String,
+    content: String,
+) -> Result<(), String> {
+    let dir = std::path::Path::new(&vault_path).join("Guides");
+    if !dir.exists() {
+        return Err("vault-not-found".into());
+    }
+    let path = dir.join(file_name);
+    if path.exists() {
+        return Err("guide-exists".into());
+    }
+    std::fs::write(&path, content).map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let migrations = vec![
@@ -531,6 +570,30 @@ pub fn run() {
             sql: include_str!("../migrations/0024_brew_sessions.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 25,
+            description: "add cata_inicial, nota_final, last_tweak to coffee_beans",
+            sql: include_str!("../migrations/0025_coffee_cata.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 26,
+            description: "project tracker: objetivo, estado, milestones on projects",
+            sql: include_str!("../migrations/0026_project_tracker.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 27,
+            description: "recipe_ingredients: add category_id (generic slots)",
+            sql: include_str!("../migrations/0027_recipe_ingredient_category.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 28,
+            description: "brew_sessions: add datapoints JSON blob (telemetry sync)",
+            sql: include_str!("../migrations/0028_brew_datapoints_blob.sql"),
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
@@ -552,6 +615,9 @@ pub fn run() {
             kettle_connect_and_subscribe,
             kettle_set_temp,
             kettle_disconnect,
+            scaffold_project_guide,
+            schedule_event_notification,
+            cancel_event_notification,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

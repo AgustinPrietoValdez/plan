@@ -27,7 +27,8 @@ type Entity =
   | "meal_log"
   | "compras_settings"
   | "coffee_beans"
-  | "coffee_recipes";
+  | "coffee_recipes"
+  | "brew_sessions";
 
 interface OutboxRow {
   id: number;
@@ -200,6 +201,7 @@ export async function pullDeltas(userId: string, qc: QueryClient): Promise<void>
     any = (await pullEntity(userId, "compras_settings")) || any;
     try { any = (await pullEntity(userId, "coffee_beans")) || any; } catch (e) { console.warn("coffee_beans pull skipped:", e); }
     try { any = (await pullEntity(userId, "coffee_recipes")) || any; } catch (e) { console.warn("coffee_recipes pull skipped:", e); }
+    try { any = (await pullEntity(userId, "brew_sessions")) || any; } catch (e) { console.warn("brew_sessions pull skipped:", e); }
     if (any) {
       qc.invalidateQueries({ queryKey: ["tasks"] });
       qc.invalidateQueries({ queryKey: ["projects"] });
@@ -223,6 +225,8 @@ export async function pullDeltas(userId: string, qc: QueryClient): Promise<void>
       qc.invalidateQueries({ queryKey: ["compras_settings"] });
       qc.invalidateQueries({ queryKey: ["coffee_beans"] });
       qc.invalidateQueries({ queryKey: ["coffee_recipes"] });
+      qc.invalidateQueries({ queryKey: ["brew_sessions"] });
+      qc.invalidateQueries({ queryKey: ["brew_datapoints"] });
     }
     if (currentStatus === "syncing") setStatus("idle");
   } catch (e) {
@@ -283,10 +287,12 @@ async function upsertLocal(
   } else if (entity === "projects") {
     await db.execute(
       `INSERT OR REPLACE INTO projects
-        (id, user_id, name, category_id, archived, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, user_id, name, category_id, objetivo, estado, milestones, archived, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         row.id, row.user_id, row.name, row.category_id,
+        row.objetivo ?? "", row.estado ?? "activo",
+        typeof row.milestones === "string" ? row.milestones : JSON.stringify(row.milestones ?? []),
         row.archived ? 1 : 0, row.created_at, row.updated_at,
         row.deleted_at, row.version,
       ],
@@ -424,10 +430,10 @@ async function upsertLocal(
   } else if (entity === "recipe_ingredients") {
     await db.execute(
       `INSERT OR REPLACE INTO recipe_ingredients
-        (id, user_id, recipe_id, ingredient_id, quantity, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, user_id, recipe_id, ingredient_id, category_id, quantity, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        row.id, row.user_id, row.recipe_id, row.ingredient_id, row.quantity,
+        row.id, row.user_id, row.recipe_id, row.ingredient_id ?? "", row.category_id ?? null, row.quantity,
         row.created_at, row.updated_at, row.deleted_at, row.version,
       ],
     );
@@ -487,11 +493,13 @@ async function upsertLocal(
   } else if (entity === "coffee_beans") {
     await db.execute(
       `INSERT OR REPLACE INTO coffee_beans
-        (id, user_id, name, roaster, varietal, country, process, producer, roasted_on, weight_grams, notes, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, user_id, name, roaster, varietal, country, process, producer, roasted_on, weight_grams, notes, cata_inicial, nota_final, last_tweak, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         row.id, row.user_id, row.name, row.roaster ?? "", row.varietal ?? "", row.country ?? "",
         row.process ?? "", row.producer ?? "", row.roasted_on ?? null, row.weight_grams ?? 0, row.notes ?? "",
+        row.cata_inicial ?? "", row.nota_final ?? "",
+        typeof row.last_tweak === "string" ? row.last_tweak : JSON.stringify(row.last_tweak ?? null),
         row.created_at, row.updated_at, row.deleted_at, row.version,
       ],
     );
@@ -506,6 +514,36 @@ async function upsertLocal(
         row.notes ?? "", row.created_at, row.updated_at, row.deleted_at, row.version,
       ],
     );
+  } else if (entity === "brew_sessions") {
+    await db.execute(
+      `INSERT OR REPLACE INTO brew_sessions
+        (id, user_id, recipe_id, recipe_name, bean_id, bean_name,
+         dose_grams, total_water_grams, duration_ms, notes, datapoints,
+         created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        row.id, row.user_id, row.recipe_id ?? null, row.recipe_name ?? "",
+        row.bean_id ?? null, row.bean_name ?? "", row.dose_grams ?? 0,
+        row.total_water_grams ?? 0, row.duration_ms ?? 0, row.notes ?? "",
+        typeof row.datapoints === "string" ? row.datapoints : JSON.stringify(row.datapoints ?? []),
+        row.created_at, row.updated_at, row.deleted_at, row.version,
+      ],
+    );
+    // reconstruir los datapoints locales desde el blob (idempotente: borrar antes)
+    await db.execute("DELETE FROM brew_datapoints WHERE session_id = ?", [row.id]);
+    if (!row.deleted_at) {
+      const raw = typeof row.datapoints === "string" ? row.datapoints : JSON.stringify(row.datapoints ?? []);
+      let points: Array<{ timer_ms?: number; weight_g?: number | null; flow_g_s?: number | null; step_idx?: number }> = [];
+      try { points = JSON.parse(raw); } catch { points = []; }
+      for (let i = 0; i < points.length; i += 100) {
+        for (const p of points.slice(i, i + 100)) {
+          await db.execute(
+            "INSERT INTO brew_datapoints (session_id, timer_ms, weight_g, flow_g_s, step_idx) VALUES (?, ?, ?, ?, ?)",
+            [row.id, p.timer_ms ?? 0, p.weight_g ?? null, p.flow_g_s ?? null, p.step_idx ?? 0],
+          );
+        }
+      }
+    }
   }
 }
 

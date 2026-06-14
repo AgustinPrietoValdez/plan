@@ -46,10 +46,22 @@ export interface HabitLog {
   version: number;
 }
 
+export type ProjectEstado = "activo" | "pausado" | "terminado";
+
+export interface Milestone {
+  id: string;
+  title: string;
+  description: string;
+  done: boolean;
+}
+
 export interface Project {
   id: string;
   name: string;
   categoryId: string;
+  objetivo: string; // NEW: meta del proyecto (= Description en la guia)
+  estado: ProjectEstado; // NEW: activo|pausado|terminado
+  milestones: Milestone[]; // NEW: hitos/fases (JSON en db)
   archived: boolean;
   createdAt: string;
   updatedAt: string;
@@ -251,7 +263,8 @@ export interface Recipe {
 export interface RecipeIngredient {
   id: string;
   recipeId: string;
-  ingredientId: string;
+  ingredientId: string | null; // null = slot generico (usar categoryId)
+  categoryId: string | null; // NEW: ingredient_categories.id cuando es slot generico
   quantity: number;
   createdAt: string;
   updatedAt: string;
@@ -310,6 +323,16 @@ export interface MealLog {
   version: number;
 }
 
+export interface CoffeeTweak {
+  grindSize?: string; // override de la molienda de la receta
+  doseGrams?: number;
+  totalWaterGrams?: number;
+  tempCelsius?: number;
+  notes: string; // texto libre
+  recipeId?: string | null; // para que receta fue el ajuste (contexto)
+  at: string; // ISO timestamp del ajuste
+}
+
 export interface CoffeeBean {
   id: string;
   name: string;
@@ -321,6 +344,9 @@ export interface CoffeeBean {
   roastedOn: string | null;
   weightGrams: number;
   notes: string;
+  cataInicial: string; // que busco en este cafe (al abrir el grano)
+  notaFinal: string; // a donde llegue (al terminarlo)
+  lastTweak: CoffeeTweak | null; // ultimo ajuste; salta al brewear este grano
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
