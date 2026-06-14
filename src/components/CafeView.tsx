@@ -2,6 +2,7 @@ import { useState } from "react";
 import {
   useCoffeeBeans,
   useCoffeeRecipes,
+  useConsumeCoffeeBean,
   useCreateCoffeeBean,
   useCreateCoffeeRecipe,
   useCreateTask,
@@ -173,6 +174,7 @@ export function CafeView() {
   const recipesQ = useCoffeeRecipes();
   const createBean = useCreateCoffeeBean();
   const patchBean = usePatchCoffeeBean();
+  const consumeBean = useConsumeCoffeeBean();
   const deleteB = useDeleteCoffeeBean();
   const createRecipe = useCreateCoffeeRecipe();
   const patchRecipe = usePatchCoffeeRecipe();
@@ -316,6 +318,20 @@ export function CafeView() {
             onEdit={openEditBean}
             onDeleteRequest={setDeleteBean}
             onCreateTask={(b) => void createOrderTask(b)}
+            onMarkFinished={(b) => { if (window.confirm(`Marcar "${b.name}" como terminado?`)) patchBean.mutate({ id: b.id, patch: { finishedAt: new Date().toISOString() } }); }}
+            onConsume={(b) => {
+              const inp = window.prompt(`Cuantos gramos usaste de "${b.name}"? (quedan ${b.weightGrams}g)`, "");
+              if (inp == null) return;
+              const g = parseFloat(inp.replace(",", "."));
+              if (!Number.isFinite(g) || g <= 0) return;
+              consumeBean.mutate({ id: b.id, grams: g });
+            }}
+            onReactivate={(b) => {
+              const inp = window.prompt(`Reactivar "${b.name}". Gramos de stock nuevo:`, "250");
+              if (inp == null) return;
+              const g = parseFloat(inp.replace(",", "."));
+              patchBean.mutate({ id: b.id, patch: { finishedAt: null, weightGrams: Number.isFinite(g) && g > 0 ? g : b.weightGrams } });
+            }}
           />
         )}
         {tab === "recetas" && (
@@ -633,14 +649,20 @@ function BrewHistorialTab() {
 // ---------- Granos tab ----------
 
 function GranosTab({
-  beans, onEdit, onDeleteRequest, onCreateTask,
+  beans, onEdit, onDeleteRequest, onCreateTask, onMarkFinished, onConsume, onReactivate,
 }: {
   beans: CoffeeBean[];
   onEdit: (b: CoffeeBean) => void;
   onDeleteRequest: (id: string) => void;
   onCreateTask: (b: CoffeeBean) => void;
+  onMarkFinished: (b: CoffeeBean) => void;
+  onConsume: (b: CoffeeBean) => void;
+  onReactivate: (b: CoffeeBean) => void;
 }) {
-  const needsOrder = beans.length <= 2;
+  const active = beans.filter((b) => !b.finishedAt);
+  const finished = beans.filter((b) => b.finishedAt);
+  const [showFinished, setShowFinished] = useState(false);
+  const needsOrder = active.length <= 2;
   if (beans.length === 0) {
     return (
       <div style={{ textAlign: "center", padding: "60px 20px", color: "var(--fg-muted)" }}>
@@ -652,34 +674,56 @@ function GranosTab({
   }
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      {needsOrder && (
+      {needsOrder && active.length > 0 && (
         <div style={{ fontSize: 12, color: "var(--danger)", fontWeight: 500, padding: "6px 10px", background: "color-mix(in oklch, var(--danger) 10%, var(--bg))", borderRadius: 8, border: "1px solid color-mix(in oklch, var(--danger) 30%, transparent)" }}>
-          ⚠ Quedan {beans.length === 1 ? "solo 1 grano" : "solo 2 granos"} — pedí más pronto
+          ⚠ Quedan {active.length === 1 ? "solo 1 grano" : active.length === 0 ? "sin granos activos" : "solo 2 granos"} — pedí más pronto
         </div>
       )}
-      {beans.map((b) => (
-        <BeanCard key={b.id} bean={b} onEdit={onEdit} onDelete={onDeleteRequest} onCreateTask={onCreateTask} needsOrder={needsOrder} />
+      {active.map((b) => (
+        <BeanCard key={b.id} bean={b} onEdit={onEdit} onDelete={onDeleteRequest} onCreateTask={onCreateTask}
+          needsOrder={needsOrder} onMarkFinished={onMarkFinished} onConsume={onConsume} onReactivate={onReactivate} />
       ))}
+      {active.length === 0 && (
+        <div style={{ fontSize: 13, color: "var(--fg-muted)", padding: "8px 4px" }}>No tenés cafés activos.</div>
+      )}
+
+      {finished.length > 0 && (
+        <>
+          <button className="btn ghost" style={{ alignSelf: "flex-start", fontSize: 12, padding: "4px 8px", marginTop: 8 }}
+            onClick={() => setShowFinished((v) => !v)}>
+            {showFinished ? "▾" : "▸"} No tengo más ({finished.length})
+          </button>
+          {showFinished && finished.map((b) => (
+            <BeanCard key={b.id} bean={b} onEdit={onEdit} onDelete={onDeleteRequest} onCreateTask={onCreateTask}
+              needsOrder={false} onMarkFinished={onMarkFinished} onConsume={onConsume} onReactivate={onReactivate} />
+          ))}
+        </>
+      )}
     </div>
   );
 }
 
 function BeanCard({
-  bean: b, onEdit, onDelete, onCreateTask, needsOrder,
+  bean: b, onEdit, onDelete, onCreateTask, needsOrder, onMarkFinished, onConsume, onReactivate,
 }: {
   bean: CoffeeBean;
   onEdit: (b: CoffeeBean) => void;
   onDelete: (id: string) => void;
   onCreateTask: (b: CoffeeBean) => void;
   needsOrder: boolean;
+  onMarkFinished: (b: CoffeeBean) => void;
+  onConsume: (b: CoffeeBean) => void;
+  onReactivate: (b: CoffeeBean) => void;
 }) {
   const status = freshnessStatus(b.roastedOn);
   const days = daysOld(b.roastedOn);
   const color = FRESHNESS_COLOR[status];
+  const isFinished = !!b.finishedAt;
 
   return (
     <div style={{
       background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: 10, padding: "12px 14px",
+      opacity: isFinished ? 0.6 : 1,
     }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
         {/* freshness dot */}
@@ -710,18 +754,38 @@ function BeanCard({
             {b.producer && <span style={{ fontSize: 11, color: "var(--fg-muted)" }}>{b.producer}</span>}
           </div>
 
-          {/* weight + order button */}
+          {/* weight + acciones */}
           <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            {b.weightGrams > 0 && (
+            {!isFinished && b.weightGrams > 0 && (
               <span style={{ fontSize: 11, color: "var(--fg-muted)" }}>{b.weightGrams}g restantes</span>
             )}
-            {needsOrder && (
-              <button
-                className="btn ghost"
-                style={{ fontSize: 11, padding: "2px 8px", color: "var(--accent)" }}
-                onClick={() => onCreateTask(b)}
-              >
+            {isFinished && (
+              <span style={{ fontSize: 11, color: "var(--fg-subtle)", fontWeight: 500 }}>
+                terminado{b.finishedAt ? ` ${fmtDmY(b.finishedAt.slice(0, 10))}` : ""}
+              </span>
+            )}
+            {!isFinished && needsOrder && (
+              <button className="btn ghost" style={{ fontSize: 11, padding: "2px 8px", color: "var(--accent)" }}
+                onClick={() => onCreateTask(b)}>
                 Crear tarea pedir
+              </button>
+            )}
+            {!isFinished && (
+              <button className="btn ghost" style={{ fontSize: 11, padding: "2px 8px" }}
+                onClick={() => onConsume(b)}>
+                Descontar consumo
+              </button>
+            )}
+            {!isFinished && (
+              <button className="btn ghost" style={{ fontSize: 11, padding: "2px 8px" }}
+                onClick={() => onMarkFinished(b)}>
+                Marcar terminado
+              </button>
+            )}
+            {isFinished && (
+              <button className="btn ghost" style={{ fontSize: 11, padding: "2px 8px", color: "var(--accent)" }}
+                onClick={() => onReactivate(b)}>
+                Reactivar
               </button>
             )}
           </div>

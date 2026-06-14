@@ -175,6 +175,7 @@ export function BrewView() {
   const [tweakWater, setTweakWater] = useState("");
   const [tweakTemp, setTweakTemp] = useState("");
   const [tweakNotes, setTweakNotes] = useState("");
+  const [tweakConsume, setTweakConsume] = useState(""); // gramos a descontar del stock
   const returnToReadyRef = useRef(false);
 
   // ── brewing ──
@@ -308,6 +309,7 @@ export function BrewView() {
     setTweakDose(String(doseGrams));
     setTweakWater(String(Math.round(selectedRecipe.ratio * doseGrams)));
     setTweakTemp(selectedRecipe.tempCelsius ? String(selectedRecipe.tempCelsius) : "");
+    setTweakConsume(String(doseGrams));
     setTweakNotes("");
     if (kettleStatus === "on" && selectedRecipe.tempCelsius > 0) {
       try { await sendKettleTemp(selectedRecipe.tempCelsius); } catch { /* best-effort */ }
@@ -346,10 +348,15 @@ export function BrewView() {
             },
           });
         } catch { /* best-effort */ }
+        // descontar el cafe usado del stock (se auto-marca terminado si llega a 0)
+        const usedG = parseFloat(tweakConsume);
+        if (Number.isFinite(usedG) && usedG > 0) {
+          try { await repo.consumeCoffeeBean(selectedBean.id, usedG); } catch { /* best-effort */ }
+        }
       }
     }
     datapointsRef.current = []; setWaterDetected(false); setBrewTimerMs(0);
-    setTweakNotes(""); setTweakGrind(""); setTweakDose(""); setTweakWater(""); setTweakTemp("");
+    setTweakNotes(""); setTweakGrind(""); setTweakDose(""); setTweakWater(""); setTweakTemp(""); setTweakConsume("");
     setPhase("home");
   }
 
@@ -785,6 +792,11 @@ export function BrewView() {
                     onChange={(e) => setTweakTemp(e.target.value)} />
                 </label>
               </div>
+              <label style={{ fontSize: 11, color: "var(--fg-muted)", display: "flex", flexDirection: "column", gap: 2 }}>
+                Café usado (g) — se descuenta del stock
+                <input className="input" type="number" inputMode="decimal" value={tweakConsume}
+                  onChange={(e) => setTweakConsume(e.target.value)} />
+              </label>
               <textarea
                 className="input"
                 value={tweakNotes}

@@ -594,6 +594,12 @@ pub fn run() {
             sql: include_str!("../migrations/0028_brew_datapoints_blob.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 29,
+            description: "coffee_beans: add finished_at (cafe terminado / no tengo mas)",
+            sql: include_str!("../migrations/0029_coffee_finished.sql"),
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()

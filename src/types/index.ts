@@ -347,6 +347,7 @@ export interface CoffeeBean {
   cataInicial: string; // que busco en este cafe (al abrir el grano)
   notaFinal: string; // a donde llegue (al terminarlo)
   lastTweak: CoffeeTweak | null; // ultimo ajuste; salta al brewear este grano
+  finishedAt: string | null; // null = activo; ISO = terminado (no tengo mas)
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;

@@ -127,6 +127,7 @@ export type CoffeeBeanCreate = Pick<CoffeeBean, "name"> & {
   cataInicial?: string;
   notaFinal?: string;
   lastTweak?: CoffeeTweak | null;
+  finishedAt?: string | null;
 };
 export type CoffeeBeanPatch = Partial<Omit<CoffeeBean, "id" | "createdAt" | "version">>;
 
@@ -314,6 +315,7 @@ export interface Repo {
   listCoffeeBeans(): Promise<CoffeeBean[]>;
   createCoffeeBean(input: CoffeeBeanCreate): Promise<CoffeeBean>;
   patchCoffeeBean(id: string, patch: CoffeeBeanPatch): Promise<CoffeeBean>;
+  consumeCoffeeBean(id: string, grams: number): Promise<CoffeeBean>;
   deleteCoffeeBean(id: string): Promise<void>;
 
   listCoffeeRecipes(): Promise<CoffeeRecipe[]>;

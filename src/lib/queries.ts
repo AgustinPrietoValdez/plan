@@ -859,6 +859,15 @@ export function useDeleteCoffeeBean() {
   });
 }
 
+export function useConsumeCoffeeBean() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, grams }: { id: string; grams: number }) =>
+      repo.consumeCoffeeBean(id, grams),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.coffeeBeans }),
+  });
+}
+
 export function useCoffeeRecipes() {
   return useQuery({ queryKey: KEYS.coffeeRecipes, queryFn: () => repo.listCoffeeRecipes() });
 }
