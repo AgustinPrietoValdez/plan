@@ -17,6 +17,12 @@ import { addDays, fromYmd, todayYmd, ymd } from "../lib/date";
 import type { CoffeeBean, CoffeeRecipe, CoffeeRecipeStep, CoffeeStepType, WaterMode, BrewSession, BrewDatapoint } from "../types";
 import type { CoffeeBeanCreate, CoffeeRecipeCreate } from "../lib/repo";
 import { IPlus, ITrash, IChevD, IChevU, IX } from "./icons";
+import { analyzeCoffee } from "../lib/coffeeAnalysis";
+
+// El boton "Analizar" lanza una terminal con Claude: desktop-only (en mobile no hay terminal).
+const isMobile =
+  /android/i.test(navigator.userAgent) ||
+  new URLSearchParams(window.location.search).has("mobile");
 
 // ---------- freshness ----------
 
@@ -332,11 +338,12 @@ export function CafeView() {
               const g = parseFloat(inp.replace(",", "."));
               patchBean.mutate({ id: b.id, patch: { finishedAt: null, weightGrams: Number.isFinite(g) && g > 0 ? g : b.weightGrams } });
             }}
+            onAnalizar={(b) => void analyzeCoffee(b)}
           />
         )}
         {tab === "recetas" && (
           <RecetasTab
-            recipes={recipes}
+            recipes={recipes.filter((r) => !r.baseRecipeId)}
             onEdit={openEditRecipe}
             onDeleteRequest={setDeleteRecipe}
           />
@@ -649,7 +656,7 @@ function BrewHistorialTab() {
 // ---------- Granos tab ----------
 
 function GranosTab({
-  beans, onEdit, onDeleteRequest, onCreateTask, onMarkFinished, onConsume, onReactivate,
+  beans, onEdit, onDeleteRequest, onCreateTask, onMarkFinished, onConsume, onReactivate, onAnalizar,
 }: {
   beans: CoffeeBean[];
   onEdit: (b: CoffeeBean) => void;
@@ -658,6 +665,7 @@ function GranosTab({
   onMarkFinished: (b: CoffeeBean) => void;
   onConsume: (b: CoffeeBean) => void;
   onReactivate: (b: CoffeeBean) => void;
+  onAnalizar: (b: CoffeeBean) => void;
 }) {
   const active = beans.filter((b) => !b.finishedAt);
   const finished = beans.filter((b) => b.finishedAt);
@@ -681,7 +689,7 @@ function GranosTab({
       )}
       {active.map((b) => (
         <BeanCard key={b.id} bean={b} onEdit={onEdit} onDelete={onDeleteRequest} onCreateTask={onCreateTask}
-          needsOrder={needsOrder} onMarkFinished={onMarkFinished} onConsume={onConsume} onReactivate={onReactivate} />
+          needsOrder={needsOrder} onMarkFinished={onMarkFinished} onConsume={onConsume} onReactivate={onReactivate} onAnalizar={onAnalizar} />
       ))}
       {active.length === 0 && (
         <div style={{ fontSize: 13, color: "var(--fg-muted)", padding: "8px 4px" }}>No tenés cafés activos.</div>
@@ -695,7 +703,7 @@ function GranosTab({
           </button>
           {showFinished && finished.map((b) => (
             <BeanCard key={b.id} bean={b} onEdit={onEdit} onDelete={onDeleteRequest} onCreateTask={onCreateTask}
-              needsOrder={false} onMarkFinished={onMarkFinished} onConsume={onConsume} onReactivate={onReactivate} />
+              needsOrder={false} onMarkFinished={onMarkFinished} onConsume={onConsume} onReactivate={onReactivate} onAnalizar={onAnalizar} />
           ))}
         </>
       )}
@@ -704,7 +712,7 @@ function GranosTab({
 }
 
 function BeanCard({
-  bean: b, onEdit, onDelete, onCreateTask, needsOrder, onMarkFinished, onConsume, onReactivate,
+  bean: b, onEdit, onDelete, onCreateTask, needsOrder, onMarkFinished, onConsume, onReactivate, onAnalizar,
 }: {
   bean: CoffeeBean;
   onEdit: (b: CoffeeBean) => void;
@@ -714,6 +722,7 @@ function BeanCard({
   onMarkFinished: (b: CoffeeBean) => void;
   onConsume: (b: CoffeeBean) => void;
   onReactivate: (b: CoffeeBean) => void;
+  onAnalizar: (b: CoffeeBean) => void;
 }) {
   const status = freshnessStatus(b.roastedOn);
   const days = daysOld(b.roastedOn);
@@ -780,6 +789,13 @@ function BeanCard({
               <button className="btn ghost" style={{ fontSize: 11, padding: "2px 8px" }}
                 onClick={() => onMarkFinished(b)}>
                 Marcar terminado
+              </button>
+            )}
+            {!isFinished && !isMobile && (
+              <button className="btn ghost" title="Abrir Claude en una terminal para analizar este cafe"
+                style={{ fontSize: 11, padding: "2px 8px", color: "var(--accent)", fontWeight: 600 }}
+                onClick={() => onAnalizar(b)}>
+                ☕ Analizar
               </button>
             )}
             {isFinished && (

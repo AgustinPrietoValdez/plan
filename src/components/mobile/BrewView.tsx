@@ -143,7 +143,7 @@ function SlideToStart({ onStart, disabled }: { onStart: () => void; disabled?: b
 // ── types ─────────────────────────────────────────────────────────────────────
 
 type ConnStatus = "off" | "connecting" | "on";
-type Phase = "home" | "scanning" | "bean" | "recipe" | "dose" | "ready" | "brewing";
+type Phase = "home" | "scanning" | "bean" | "recipe" | "tweak" | "dose" | "ready" | "brewing";
 
 // ── main component ────────────────────────────────────────────────────────────
 
@@ -176,6 +176,11 @@ export function BrewView() {
   const [tweakTemp, setTweakTemp] = useState("");
   const [tweakNotes, setTweakNotes] = useState("");
   const [tweakConsume, setTweakConsume] = useState(""); // gramos a descontar del stock
+  // pre-dosis: que variables del ultimo tweak aplicar (toggle por categoria)
+  const [applyGrind, setApplyGrind] = useState(true);
+  const [applyTemp, setApplyTemp] = useState(true);
+  const [applyDose, setApplyDose] = useState(true);
+  const [applyWater, setApplyWater] = useState(true);
   const returnToReadyRef = useRef(false);
 
   // ── brewing ──
@@ -195,6 +200,17 @@ export function BrewView() {
   const { data: recipes = [] } = useCoffeeRecipes();
   const { data: beans = [] } = useCoffeeBeans();
   const createBrewSession = useCreateBrewSession();
+
+  // recetas generales (las que se eligen); las especificas por grano no se listan, se resuelven
+  const generalRecipes = recipes.filter((r) => !r.baseRecipeId && !r.deletedAt);
+  function beanSpecificFor(general: CoffeeRecipe, beanId: string | null): CoffeeRecipe | null {
+    if (!beanId) return null;
+    return recipes.find((r) => r.baseRecipeId === general.id && r.beanId === beanId && !r.deletedAt) ?? null;
+  }
+  // al elegir una receta general, resuelve a la version del grano (con variables de la AI) si existe
+  function pickRecipe(general: CoffeeRecipe) {
+    setSelectedRecipe(beanSpecificFor(general, selectedBean?.id ?? null) ?? general);
+  }
 
   // cleanup on unmount
   useEffect(() => {
@@ -325,7 +341,25 @@ export function BrewView() {
   // ── navigation ────────────────────────────────────────────────────────────────
   function goBean() { returnToReadyRef.current = false; setPhase("bean"); }
   function confirmBean() { setPhase(returnToReadyRef.current ? "ready" : "recipe"); returnToReadyRef.current = false; }
-  function confirmRecipe() { setPhase(returnToReadyRef.current ? "ready" : "dose"); returnToReadyRef.current = false; }
+  function confirmRecipe() {
+    if (returnToReadyRef.current) { returnToReadyRef.current = false; setPhase("ready"); return; }
+    // si el grano tiene un ultimo ajuste, ofrecer aplicarlo por variable antes de la dosis
+    setPhase(selectedBean?.lastTweak ? "tweak" : "dose");
+  }
+  function confirmTweak() {
+    const t = selectedBean?.lastTweak;
+    if (t && selectedRecipe) {
+      const next: CoffeeRecipe = { ...selectedRecipe };
+      if (applyGrind && t.grindSize) next.grindSize = t.grindSize;
+      if (applyTemp && t.tempCelsius != null) next.tempCelsius = t.tempCelsius;
+      if (applyWater && t.totalWaterGrams && t.doseGrams) {
+        next.ratio = Math.round((t.totalWaterGrams / t.doseGrams) * 100) / 100;
+      }
+      setSelectedRecipe(next);
+      if (applyDose && t.doseGrams != null) { setDoseGrams(t.doseGrams); setPhase("ready"); return; }
+    }
+    setPhase("dose");
+  }
   function confirmDose(w: number) { setDoseGrams(w); setPhase("ready"); }
 
   function editFromReady(target: "bean" | "recipe" | "dose") {
@@ -579,27 +613,84 @@ export function BrewView() {
             <span style={{ fontSize: 16, fontWeight: 700 }}>Elegí la receta</span>
           </div>
 
-          {recipes.length === 0 && (
+          {generalRecipes.length === 0 && (
             <div style={{ color: "var(--fg-subtle)", fontSize: 14, textAlign: "center", padding: "20px 0" }}>
               No hay recetas. Creá una en la versión desktop.
             </div>
           )}
 
-          {recipes.map(r => (
-            <button key={r.id} className="btn" style={{ textAlign: "left", padding: "12px 14px", fontSize: 14, flexShrink: 0, border: selectedRecipe?.id === r.id ? "2px solid var(--accent)" : "2px solid transparent" }}
-              onClick={() => setSelectedRecipe(r)}>
-              <div style={{ fontWeight: 600 }}>{r.name}</div>
-              <div style={{ fontSize: 11, color: "var(--fg-muted)", marginTop: 2 }}>
-                {r.tempCelsius}°C · 1:{r.ratio} · {r.steps.length} pasos
-              </div>
-            </button>
-          ))}
+          {generalRecipes.map(r => {
+            const specific = beanSpecificFor(r, selectedBean?.id ?? null);
+            const shown = specific ?? r; // mostramos las variables que se van a usar
+            const isSel = selectedRecipe?.id === shown.id;
+            return (
+              <button key={r.id} className="btn" style={{ textAlign: "left", padding: "12px 14px", fontSize: 14, flexShrink: 0, border: isSel ? "2px solid var(--accent)" : "2px solid transparent" }}
+                onClick={() => pickRecipe(r)}>
+                <div style={{ fontWeight: 600 }}>
+                  {r.name}
+                  {specific && <span style={{ fontSize: 10, fontWeight: 700, color: "var(--accent)", marginLeft: 6 }}>✨ ajustada para este café</span>}
+                </div>
+                <div style={{ fontSize: 11, color: "var(--fg-muted)", marginTop: 2 }}>
+                  {shown.tempCelsius}°C · 1:{shown.ratio} · {shown.steps.length} pasos
+                </div>
+              </button>
+            );
+          })}
 
           <div style={{ flex: 1 }} />
           <button className="btn primary" disabled={!selectedRecipe} style={{ fontSize: 16, fontWeight: 700, padding: "14px", borderRadius: 12, flexShrink: 0 }}
             onClick={confirmRecipe}>
             Siguiente →
           </button>
+        </div>
+      )}
+
+      {/* ── TWEAK (aplicar ultimo ajuste por variable, antes de la dosis) ── */}
+      {phase === "tweak" && selectedRecipe && (
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+          <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <button className="btn ghost" style={{ fontSize: 12, padding: "6px 10px" }}
+                onClick={() => setPhase("recipe")}>← Volver</button>
+              <span style={{ fontSize: 16, fontWeight: 700 }}>Último ajuste</span>
+            </div>
+            <div style={{ fontSize: 13, color: "var(--fg-subtle)" }}>
+              Elegí qué variables del último ajuste aplicar a este brew.
+            </div>
+            {(() => {
+              const t = selectedBean?.lastTweak;
+              if (!t) return null;
+              const rows = [
+                { key: "g", on: applyGrind, set: setApplyGrind, label: "Molienda", val: t.grindSize, show: !!t.grindSize },
+                { key: "t", on: applyTemp, set: setApplyTemp, label: "Temperatura", val: t.tempCelsius != null ? `${t.tempCelsius}°C` : "", show: t.tempCelsius != null },
+                { key: "d", on: applyDose, set: setApplyDose, label: "Dosis", val: t.doseGrams != null ? `${t.doseGrams} g` : "", show: t.doseGrams != null },
+                { key: "w", on: applyWater, set: setApplyWater, label: "Agua / ratio", val: (t.totalWaterGrams && t.doseGrams) ? `${t.totalWaterGrams} g (1:${(t.totalWaterGrams / t.doseGrams).toFixed(1)})` : "", show: !!(t.totalWaterGrams && t.doseGrams) },
+              ].filter((r) => r.show);
+              if (rows.length === 0) return <div style={{ fontSize: 13, color: "var(--fg-muted)" }}>El último ajuste no tiene variables, solo notas.</div>;
+              return rows.map((r) => (
+                <button key={r.key} onClick={() => r.set(!r.on)}
+                  style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px", borderRadius: 12, border: r.on ? "2px solid var(--accent)" : "2px solid var(--bg-sunken)", background: "var(--bg-sunken)", textAlign: "left" }}>
+                  <div>
+                    <div style={{ fontSize: 11, color: "var(--fg-subtle)" }}>{r.label}</div>
+                    <div style={{ fontSize: 15, fontWeight: 600 }}>{r.val}</div>
+                  </div>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: r.on ? "var(--accent)" : "var(--fg-subtle)" }}>{r.on ? "usar ✓" : "omitir"}</span>
+                </button>
+              ));
+            })()}
+            {selectedBean?.lastTweak?.notes && (
+              <div style={{ fontSize: 13, color: "var(--fg-muted)", background: "var(--bg-sunken)", borderRadius: 10, padding: "10px 12px" }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "var(--fg-subtle)", marginBottom: 4 }}>NOTAS DEL AJUSTE</div>
+                {selectedBean.lastTweak.notes}
+              </div>
+            )}
+          </div>
+          <div style={{ padding: 16, flexShrink: 0, borderTop: "1px solid var(--border-subtle)", background: "var(--bg)" }}>
+            <button className="btn primary" style={{ width: "100%", fontSize: 16, fontWeight: 700, padding: "14px", borderRadius: 12 }}
+              onClick={confirmTweak}>
+              Siguiente →
+            </button>
+          </div>
         </div>
       )}
 
@@ -643,7 +734,8 @@ export function BrewView() {
 
       {/* ── READY ── */}
       {phase === "ready" && selectedRecipe && doseGrams != null && (
-        <div style={{ flex: 1, padding: 16, display: "flex", flexDirection: "column", gap: 14, overflowY: "auto" }}>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+         <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 16, display: "flex", flexDirection: "column", gap: 14 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
             <button className="btn ghost" style={{ fontSize: 12, padding: "6px 10px" }}
               onClick={() => setPhase("dose")}>← Editar</button>
@@ -714,8 +806,10 @@ export function BrewView() {
             ))}
           </div>
 
-          <div style={{ flex: 1 }} />
-          <SlideToStart onStart={startBrewing} />
+         </div>
+         <div style={{ padding: 16, flexShrink: 0, borderTop: "1px solid var(--border-subtle)", background: "var(--bg)" }}>
+           <SlideToStart onStart={startBrewing} />
+         </div>
         </div>
       )}
 

@@ -423,6 +423,63 @@ fn scaffold_project_guide(
     std::fs::write(&path, content).map_err(|e| e.to_string())
 }
 
+/// Lanza una terminal con Claude Code para analizar un cafe (desktop/Windows).
+/// Escribe el contexto del grano a un archivo temporal y abre una ventana de
+/// PowerShell corriendo `claude` con un prompt que apunta a las guias + contexto + foto.
+#[tauri::command]
+fn launch_coffee_analysis(
+    repo_path: String,
+    context: String,
+    photo_path: Option<String>,
+) -> Result<(), String> {
+    let tmp = std::env::temp_dir();
+
+    // 1) contexto del grano -> archivo temporal (Claude lo lee por ruta absoluta)
+    let ctx_path = tmp.join("plan-coffee-analysis.md");
+    std::fs::write(&ctx_path, context.as_bytes()).map_err(|e| e.to_string())?;
+
+    let photo_clause = match photo_path.as_deref() {
+        Some(p) if !p.is_empty() => format!("La foto del grano esta en: {}", p),
+        _ => "No se adjunto foto; pedile la foto del grano al usuario.".to_string(),
+    };
+
+    // 2) prompt para Claude (lo guardamos como here-string literal en un .ps1 -> sin lios de comillas)
+    let prompt = format!(
+        "Analisis de cafe (app Plan).\n\
+         1) Lee COFFEE_GUIDE.md y CATA_GUIDE.md de este repo, y el contexto del grano en: {ctx}\n\
+         2) {photo}\n\
+         3) Deduci el nivel de tueste (de la foto si hay) y el perfil esperado.\n\
+         4) Recomenda receta + molienda (Kingrinder K6, en clicks) + temperatura, con el porque.\n\
+         5) Persisti la recomendacion en la app con tools/coffee_cli.py (patron outbox):\n\
+            - ver recetas base:  python tools/coffee_cli.py recipes\n\
+            - receta especifica del grano:  python tools/coffee_cli.py set-recipe \"<grano>\" \"<receta base>\" --ratio <r> --temp <c> --grind <clicks> [--steps '<json de pasos>']\n\
+            - o un ajuste puntual:  python tools/coffee_cli.py set-tweak \"<grano>\" --grind <clicks> --temp <c> --dose <g> --water <g> --notes \"...\"\n\
+         6) Actualiza COFFEE_GUIDE.md (Parte 2, ficha del grano) con lo aprendido.\n\
+         Responde en espanol.",
+        ctx = ctx_path.to_string_lossy(),
+        photo = photo_clause,
+    );
+
+    // 3) launcher .ps1 con here-string single-quoted (literal, sin interpolacion)
+    let ps1_path = tmp.join("plan-coffee-launch.ps1");
+    let script = format!("claude @'\n{}\n'@\n", prompt);
+    std::fs::write(&ps1_path, script).map_err(|e| e.to_string())?;
+
+    // 4) abrir PowerShell visible, en el dir del repo. SIN -NoExit: cuando termina la
+    //    sesion de claude, la ventana se cierra sola.
+    let mut cmd = std::process::Command::new("powershell");
+    cmd.args(["-ExecutionPolicy", "Bypass", "-File"])
+        .arg(&ps1_path)
+        .current_dir(&repo_path);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x00000010); // CREATE_NEW_CONSOLE -> ventana propia visible
+    }
+    cmd.spawn().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let migrations = vec![
@@ -600,11 +657,18 @@ pub fn run() {
             sql: include_str!("../migrations/0029_coffee_finished.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 30,
+            description: "coffee_recipes: add bean_id + base_recipe_id (receta especifica por grano)",
+            sql: include_str!("../migrations/0030_coffee_recipe_bean.sql"),
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_sql::Builder::default()
                 .add_migrations("sqlite:calendar.db", migrations)
@@ -622,6 +686,7 @@ pub fn run() {
             kettle_set_temp,
             kettle_disconnect,
             scaffold_project_guide,
+            launch_coffee_analysis,
             schedule_event_notification,
             cancel_event_notification,
         ])

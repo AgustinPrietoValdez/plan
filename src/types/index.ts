@@ -377,6 +377,9 @@ export interface CoffeeRecipe {
   grindSize: string;
   steps: CoffeeRecipeStep[];
   notes: string;
+  // Receta especifica por grano: general = ambos null; especifica (AI) = ambos seteados.
+  beanId: string | null;
+  baseRecipeId: string | null;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;

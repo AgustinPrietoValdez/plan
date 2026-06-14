@@ -138,6 +138,8 @@ export type CoffeeRecipeCreate = Pick<CoffeeRecipe, "name"> & {
   grindSize?: string;
   steps?: CoffeeRecipe["steps"];
   notes?: string;
+  beanId?: string | null;
+  baseRecipeId?: string | null;
 };
 export type CoffeeRecipePatch = Partial<Omit<CoffeeRecipe, "id" | "createdAt" | "version">>;
 

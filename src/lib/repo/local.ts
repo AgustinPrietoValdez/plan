@@ -2234,6 +2234,8 @@ export const localRepo: Repo = {
       grindSize: input.grindSize ?? "",
       steps: input.steps ?? [],
       notes: input.notes ?? "",
+      beanId: input.beanId ?? null,
+      baseRecipeId: input.baseRecipeId ?? null,
       createdAt: ts,
       updatedAt: ts,
       deletedAt: null,
@@ -2242,11 +2244,11 @@ export const localRepo: Repo = {
     await db.execute(
       `INSERT INTO coffee_recipes
         (id, user_id, name, coffee_type, ratio, temp_celsius, grind_size, steps, notes,
-         created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         bean_id, base_recipe_id, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [recipe.id, userId, recipe.name, recipe.coffeeType, recipe.ratio, recipe.tempCelsius,
        recipe.grindSize, JSON.stringify(recipe.steps), recipe.notes,
-       recipe.createdAt, recipe.updatedAt, null, 1],
+       recipe.beanId, recipe.baseRecipeId, recipe.createdAt, recipe.updatedAt, null, 1],
     );
     await enqueue(userId, "insert", "coffee_recipes", recipe.id, coffeeRecipeToWire(recipe, userId));
     return recipe;
@@ -2267,10 +2269,12 @@ export const localRepo: Repo = {
     };
     await db.execute(
       `UPDATE coffee_recipes SET name = ?, coffee_type = ?, ratio = ?, temp_celsius = ?,
-         grind_size = ?, steps = ?, notes = ?, updated_at = ?, deleted_at = ?, version = ?
+         grind_size = ?, steps = ?, notes = ?, bean_id = ?, base_recipe_id = ?,
+         updated_at = ?, deleted_at = ?, version = ?
        WHERE id = ? AND user_id = ?`,
       [updated.name, updated.coffeeType, updated.ratio, updated.tempCelsius,
        updated.grindSize, JSON.stringify(updated.steps), updated.notes,
+       updated.beanId ?? null, updated.baseRecipeId ?? null,
        updated.updatedAt, updated.deletedAt, updated.version, id, userId],
     );
     await enqueue(userId, "update", "coffee_recipes", id, coffeeRecipeToWire(updated, userId));
@@ -3428,6 +3432,8 @@ interface DbCoffeeRecipeRow {
   water_mode: string;
   steps: string;
   notes: string;
+  bean_id: string | null;
+  base_recipe_id: string | null;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -3456,6 +3462,8 @@ function fromDbCoffeeRecipe(r: DbCoffeeRecipeRow): CoffeeRecipe {
     grindSize: r.grind_size,
     steps,
     notes: r.notes,
+    beanId: r.bean_id ?? null,
+    baseRecipeId: r.base_recipe_id ?? null,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
     deletedAt: r.deleted_at,
@@ -3467,6 +3475,7 @@ function coffeeRecipeToWire(r: CoffeeRecipe, userId: string) {
   return {
     id: r.id, user_id: userId, name: r.name, coffee_type: r.coffeeType, ratio: r.ratio,
     temp_celsius: r.tempCelsius, grind_size: r.grindSize, steps: r.steps, notes: r.notes,
+    bean_id: r.beanId ?? null, base_recipe_id: r.baseRecipeId ?? null,
     created_at: r.createdAt, updated_at: r.updatedAt, deleted_at: r.deletedAt, version: r.version,
   };
 }

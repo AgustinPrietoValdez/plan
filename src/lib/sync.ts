@@ -507,12 +507,13 @@ async function upsertLocal(
   } else if (entity === "coffee_recipes") {
     await db.execute(
       `INSERT OR REPLACE INTO coffee_recipes
-        (id, user_id, name, coffee_type, ratio, temp_celsius, grind_size, steps, notes, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, user_id, name, coffee_type, ratio, temp_celsius, grind_size, steps, notes, bean_id, base_recipe_id, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         row.id, row.user_id, row.name, row.coffee_type ?? "", row.ratio ?? 15, row.temp_celsius ?? 93,
         row.grind_size ?? "", typeof row.steps === "string" ? row.steps : JSON.stringify(row.steps ?? []),
-        row.notes ?? "", row.created_at, row.updated_at, row.deleted_at, row.version,
+        row.notes ?? "", row.bean_id ?? null, row.base_recipe_id ?? null,
+        row.created_at, row.updated_at, row.deleted_at, row.version,
       ],
     );
   } else if (entity === "brew_sessions") {
