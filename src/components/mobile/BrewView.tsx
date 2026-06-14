@@ -378,7 +378,8 @@ export function BrewView() {
     setTweakWater(String(Math.round(selectedRecipe.ratio * doseGrams)));
     setTweakTemp(selectedRecipe.tempCelsius ? String(selectedRecipe.tempCelsius) : "");
     setTweakConsume(String(doseGrams));
-    setTweakNotes("");
+    // receta de cata: precargar el template de cata en las notas del cierre (se guarda en la sesion de brew)
+    setTweakNotes(selectedRecipe.coffeeType === "cata" ? (selectedRecipe.notes ?? "") : "");
     if (kettleStatus === "on" && selectedRecipe.tempCelsius > 0) {
       try { await sendKettleTemp(selectedRecipe.tempCelsius); } catch { /* best-effort */ }
     }
