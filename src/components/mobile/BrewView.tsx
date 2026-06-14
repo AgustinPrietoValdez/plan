@@ -181,6 +181,14 @@ export function BrewView() {
   const [applyTemp, setApplyTemp] = useState(true);
   const [applyDose, setApplyDose] = useState(true);
   const [applyWater, setApplyWater] = useState(true);
+  // form de cupping (cata inicial): se completa al finalizar un brew de receta tipo "cupping"
+  const [cupFragancia, setCupFragancia] = useState("");
+  const [cupSabor, setCupSabor] = useState("");
+  const [cupAcidez, setCupAcidez] = useState("");
+  const [cupDulzor, setCupDulzor] = useState("");
+  const [cupCuerpo, setCupCuerpo] = useState("");
+  const [cupDefectos, setCupDefectos] = useState("");
+  const [cupNota, setCupNota] = useState("");
   const returnToReadyRef = useRef(false);
 
   // ── brewing ──
@@ -210,6 +218,18 @@ export function BrewView() {
   // al elegir una receta general, resuelve a la version del grano (con variables de la AI) si existe
   function pickRecipe(general: CoffeeRecipe) {
     setSelectedRecipe(beanSpecificFor(general, selectedBean?.id ?? null) ?? general);
+  }
+  const isCupping = selectedRecipe?.coffeeType === "cupping";
+  function buildCataText(): string {
+    return [
+      ["Fragancia/aroma", cupFragancia],
+      ["Sabores (notas a buscar)", cupSabor],
+      ["Acidez", cupAcidez],
+      ["Dulzor", cupDulzor],
+      ["Cuerpo", cupCuerpo],
+      ["Defectos", cupDefectos],
+      ["Nota global", cupNota],
+    ].filter(([, v]) => v.trim()).map(([k, v]) => `${k}: ${v.trim()}`).join("\n");
   }
 
   // cleanup on unmount
@@ -401,32 +421,50 @@ export function BrewView() {
       // guardar el ajuste en el grano (mixto: campos editados + notas).
       // salta la proxima vez que se levante este cafe.
       if (selectedBean) {
-        const doseN = parseFloat(tweakDose);
-        const waterN = parseFloat(tweakWater);
-        const tempN = parseFloat(tweakTemp);
-        try {
-          await repo.patchCoffeeBean(selectedBean.id, {
-            lastTweak: {
-              grindSize: tweakGrind.trim() || undefined,
-              doseGrams: Number.isFinite(doseN) ? doseN : doseGrams,
-              totalWaterGrams: Number.isFinite(waterN) ? waterN : totalWater,
-              tempCelsius: Number.isFinite(tempN) ? tempN : (selectedRecipe.tempCelsius || undefined),
-              notes: tweakNotes.trim(),
-              recipeId: selectedRecipe.id,
-              at: new Date().toISOString(),
-            },
-          });
-        } catch { /* best-effort */ }
-        // descontar el cafe usado del stock (se auto-marca terminado si llega a 0)
-        const usedG = parseFloat(tweakConsume);
-        if (Number.isFinite(usedG) && usedG > 0) {
-          try { await repo.consumeCoffeeBean(selectedBean.id, usedG); } catch { /* best-effort */ }
+        const cupping = selectedRecipe.coffeeType === "cupping";
+        if (cupping) {
+          // cata inicial: guardar el form en cata_inicial SOLO si esta vacia; si ya hay, preguntar para agregar
+          const cataText = buildCataText();
+          if (cataText) {
+            const existing = (selectedBean.cataInicial ?? "").trim();
+            try {
+              if (!existing) {
+                await repo.patchCoffeeBean(selectedBean.id, { cataInicial: cataText });
+              } else if (window.confirm("Este grano ya tiene cata inicial. Agregar estas notas abajo?")) {
+                await repo.patchCoffeeBean(selectedBean.id, { cataInicial: existing + "\n---\n" + cataText });
+              }
+            } catch { /* best-effort */ }
+          }
+          if (doseGrams > 0) { try { await repo.consumeCoffeeBean(selectedBean.id, doseGrams); } catch { /* best-effort */ } }
+        } else {
+          const doseN = parseFloat(tweakDose);
+          const waterN = parseFloat(tweakWater);
+          const tempN = parseFloat(tweakTemp);
+          try {
+            await repo.patchCoffeeBean(selectedBean.id, {
+              lastTweak: {
+                grindSize: tweakGrind.trim() || undefined,
+                doseGrams: Number.isFinite(doseN) ? doseN : doseGrams,
+                totalWaterGrams: Number.isFinite(waterN) ? waterN : totalWater,
+                tempCelsius: Number.isFinite(tempN) ? tempN : (selectedRecipe.tempCelsius || undefined),
+                notes: tweakNotes.trim(),
+                recipeId: selectedRecipe.id,
+                at: new Date().toISOString(),
+              },
+            });
+          } catch { /* best-effort */ }
+          // descontar el cafe usado del stock (se auto-marca terminado si llega a 0)
+          const usedG = parseFloat(tweakConsume);
+          if (Number.isFinite(usedG) && usedG > 0) {
+            try { await repo.consumeCoffeeBean(selectedBean.id, usedG); } catch { /* best-effort */ }
+          }
         }
       }
     }
     datapointsRef.current = []; setWaterDetected(false); setBrewTimerMs(0);
     setBrewStopped(false); peakWeightRef.current = 0; removalConsecutiveRef.current = 0;
     setTweakNotes(""); setTweakGrind(""); setTweakDose(""); setTweakWater(""); setTweakTemp(""); setTweakConsume("");
+    setCupFragancia(""); setCupSabor(""); setCupAcidez(""); setCupDulzor(""); setCupCuerpo(""); setCupDefectos(""); setCupNota("");
     setPhase("home");
   }
 
@@ -907,7 +945,7 @@ export function BrewView() {
           )}
 
           <div style={{ flex: 1 }} />
-          {selectedBean && (
+          {selectedBean && !isCupping && (
             <div style={{ background: "var(--bg-sunken)", borderRadius: 12, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
               <div style={{ fontSize: 12, fontWeight: 700, color: "var(--fg-subtle)" }}>
                 Ajuste para la próxima (sale al levantar este café)
@@ -949,8 +987,36 @@ export function BrewView() {
               />
             </div>
           )}
+          {selectedBean && isCupping && (
+            <div style={{ background: "var(--bg-sunken)", borderRadius: 12, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "var(--accent, #4caf50)" }}>
+                Cata inicial — notas a buscar (se guarda en el café si está vacía)
+              </div>
+              {(() => {
+                const fields: Array<[string, string, (v: string) => void, string]> = [
+                  ["Fragancia / aroma", cupFragancia, setCupFragancia, "floral, frutal, dulce, tostado..."],
+                  ["Sabores (notas a buscar)", cupSabor, setCupSabor, "durazno, panela, te negro..."],
+                  ["Acidez", cupAcidez, setCupAcidez, "citrica, brillante, media..."],
+                  ["Dulzor", cupDulzor, setCupDulzor, "alto, a panela..."],
+                  ["Cuerpo", cupCuerpo, setCupCuerpo, "liviano, sedoso, jugoso..."],
+                  ["Defectos", cupDefectos, setCupDefectos, "ninguno / astringente / fermento..."],
+                ];
+                return fields.map(([label, val, setter, ph]) => (
+                  <label key={label} style={{ fontSize: 11, color: "var(--fg-muted)", display: "flex", flexDirection: "column", gap: 2 }}>
+                    {label}
+                    <input className="input" value={val} placeholder={ph} onChange={(e) => setter(e.target.value)} />
+                  </label>
+                ));
+              })()}
+              <label style={{ fontSize: 11, color: "var(--fg-muted)", display: "flex", flexDirection: "column", gap: 2 }}>
+                Nota global (1-10)
+                <input className="input" type="number" inputMode="decimal" value={cupNota}
+                  onChange={(e) => setCupNota(e.target.value)} />
+              </label>
+            </div>
+          )}
           <button className="btn ghost" style={{ fontSize: 14, padding: "12px", borderRadius: 10 }} onClick={finishBrew}>
-            Finalizar brew
+            {isCupping ? "Guardar cata inicial" : "Finalizar brew"}
           </button>
         </div>
       )}
