@@ -1,6 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Schedule, cancelAll } from "@tauri-apps/plugin-notification";
+import { Schedule } from "@tauri-apps/plugin-notification";
+
+// Compras posee el rango de IDs 1..999 (eventos usan 1000+, ver
+// useEventNotifications). Cancelamos SOLO ese rango en vez de cancelAll() para
+// no borrar las notificaciones de eventos.
+const COMPRAS_ID_MAX = 999;
+async function cancelComprasRange(): Promise<void> {
+  const ids = Array.from({ length: COMPRAS_ID_MAX }, (_, i) => i + 1);
+  try {
+    await invoke("plugin:notification|cancel", { notifications: ids });
+  } catch {
+    /* best-effort */
+  }
+}
 
 /** Tauri-side permission check that bypasses the plugin's JS helper.
  *  The helper reads `window.Notification.permission` first, which in the
@@ -87,7 +100,7 @@ export function useComprasNotifications() {
     } catch {
       /* ignore — best effort */
     }
-    await cancelAll();
+    await cancelComprasRange();
     if (!settings?.notificationsEnabled) return;
 
     let id = 1;
@@ -192,7 +205,7 @@ export function useComprasNotifications() {
     void (async () => {
       try {
         if (!settings?.notificationsEnabled) {
-          await cancelAll();
+          await cancelComprasRange();
           if (!cancelled) setNeedsPermission(false);
           return;
         }

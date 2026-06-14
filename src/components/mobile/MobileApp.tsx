@@ -3,6 +3,7 @@ import { signOut, useSession } from "../../lib/auth";
 import { useRealtimeSync } from "../../lib/realtime";
 import { useSyncEngine } from "../../lib/sync";
 import { useComprasNotifications } from "../../lib/useComprasNotifications";
+import { useEventNotifications } from "../../lib/useEventNotifications";
 import { ShoppingListView } from "./ShoppingListView";
 import { RecipesView } from "./RecipesView";
 import { BrewView } from "./BrewView";
@@ -21,6 +22,7 @@ export function MobileApp() {
   useSyncEngine(session?.user.id);
   useRealtimeSync(session?.user.id);
   const { needsPermission, enableNotifications } = useComprasNotifications();
+  useEventNotifications();
 
   const [tab, setTab] = useState<Tab>("list");
 

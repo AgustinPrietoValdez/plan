@@ -1,10 +1,14 @@
 package com.agusp.calendarapp
 
 import android.Manifest
+import android.app.AlarmManager
+import android.app.PendingIntent
 import android.bluetooth.*
 import android.bluetooth.le.*
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import org.json.JSONObject
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -108,6 +112,58 @@ class MainActivity : TauriActivity() {
         }
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         startActivity(intent)
+    }
+
+    // ── Event notifications (AlarmManager, called from Rust via JNI) ──────
+
+    private fun eventPendingIntent(idHash: Int, title: String, body: String, mutableForCreate: Boolean): PendingIntent? {
+        val intent = Intent(this, EventAlarmReceiver::class.java).apply {
+            putExtra(EventAlarmReceiver.EXTRA_TITLE, title)
+            putExtra(EventAlarmReceiver.EXTRA_BODY, body)
+            putExtra(EventAlarmReceiver.EXTRA_NOTIF_ID, idHash)
+        }
+        var flags = PendingIntent.FLAG_UPDATE_CURRENT
+        if (!mutableForCreate) flags = flags or PendingIntent.FLAG_NO_CREATE
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) flags = flags or PendingIntent.FLAG_IMMUTABLE
+        return PendingIntent.getBroadcast(this, idHash, intent, flags)
+    }
+
+    /** json: {"id":"<uuid>","triggerMs":<long>,"title":"...","body":"..."} */
+    fun scheduleEventNotification(json: String): Boolean {
+        return try {
+            val o = JSONObject(json)
+            val id = o.getString("id")
+            val triggerMs = o.getLong("triggerMs")
+            val title = o.optString("title", "Evento")
+            val body = o.optString("body", "")
+            EventAlarmReceiver.ensureChannel(this)
+            val idHash = id.hashCode()
+            val pi = eventPendingIntent(idHash, title, body, mutableForCreate = true) ?: return false
+            val am = getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return false
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMs, pi)
+            } else {
+                am.setExact(AlarmManager.RTC_WAKEUP, triggerMs, pi)
+            }
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    fun cancelEventNotification(id: String): Boolean {
+        return try {
+            val idHash = id.hashCode()
+            val pi = eventPendingIntent(idHash, "", "", mutableForCreate = false)
+            if (pi != null) {
+                val am = getSystemService(Context.ALARM_SERVICE) as? AlarmManager
+                am?.cancel(pi)
+                pi.cancel()
+            }
+            true
+        } catch (e: Exception) {
+            false
+        }
     }
 
     // ── BLE helpers (called from Rust via JNI) ────────────────────────────

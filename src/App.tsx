@@ -45,6 +45,7 @@ import { useSeedDefaultCategories } from "./lib/seedCategories";
 import { useSeedDefaultExpenseCategories } from "./lib/seedExpenseCategories";
 import { useExternalChangesPoller } from "./lib/externalChanges";
 import { useSyncEngine } from "./lib/sync";
+import { useEventNotifications } from "./lib/useEventNotifications";
 import type { Task } from "./types";
 
 function App() {
@@ -91,6 +92,7 @@ function App() {
   useSyncEngine(session?.user.id);
   useExternalChangesPoller(session?.user.id);
   useRealtimeSync(session?.user.id);
+  useEventNotifications();
   useSeedDefaultCategories(session?.user.id);
   useSeedDefaultExpenseCategories(session?.user.id);
   useRollForwardRecurringTasks(
