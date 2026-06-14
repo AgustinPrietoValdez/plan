@@ -127,12 +127,78 @@ Es el punto de partida por defecto. Cualquier ajuste de la seccion 3 se hace **d
 por litro; el prompt la referencia como ~1:15. Tratar 1:15-1:16.7 como rango baseline y
 apretar/aflojar desde ahi segun fuerza.)
 
+## 5. Actualizaciones y advertencias (estado 2026)
+
+Dos cosas cambiaron y conviene tenerlas presentes para no razonar con info vieja:
+
+- **Cupping: el protocolo SCA 2004 quedo SUPERADO.** En noviembre 2024 la SCA adopto el
+  Coffee Value Assessment (CVA): normas SCA-102 (preparacion y mecanica de cata), SCA-103
+  (evaluacion descriptiva) y SCA-104 (evaluacion afectiva). El cambio de fondo: ya no hay un
+  unico puntaje de cata, sino dos tareas separadas -> **descriptiva** (intensidad, escala de
+  15 puntos, estilo CATA) y **afectiva** (calidad/preferencia, escala hedonica de 9 puntos).
+  Mucho contenido viejo en la web todavia cita el protocolo 2004; tratarlo como historico.
+  (Fuente: SCA, verificado.)
+- **La "caja ideal" del Brewing Control Chart ya NO es dogma.** La investigacion de UC Davis
+  (Guinard et al. 2023, peer-reviewed, >58.000 datos sensoriales) muestra que la linea
+  vertical fuerte/debil por TDS puede confundir y que hay al menos 2 clusters de preferencia
+  de consumidores: no existe un unico optimo universal. La franja **18-22% EY / 1.15-1.45%
+  TDS sigue siendo un buen PUNTO DE PARTIDA, no un objetivo absoluto**. La SCA aun NO ratifico
+  un chart nuevo oficial. (Fuentes: UC Davis Coffee Center; SCA, verificado.)
+
 ---
 
 ## Parte 2 - Info por cafe (se completa al cargar cada grano)
 
-_Placeholder: aca se vuelca cada cafe cargado (origen, proceso, variedad, tueste, recetas
-probadas y sus resultados). Vacio hasta el primer grano._
+### Referencia general: perfil por metodo de proceso
+
+Tendencias respaldadas por literatura peer-reviewed. OJO: son **tendencias, no leyes**; el
+resultado real depende de variedad, origen, altitud, condiciones de secado y manejo de la
+fermentacion. Sirven para anticipar el perfil de un grano antes de la cata.
+
+| Proceso | Acidez | Dulzor | Cuerpo | Perfil tipico | Por que (mecanismo) |
+|---|---|---|---|---|---|
+| Lavado / washed | Alta, limpia | Medio | Mas liviano | Claridad, acidez brillante, "limpio" | Se quita pulpa+mucilago antes de secar -> menos azucar disponible -> menos furanos/Maillard; menos fermentacion |
+| Natural / seco | Mas baja, redonda | Alto | Mas pesado | Frutado intenso, dulce, notas a vino/fermento (puede irse a "funky" si se maneja mal) | Se seca con la cereza entera -> fermentacion de azucares del mucilago -> mas azucares residuales, pirazinas y aldehidos |
+| Honey / pulped natural | Media, redondeada | Alto/intenso | Medio | Intermedio washed-natural; dulzor intenso, mouthfeel complejo | Se quita pulpa pero queda parte del mucilago al secar -> glucosa+fructosa entre washed (min) y natural (max) |
+
+- **Variantes honey** (de mas cerca de washed a mas cerca de natural): white/yellow honey =
+  mas brillante y limpio; red/black honey = mas cuerpo y fermento. NOTA: la idea de "mas
+  mucilago = mas dulce" como explicacion de las variantes NO esta bien respaldada (verificacion
+  la descarto); la diferencia real pasa mas por tiempo/condicion de secado.
+- **Matiz de azucar:** solo glucosa+fructosa varian por proceso; la sacarosa (>90% del azucar
+  total) NO cambia con el proceso.
+
+**Ajuste por proceso (orientativo — la evidencia da los perfiles, no recetas exactas):**
+- Naturales/honey suelen extraer "mas facil" y pueden irse a amargo/fermento -> empezar un
+  toque mas grueso o algo mas frio si aparece aspereza.
+- Lavados, mas limpios y acidos, suelen tolerar (y pedir) un poco mas de extraccion para sacar
+  dulzor: moler mas fino / subir temp si sale agrio.
+- Regla intacta: diagnosticar el sabor (Coffee Compass) antes de mover palancas.
+
+(Fuentes: Cao et al. 2023 Int. J. Food Sci. & Tech.; review J. Food Sci. Tech. 2022
+PMC9376573; Frontiers in Microbiology 2019 PMC6863779; Coffee Science / Catimor Alto Inambari;
+Perfect Daily Grind. Todas las generalizaciones son tendencias, no universales.)
+
+### Cafes cargados
+
+#### Monkaaba (La Cabra) -- Colombia, Pink Bourbon, Washed
+
+- **Ficha:** roaster La Cabra; productor "Monkaaba farmers"; tostado 2026-05-22; 250 g.
+- **Perfil esperado:** washed + Pink Bourbon -> taza limpia y floral, acidez citrica/jugosa,
+  dulzor a panela/caramelo, notas a te o tropical; cuerpo medio-liviano. (Perfil tipico de
+  variedad, confianza media; ajustar con las catas reales.)
+- **Receta recomendada:** "V60 - Lance" (doble bloom, alta agitacion).
+  - Ratio: **1:15 a 1:16** (empezar 1:15).
+  - Temperatura: **93 C** (washed claro tolera/pide algo mas de extraccion para el dulzor).
+  - Molienda: **media-fina, ~80** en tu molino (mismo punto que venis usando; ajustar de a 1 click).
+  - Razon: es delicado y limpio -> extraer bien para el dulzor sin pasarse (la sobre-extraccion
+    lo pone astringente y mata lo floral).
+- **Diagnostico rapido (Coffee Compass):** agrio/plano -> mas fino o +temp; astringente/amargo
+  -> mas grueso o -temp. Mover una palanca por vez.
+- **Catas y ajustes:** (se completa con cada brew; volcar cata_inicial y last_tweak.)
+
+_Los proximos cafes se agregan abajo con el mismo formato (ficha, perfil esperado, receta
+recomendada con molienda+temp, diagnostico, catas)._
 
 ## Parte 3 - Perfil de gustos del usuario (se construye con las catas)
 
@@ -143,11 +209,75 @@ Vacio hasta las primeras catas._
 
 ## Fuentes
 
-- James Hoffmann Ultimate V60 (Honest Coffee Guide): https://honestcoffeeguide.com/brew-recipes/james-hoffmann-v60/
-- Coffee extraction - fuerza, EY, Brewing Control Chart, rangos SCA (Wikipedia): https://en.wikipedia.org/wiki/Coffee_extraction
-- SCA Brewing Research / Brewing Control Chart: https://sca.coffee/brewing-research
-- Coffee Compass - metodo de diagnostico filtro (Coffee On Cue): https://www.coffeeoncue.com.au/blogs/how-to-make-coffee/coffee-compass-method-improve-filter-brewing-quality
+Lista curada y verificada (verificacion adversarial multi-agente, mayoria por fuentes
+primarias y voto unanime). **[G] = gratis, [P] = pago.** Actualizado 2026-06-14.
+
+### Estandares e instituciones
+- **[G] SCA - Coffee Value Assessment (CVA), normas SCA-102/103/104 (2024):**
+  https://sca.coffee/cva-102 — Respalda: Specialty Coffee Association. Preparacion y mecanica
+  de cata + evaluacion descriptiva y afectiva. **Reemplaza al protocolo de cupping 2004.**
+  Dosis de cata 8.25 g/150 mL; molienda 70-75% pasa malla US 20 (~850 um).
+- **[G] SCA - Coffee Taster's Flavor Wheel:**
+  https://sca.coffee/research/coffee-tasters-flavor-wheel — Rueda de vocabulario sensorial
+  (1995, rediseno 2016 con WCR). Base cientifica = WCR Sensory Lexicon.
+- **[G] World Coffee Research - Sensory Lexicon:**
+  https://worldcoffeeresearch.org/resources/sensory-lexicon — 110 atributos definidos con
+  referencias de intensidad. Hecho en Kansas State University (lab de Edgar Chambers IV).
+- **[G] World Coffee Research - Arabica Variety Catalog:**
+  https://worldcoffeeresearch.org/resources/coffee-varieties-catalog — Catalogo de variedades.
+- **[G] SCA / E.E. Lockhart - Brewing Control Chart (origen):**
+  https://sca.coffee/sca-news/25/issue-13/towards-a-new-brewing-chart — TDS x extraccion x
+  ratio; nace del trabajo de Lockhart (MIT, paper 1957). Ver caveat en Parte 1 sec 5: la
+  "caja ideal" esta hoy cuestionada.
+
+### Ciencia de extraccion (peer-reviewed)
+- **[G abstract / P paper] UC Davis Coffee Center - Guinard et al. 2023** (Journal of Food
+  Science, doi:10.1111/1750-3841.16531):
+  https://coffeecenter.ucdavis.edu/news/uc-davis-coffee-center-contributes-research-new-brewing-control-chart
+  — >58.000 datos sensoriales; cuestiona la caja clasica; propone charts nuevos (no oficiales).
+  Formula clave: **EY% = masa de cafe liquido x TDS% / dosis**.
+- **[G] Moroney et al. 2019** (PLOS ONE, open access, doi:10.1371/journal.pone.0219906):
+  https://journals.plos.org/plosone/article?id=10.1371%2Fjournal.pone.0219906 — Fisica del
+  pour-over: lechos conicos (V60) extraen menos uniforme que cilindricos; molienda fina ->
+  ~5 puntos de variacion de EY en el lecho.
+
+### Baristas y autores reconocidos
+- **[G] James Hoffmann - Ultimate V60** (Honest Coffee Guide):
+  https://honestcoffeeguide.com/brew-recipes/james-hoffmann-v60/ — 30 g cafe : 500 g agua
+  (1:16.7, "60 g/L"); bloom 60 g (2:1); vertidos acumulados 60/300/500 g; terminar drawdown
+  ~3:30. Hoffmann = Campeon Mundial Barista 2007.
+- **[P libro] James Hoffmann - The World Atlas of Coffee** (ISBN 9781784724290 UK Mitchell
+  Beazley / 9780228100942 Firefly) — referencia de origenes, variedades y procesos.
+- **[G] Matt Perger / Barista Hustle - The Coffee Compass:**
+  https://www.baristahustle.com/coffee-compass/ — Diagnostico de extraccion: agrio/falta dulzor
+  = sub-extraido; amargo/astringente = sobre-extraido. Tool gratis; Barista Hustle ademas vende
+  cursos [P]. Perger = Campeon Mundial Brewers Cup 2012. (Nota: amargo Y agrio a la vez =
+  extraccion despareja/canalizacion, no un solo eje.)
+- **[G] Tim Wendelboe - guia pour-over/filtro:**
+  https://timwendelboe.no/pages/how-to-brew-pourover-and-filter-coffee — 65 g/L (~1:15.4).
+  Ex Campeon Mundial Barista.
+- **[P] Scott Rao - libros:** https://scottrao.com — The Professional Barista's Handbook ($45),
+  The Coffee Roaster's Companion ($45), Everything But Espresso ($35, filtro/no-espresso).
+- **Lance Hedrick** - 2do en US Brewers Cup 2020 (Onyx Coffee Lab); fuerte en YouTube para
+  pour-over de alta extraccion. (URL exacta de su receta y credencial AeroPress: sin verificar.)
+
+### Cata y proceso (peer-reviewed, sostienen Parte 2)
+- **[G] Cao et al. 2023** (Int. J. Food Sci. & Tech. 58(3):1007):
+  https://academic.oup.com/ijfst/article/58/3/1007/7807986 — perfiles por proceso; azucares.
+- **[G] Review J. Food Sci. Tech. 2022** (PMC9376573):
+  https://pmc.ncbi.nlm.nih.gov/articles/PMC9376573/ — washed vs natural, mecanismos.
+- **[G] Frontiers in Microbiology 2019** (PMC6863779):
+  https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6863779/ — fermentacion larga -> mas frutado/acido.
+
+### Secundarias utiles (usar con criterio)
+- Coffee extraction (Wikipedia): https://en.wikipedia.org/wiki/Coffee_extraction — resumen de
+  TDS/EY/BCC.
+- Coffee Compass method (Coffee On Cue): https://www.coffeeoncue.com.au/blogs/how-to-make-coffee/coffee-compass-method-improve-filter-brewing-quality
 - V60 Coffee Compass Troubleshooting (Barista Life): https://baristalife.co/blogs/blog/v60-coffee-compass-guide
 - Matt Perger, "Coffee Extraction and How to Taste It" (Medium): https://medium.com/@mattperger/coffee-extraction-and-how-to-taste-it-4e06f8abb755
+- Perfect Daily Grind - Washed/Natural/Honey 101: https://perfectdailygrind.com/2016/07/washed-natural-honey-coffee-processing-101/ — util, pero algunas generalizaciones flojas.
+- SCA Brewing Research: https://sca.coffee/brewing-research
 
-_Fuentes consultadas pero inaccesibles al momento de escribir: compelling.coffee/blog/brewed-coffee-compass (HTTP 500) y las lecciones de Barista Hustle sobre temperatura y molienda (HTTP 402, contenido de pago). El mapeo del Coffee Compass se reconstruyo con las fuentes accesibles arriba._
+### No usar (descartado en verificacion)
+- "The Physics of Filter Coffee" de Scott Rao: **NO existe** tal recurso (descartado, voto 1-2).
+  Su contenido de filtro esta en "Everything But Espresso".
