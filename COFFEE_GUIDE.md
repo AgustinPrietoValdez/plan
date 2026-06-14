@@ -174,6 +174,46 @@ NUMERO del molino que vas a usar. Cada molino tiene su escala, asi que aca queda
 (Fuentes K6: KINGrinder; Honest Coffee Guide; Complete Home Barista. Micrones/click y clicks
 de V60 varian por fuente -> calibrar por taza.)
 
+## 7. Recetas de referencia (que receta para que cafe)
+
+Tres escuelas de V60. Ninguna es "la mejor" en abstracto; cada una sirve para algo. Si la
+receta que hay cargada no le va a un cafe, elegir/armar la que mejor encaje.
+
+| Receta | Parametros | Como vierte | Mejor para |
+|---|---|---|---|
+| **Hoffmann Ultimate V60** | 30 g : 500 g (1:16.7), media-fina, ~100 C, ~3:30 | Bloom 60 g + swirl, luego 2 vertidos continuos (a 300 g y a 500 g) | Baseline confiable y simple; taza limpia y balanceada. Buen punto de partida para cualquier cafe. |
+| **Tetsu Kasuya 4:6** | 20 g : 300 g (1:15), media-gruesa, 93 C (95-100 C para claros) | 5 vertidos de 60 g a 0:00 / 0:45 / 1:30 / 2:15 / 2:45; sacar el dripper a 3:30 | **Afinar dulzor vs acidez sin tocar molienda.** Primeros 40% (2 vertidos) = balance (1er mas grande = mas brillante/acido; 2do mas grande = mas dulce). Ultimos 60% (3 vertidos) = fuerza. Ideal para washed complejos. |
+| **Lance Hedrick (alta agitacion)** | ~1:15-1:16, doble bloom + agitacion, temp segun tueste | Mas pours / agitacion -> mas extraccion y mas claridad/separacion | Tuestes CLAROS dificiles de extraer; florales/delicados donde quieras maxima claridad y extraccion. (Es la "V60 - Lance" que ya tenes.) |
+
+**Como elijo la receta de un cafe:**
+- Washed claro y delicado (floral) -> 4:6 con 2do vertido mas grande (busca dulzor), o Lance si
+  necesita mas extraccion. Empezar por 4:6.
+- Natural/honey frutado -> Hoffmann o 4:6 con 1er vertido mas chico (no sobre-extraer).
+- No se que esperar -> Hoffmann como baseline y diagnosticar con el Coffee Compass.
+
+(Fuentes: Honest Coffee Guide / Hoffmann; Tetsu Kasuya 4:6 via Fortune Coffee Club / European
+Coffee Trip / calculate.coffee; Lance Hedrick via Lamose / Barista Magazine. Parametros 4:6 y
+Hoffmann verificados; Kasuya = Campeon Mundial Brewers Cup 2016.)
+
+## 8. Nivel de tueste y como ajustar
+
+El tueste cambia que tan soluble es el cafe, asi que cambia temperatura, molienda y hasta que
+receta conviene -- y tambien la OPINION sobre la taza. Como saberlo: reputacion del roaster,
+color/aceite del grano, y la taza misma.
+
+| Tueste | Indicios | Solubilidad | Ajustes |
+|---|---|---|---|
+| Claro / nordico | Grano claro, seco, sin aceite; roasters de especialidad (ej La Cabra) | Baja, cuesta extraer | Agua mas caliente (95-100 C); extraer MAS: molienda algo mas fina, mas agitacion/pours, recetas tipo Lance o 4:6 a temp alta |
+| Medio | Marron parejo, seco | Media | Baseline (90-94 C); Hoffmann o 4:6 estandar |
+| Oscuro | Marron oscuro, algo aceitoso | Alta, se sobre-extrae facil | Agua MAS FRIA (85-90 C); extraer MENOS: molienda mas gruesa, menos agitacion; cuidar el amargor |
+
+- **La Cabra tuesta CLARO (estilo nordico).** Por eso para sus cafes empujamos temperatura
+  (95-96 C) y buscamos buena extraccion: si no, salen agrios/planos.
+- **Impacto en la opinion:** un tueste claro que sale agrio casi siempre es sub-extraido, no
+  "mal cafe" -> extraer mas antes de juzgarlo. Un oscuro amargo suele ser sobre-extraido.
+
+(Fuentes: solubilidad por tueste, ver sec 1-3; La Cabra = roaster nordico de especialidad.)
+
 ---
 
 ## Parte 2 - Info por cafe (se completa al cargar cada grano)
@@ -216,13 +256,17 @@ Perfect Daily Grind. Todas las generalizaciones son tendencias, no universales.)
 - **Perfil esperado:** washed + Pink Bourbon -> taza limpia y floral, acidez citrica/jugosa,
   dulzor a panela/caramelo, notas a te o tropical; cuerpo medio-liviano. (Perfil tipico de
   variedad, confianza media; ajustar con las catas reales.)
-- **Receta recomendada:** "V60 - Lance" (doble bloom, alta agitacion).
-  - Ratio: **1:15 a 1:16** (empezar 1:15).
-  - Temperatura: **93 C** (washed claro tolera/pide algo mas de extraccion para el dulzor).
-  - Molienda: **Kingrinder K6, ~80 clicks** (tu ancla de V60 washed). Si sale plano/agrio bajar
-    a 75-78; si sale astringente subir a 83-85. (Ver sec 6 para la traduccion de molienda.)
-  - Razon: es delicado y limpio -> extraer bien para el dulzor sin pasarse (la sobre-extraccion
-    lo pone astringente y mata lo floral).
+- **Tueste:** La Cabra = claro/nordico -> empujar temperatura y extraer bien (sec 8).
+- **Receta recomendada:** la cata se hace con V60. Principal = **4:6 de Kasuya** (afinable);
+  alternativa = **"V60 - Lance"** (alta extraccion, la que ya tenes).
+  - **4:6 (principal):** 20 g : 300 g (1:15), 2do vertido mas grande (busca dulzor), agua **96 C**
+    (tueste claro), molienda K6 **~88-92 clicks** (4:6 usa media-gruesa).
+  - **Lance (alternativa):** 1:15, **95-96 C** (subir de 91 por ser tueste claro), K6 **~80 clicks**
+    (tu ancla). Usar si el 4:6 sale plano: extrae mas.
+  - Razon: washed claro y delicado -> extraer bien para el dulzor sin matar lo floral (la
+    sobre-extraccion lo pone astringente).
+  - Nota app: el 4:6 todavia NO esta cargado como receta en la app (entra con la feature de
+    receta recomendada).
 - **Diagnostico rapido (Coffee Compass):** agrio/plano -> mas fino o +temp; astringente/amargo
   -> mas grueso o -temp. Mover una palanca por vez.
 - **Catas y ajustes:** (se completa con cada brew; volcar cata_inicial y last_tweak.)
