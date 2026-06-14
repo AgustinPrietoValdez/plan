@@ -145,6 +145,35 @@ Dos cosas cambiaron y conviene tenerlas presentes para no razonar con info vieja
   TDS sigue siendo un buen PUNTO DE PARTIDA, no un objetivo absoluto**. La SCA aun NO ratifico
   un chart nuevo oficial. (Fuentes: UC Davis Coffee Center; SCA, verificado.)
 
+## 6. Molinillos y traduccion de molienda
+
+La molienda que recomiendo (en teoria "media-fina", o en micrones) hay que traducirla al
+NUMERO del molino que vas a usar. Cada molino tiene su escala, asi que aca queda registrada.
+
+**Molino activo: Kingrinder K6** (se pueden cargar mas; el desktop permite agregar otros).
+- **60 clicks por vuelta completa.** Rango util ~3 vueltas (de fino a grueso).
+- **Micrones por click: las fuentes NO coinciden** (van de ~16 a ~25 um/click). No confiar en
+  un solo numero absoluto.
+- **Cero = burrs apenas tocandose** (girar a lo mas fino hasta que rozan; desde ahi se cuentan
+  los clicks hacia mas grueso).
+- **OJO con las tablas online de V60:** se contradicen fuerte (unas dicen 35-50 clicks, otras
+  90-110). Por eso NO uso una tabla sola: anclo en TU experiencia + el sabor.
+
+**Anclas de calibracion (lo confiable):**
+- Espresso en el K6 = numero BAJO (~8-16 clicks). En esto si coinciden las fuentes.
+- **Tu ancla de V60 washed = ~80 clicks** (tu brew real del La Cabra washed salio bien ahi).
+  Esa referencia personal vale mas que cualquier chart.
+
+**Como traduzco una molienda recomendada -> clicks del K6:**
+1. Parto de tu ancla (V60 washed = 80 clicks).
+2. "Un poco mas fino" -> -3 a -5 clicks; "un poco mas grueso" -> +3 a +5 clicks.
+3. Paso de ajuste tipico = 3-5 clicks; ajuste fino = 1-2 clicks.
+4. Si investigo en micrones, uso ~20 um/click como aproximacion (entre 16 y 25) SOLO para
+   estimar, y confirmo por sabor.
+
+(Fuentes K6: KINGrinder; Honest Coffee Guide; Complete Home Barista. Micrones/click y clicks
+de V60 varian por fuente -> calibrar por taza.)
+
 ---
 
 ## Parte 2 - Info por cafe (se completa al cargar cada grano)
@@ -190,7 +219,8 @@ Perfect Daily Grind. Todas las generalizaciones son tendencias, no universales.)
 - **Receta recomendada:** "V60 - Lance" (doble bloom, alta agitacion).
   - Ratio: **1:15 a 1:16** (empezar 1:15).
   - Temperatura: **93 C** (washed claro tolera/pide algo mas de extraccion para el dulzor).
-  - Molienda: **media-fina, ~80** en tu molino (mismo punto que venis usando; ajustar de a 1 click).
+  - Molienda: **Kingrinder K6, ~80 clicks** (tu ancla de V60 washed). Si sale plano/agrio bajar
+    a 75-78; si sale astringente subir a 83-85. (Ver sec 6 para la traduccion de molienda.)
   - Razon: es delicado y limpio -> extraer bien para el dulzor sin pasarse (la sobre-extraccion
     lo pone astringente y mata lo floral).
 - **Diagnostico rapido (Coffee Compass):** agrio/plano -> mas fino o +temp; astringente/amargo
