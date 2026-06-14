@@ -152,6 +152,7 @@ export function BrewView() {
   const [scaleStatus, setScaleStatus] = useState<ConnStatus>("off");
   const [kettleStatus, setKettleStatus] = useState<ConnStatus>("off");
   const [scaleData, setScaleData] = useState<ScaleData | null>(null);
+  const scaleDataRef = useRef<ScaleData | null>(null);
   const [kettleData, setKettleData] = useState<KettleData | null>(null);
   const [scaleName, setScaleName] = useState<string | null>(null);
   const [kettleName, setKettleName] = useState<string | null>(null);
@@ -220,16 +221,26 @@ export function BrewView() {
     return () => clearInterval(id);
   }, [phase, waterDetected]);
 
+  // mantener un ref fresco de la balanza para el muestreo (sin depender de renders)
+  useEffect(() => { scaleDataRef.current = scaleData; }, [scaleData]);
+
   // ── datapoint sampling ~10Hz ─────────────────────────────────────────────────
+  // El intervalo se crea UNA sola vez al arrancar el brew y lee de refs. Antes tenia
+  // scaleData/brewTimerMs en las deps -> se destruia/recreaba ~10 veces por segundo
+  // y casi nunca llegaba a disparar (quedaban ~20 puntos en vez de ~1300), por eso el
+  // grafico salia con picos rectos en vez de la curva real.
   useEffect(() => {
     if (phase !== "brewing" || !waterDetected || !selectedRecipe) return;
+    const steps = selectedRecipe.steps;
     const id = setInterval(() => {
-      if (!scaleData) return;
-      const stepIdx = activeStepIdx(selectedRecipe.steps, brewTimerMs / 1000);
-      datapointsRef.current.push({ timerMs: brewTimerMs, weightG: scaleData.weight, flowGs: scaleData.flow, stepIdx });
+      const sd = scaleDataRef.current;
+      if (!sd) return;
+      const timerMs = Date.now() - brewTimerStartRef.current;
+      const stepIdx = activeStepIdx(steps, timerMs / 1000);
+      datapointsRef.current.push({ timerMs, weightG: sd.weight, flowGs: sd.flow, stepIdx });
     }, 100);
     return () => clearInterval(id);
-  }, [phase, waterDetected, scaleData, brewTimerMs, selectedRecipe]);
+  }, [phase, waterDetected, selectedRecipe]);
 
   // ── scan ──────────────────────────────────────────────────────────────────────
   async function startScan(forSlot: "scale" | "kettle") {
