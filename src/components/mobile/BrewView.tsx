@@ -21,9 +21,12 @@ function fmtTimer(ms: number): string {
 function stepCumulativeTarget(step: CoffeeRecipeStep, dose: number, totalWater: number): number | null {
   if (step.type !== "pour") return null;
   if (step.waterRatio == null) return step.waterGrams ?? null;
+  // x_cafe: waterRatio es multiplo de la dosis (ej 2 -> 2x cafe).
+  // pct_agua: waterRatio es el % del agua TOTAL de ESE paso (ej 20 -> 20% del agua),
+  //   por eso /100 (el editor en CafeView lo guarda como porcentaje, no como fraccion).
   return (step.waterMode ?? "x_cafe") === "x_cafe"
     ? step.waterRatio * dose
-    : step.waterRatio * totalWater;
+    : (step.waterRatio / 100) * totalWater;
 }
 
 // Sum of per-step water from all previous pour steps (scale is cumulative, so this is the weight offset)
@@ -202,6 +205,11 @@ export function BrewView() {
   const [brewStopped, setBrewStopped] = useState(false);
   const peakWeightRef = useRef(0);
   const removalConsecutiveRef = useRef(0);
+  // al finalizar: guardar tarda (encolar sesion + datapoints + tweak). Mostramos overlay
+  // "Guardando..." y bloqueamos el boton para que no se dispare dos veces (cada tap creaba
+  // una sesion duplicada). savingRef es el guard sincrono; saving controla el overlay.
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
 
   const [error, setError] = useState<string | null>(null);
 
@@ -408,6 +416,16 @@ export function BrewView() {
   }
 
   async function finishBrew() {
+    // guard: el guardado tarda; sin esto un doble-tap creaba varias sesiones identicas.
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    // soltar los dispositivos apenas se finaliza (no se usan mas en este brew).
+    try { if (scaleConnRef.current) { await unsubscribeFromScale(); await bleDisconnect(); } } catch { /* best-effort */ }
+    scaleConnRef.current = false; setScaleStatus("off"); setScaleData(null); setScaleName(null);
+    try { if (kettleConnRef.current) { await unsubscribeFromKettle(); await kettleDisconnect(); } } catch { /* best-effort */ }
+    kettleConnRef.current = false; setKettleStatus("off"); setKettleData(null); setKettleName(null);
+
     if (selectedRecipe && doseGrams != null) {
       const totalWater = selectedRecipe.ratio * doseGrams;
       try {
@@ -466,6 +484,8 @@ export function BrewView() {
     setTweakNotes(""); setTweakGrind(""); setTweakDose(""); setTweakWater(""); setTweakTemp(""); setTweakConsume("");
     setCupFragancia(""); setCupSabor(""); setCupAcidez(""); setCupDulzor(""); setCupCuerpo(""); setCupDefectos(""); setCupNota("");
     setPhase("home");
+    setSaving(false);
+    savingRef.current = false;
   }
 
   // ── derived ───────────────────────────────────────────────────────────────────
@@ -498,7 +518,23 @@ export function BrewView() {
 
   // ── render ────────────────────────────────────────────────────────────────────
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", position: "relative" }}>
+
+      {/* ── GUARDANDO (overlay) ── el guardado tarda; tapamos la pantalla para que se vea
+           que esta procesando y no se vuelva a tocar el boton */}
+      {saving && (
+        <div style={{
+          position: "absolute", inset: 0, zIndex: 50,
+          background: "color-mix(in srgb, var(--bg-base) 80%, transparent)",
+          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12,
+        }}>
+          <div style={{ fontSize: 32 }}>⏳</div>
+          <div style={{ fontSize: 16, fontWeight: 700 }}>Guardando brew…</div>
+          <div style={{ fontSize: 13, color: "var(--fg-muted)", textAlign: "center", maxWidth: 240 }}>
+            Guardando la sesión y desconectando balanza y pava. Puede tardar unos segundos.
+          </div>
+        </div>
+      )}
 
       {/* ── SCAN ── */}
       {phase === "scanning" && (() => {
@@ -836,9 +872,10 @@ export function BrewView() {
                     {s.type === "pour" ? "vertida" : "acción"}
                   </span>
                   {s.description || (s.type === "pour" ? "Verter" : "Esperar")}
-                  {s.type === "pour" && s.waterRatio != null && doseGrams != null && (
-                    <span style={{ color: "var(--fg-subtle)" }}> · {(s.waterRatio * doseGrams).toFixed(0)} g</span>
-                  )}
+                  {s.type === "pour" && s.waterRatio != null && doseGrams != null && (() => {
+                    const g = resolvedStepTarget(s, selectedRecipe.steps, i, doseGrams, totalWater);
+                    return g != null ? <span style={{ color: "var(--fg-subtle)" }}> · {g.toFixed(0)} g</span> : null;
+                  })()}
                 </span>
                 <span style={{ color: "var(--fg-subtle)", fontFamily: "var(--font-mono)", fontSize: 12 }}>{fmtTimer(s.timeSeconds * 1000)}</span>
               </div>
@@ -1015,8 +1052,9 @@ export function BrewView() {
               </label>
             </div>
           )}
-          <button className="btn ghost" style={{ fontSize: 14, padding: "12px", borderRadius: 10 }} onClick={finishBrew}>
-            {isCupping ? "Guardar cata inicial" : "Finalizar brew"}
+          <button className="btn ghost" style={{ fontSize: 14, padding: "12px", borderRadius: 10, opacity: saving ? 0.6 : 1 }}
+            onClick={finishBrew} disabled={saving}>
+            {saving ? "Guardando…" : (isCupping ? "Guardar cata inicial" : "Finalizar brew")}
           </button>
         </div>
       )}
