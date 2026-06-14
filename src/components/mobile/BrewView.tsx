@@ -184,6 +184,11 @@ export function BrewView() {
   const brewTimerStartRef = useRef(0);
   const flowConsecutiveRef = useRef(0);
   const datapointsRef = useRef<Omit<BrewDatapoint, "id" | "sessionId">[]>([]);
+  // auto-stop al sacar el filtro/dripper: peso pico visto + contador de lecturas
+  // consecutivas que confirman la caida (anti-ruido)
+  const [brewStopped, setBrewStopped] = useState(false);
+  const peakWeightRef = useRef(0);
+  const removalConsecutiveRef = useRef(0);
 
   const [error, setError] = useState<string | null>(null);
 
@@ -215,12 +220,40 @@ export function BrewView() {
     }
   }, [phase, waterDetected, scaleData?.flow]);
 
+  // ── auto-stop: deteccion de removido del filtro ───────────────────────────────
+  // Durante un brew normal el peso solo SUBE (vertidos) o se mantiene. Una caida
+  // brusca y sostenida = se levanto el dripper/filtro. Detectamos eso y frenamos.
+  useEffect(() => {
+    if (phase !== "brewing" || !waterDetected || brewStopped) return;
+    const REMOVAL_DROP_G = 50;          // caida absoluta minima vs el pico (g) — pedido del usuario:
+                                        // el filtro + soporte pesan ~50g, solo paramos si se saca al
+                                        // menos ese peso (evita falsos disparos)
+    const REMOVAL_PEAK_FRACTION = 0.6;  // ademas el peso debe caer por debajo del 60% del pico
+    const REMOVAL_MIN_PEAK_G = 50;      // ignorar hasta tener un pico real (evita disparos al inicio)
+    const REMOVAL_CONSECUTIVE = 3;      // lecturas consecutivas que confirman la caida (anti-ruido)
+    const w = scaleData?.weight ?? 0;
+    if (w > peakWeightRef.current) peakWeightRef.current = w;
+    const peak = peakWeightRef.current;
+    const dropped =
+      peak >= REMOVAL_MIN_PEAK_G &&
+      (peak - w) >= REMOVAL_DROP_G &&
+      w < peak * REMOVAL_PEAK_FRACTION;
+    if (dropped) {
+      removalConsecutiveRef.current++;
+      if (removalConsecutiveRef.current >= REMOVAL_CONSECUTIVE) {
+        setBrewStopped(true);
+      }
+    } else {
+      removalConsecutiveRef.current = 0;
+    }
+  }, [phase, waterDetected, brewStopped, scaleData?.weight]);
+
   // ── brew timer ───────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (phase !== "brewing" || !waterDetected) return;
+    if (phase !== "brewing" || !waterDetected || brewStopped) return;
     const id = setInterval(() => setBrewTimerMs(Date.now() - brewTimerStartRef.current), 100);
     return () => clearInterval(id);
-  }, [phase, waterDetected]);
+  }, [phase, waterDetected, brewStopped]);
 
   // mantener un ref fresco de la balanza para el muestreo (sin depender de renders)
   useEffect(() => { scaleDataRef.current = scaleData; }, [scaleData]);
@@ -231,7 +264,7 @@ export function BrewView() {
   // y casi nunca llegaba a disparar (quedaban ~20 puntos en vez de ~1300), por eso el
   // grafico salia con picos rectos en vez de la curva real.
   useEffect(() => {
-    if (phase !== "brewing" || !waterDetected || !selectedRecipe) return;
+    if (phase !== "brewing" || !waterDetected || !selectedRecipe || brewStopped) return;
     const steps = selectedRecipe.steps;
     const id = setInterval(() => {
       const sd = scaleDataRef.current;
@@ -241,7 +274,7 @@ export function BrewView() {
       datapointsRef.current.push({ timerMs, weightG: sd.weight, flowGs: sd.flow, stepIdx });
     }, 100);
     return () => clearInterval(id);
-  }, [phase, waterDetected, selectedRecipe]);
+  }, [phase, waterDetected, selectedRecipe, brewStopped]);
 
   // ── scan ──────────────────────────────────────────────────────────────────────
   async function startScan(forSlot: "scale" | "kettle") {
@@ -303,6 +336,7 @@ export function BrewView() {
     if (!selectedRecipe || doseGrams == null) return;
     flowConsecutiveRef.current = 0;
     setWaterDetected(false); setBrewTimerMs(0);
+    setBrewStopped(false); peakWeightRef.current = 0; removalConsecutiveRef.current = 0;
     datapointsRef.current = [];
     // prefill del ajuste con lo que se uso (editable al terminar)
     setTweakGrind(selectedRecipe.grindSize ?? "");
@@ -356,6 +390,7 @@ export function BrewView() {
       }
     }
     datapointsRef.current = []; setWaterDetected(false); setBrewTimerMs(0);
+    setBrewStopped(false); peakWeightRef.current = 0; removalConsecutiveRef.current = 0;
     setTweakNotes(""); setTweakGrind(""); setTweakDose(""); setTweakWater(""); setTweakTemp(""); setTweakConsume("");
     setPhase("home");
   }
@@ -687,6 +722,18 @@ export function BrewView() {
       {/* ── BREWING ── */}
       {phase === "brewing" && (
         <div style={{ flex: 1, padding: 16, display: "flex", flexDirection: "column", gap: 12, overflowY: "auto" }}>
+
+          {/* auto-stop: filtro removido */}
+          {brewStopped && (
+            <div style={{ background: "color-mix(in srgb, var(--accent, #4caf50) 14%, transparent)", border: "1px solid var(--accent, #4caf50)", borderRadius: 12, padding: "12px 14px" }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: "var(--accent, #4caf50)" }}>
+                ☕ Sacaste el filtro — brew detenido
+              </div>
+              <div style={{ fontSize: 12, color: "var(--fg-muted)", marginTop: 4 }}>
+                Finalizá para guardar la sesión.
+              </div>
+            </div>
+          )}
 
           {/* per-step timer (elapsed / duration of the current step) */}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
