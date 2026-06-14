@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import {
+  useIngredientCategories,
   useIngredients,
   useInventory,
   useRecipeIngredients,
@@ -9,7 +10,7 @@ import { suggestRecipesForExpiringLots } from "../../lib/compras";
 import { useLogMeal, defaultSlot } from "../../lib/useLogMeal";
 import { todayYmd } from "../../lib/date";
 import { formatQuantity } from "../../lib/units";
-import type { Ingredient, MealSlot, Recipe } from "../../types";
+import type { Ingredient, IngredientCategory, MealSlot, Recipe } from "../../types";
 
 const MEAL_TYPE_LABELS: Record<string, string> = {
   breakfast_snack: "Desayuno / Merienda",
@@ -97,6 +98,7 @@ export function RecipesView() {
 function RecipeFollow({ recipe, onBack }: { recipe: Recipe; onBack: () => void }) {
   const riQ = useRecipeIngredients();
   const ingredientsQ = useIngredients();
+  const categoriesQ = useIngredientCategories();
   const logMeal = useLogMeal();
 
   const ingredientById = useMemo(() => {
@@ -104,6 +106,11 @@ function RecipeFollow({ recipe, onBack }: { recipe: Recipe; onBack: () => void }
     for (const i of ingredientsQ.data ?? []) m.set(i.id, i);
     return m;
   }, [ingredientsQ.data]);
+  const categoryById = useMemo(() => {
+    const m = new Map<string, IngredientCategory>();
+    for (const c of categoriesQ.data ?? []) m.set(c.id, c);
+    return m;
+  }, [categoriesQ.data]);
   const recipeIngredients = useMemo(
     () => (riQ.data ?? []).filter((ri) => ri.recipeId === recipe.id),
     [riQ.data, recipe.id],
@@ -126,10 +133,11 @@ function RecipeFollow({ recipe, onBack }: { recipe: Recipe; onBack: () => void }
           <p className="m-empty" style={{ padding: "8px 0" }}>Sin ingredientes.</p>
         ) : (
           recipeIngredients.map((ri) => {
-            const ing = ingredientById.get(ri.ingredientId);
+            const ing = ri.ingredientId ? ingredientById.get(ri.ingredientId) : undefined;
+            const cat = ri.categoryId ? categoryById.get(ri.categoryId) : undefined;
             return (
               <div key={ri.id} className="m-recipe-ing">
-                <span>{ing?.name ?? "—"}</span>
+                <span>{ing?.name ?? (cat ? `[${cat.name}]` : "—")}</span>
                 <span className="m-recipe-ing-qty">{ing ? formatQuantity(ri.quantity, ing.dimension) : ri.quantity}</span>
               </div>
             );

@@ -34,6 +34,8 @@ import {
 } from "../lib/queries";
 import {
   aggregateNeed,
+  aggregateCategoryNeed,
+  categoryNeedToShoppingItems,
   findMergeTarget,
   neededToShoppingItems,
 } from "../lib/compras";
@@ -639,6 +641,7 @@ function IngredientRow({
  *  merge into existing items). Returns how many list items were touched. */
 function useAddRecipeToList() {
   const ingredientsQ = useIngredients();
+  const categoriesQ = useIngredientCategories();
   const presentationsQ = useIngredientPresentations();
   const riQ = useRecipeIngredients();
   const shoppingItemsQ = useShoppingItems();
@@ -650,15 +653,21 @@ function useAddRecipeToList() {
     if (ris.length === 0) return 0;
     const ingredientById = new Map<string, Ingredient>();
     for (const i of ingredientsQ.data ?? []) ingredientById.set(i.id, i);
+    const categoryById = new Map<string, IngredientCategory>();
+    for (const c of categoriesQ.data ?? []) categoryById.set(c.id, c);
     const presentationsByIngredient = new Map<string, IngredientPresentation[]>();
     for (const p of presentationsQ.data ?? []) {
       const arr = presentationsByIngredient.get(p.ingredientId) ?? [];
       arr.push(p);
       presentationsByIngredient.set(p.ingredientId, arr);
     }
-    const need = new Map<string, number>();
-    for (const ri of ris) need.set(ri.ingredientId, (need.get(ri.ingredientId) ?? 0) + ri.quantity);
-    const items = neededToShoppingItems(need, ingredientById, presentationsByIngredient);
+    const entries = [{ recipeIngredients: ris, servings: 1, portions: 1 }];
+    const need = aggregateNeed(entries);
+    const needByCategory = aggregateCategoryNeed(entries);
+    const items = [
+      ...neededToShoppingItems(need, ingredientById, presentationsByIngredient),
+      ...categoryNeedToShoppingItems(needByCategory, categoryById),
+    ];
     const current = shoppingItemsQ.data ?? [];
     for (const it of items) {
       const target = findMergeTarget(current, it);
@@ -785,12 +794,19 @@ function RecipeEditor({ recipe, onBack }: { recipe: Recipe; onBack: () => void }
   const deleteRI = useDeleteRecipeIngredient();
   const addRecipeToList = useAddRecipeToList();
 
+  const categoriesQ = useIngredientCategories();
   const ingredients = useMemo(() => ingredientsQ.data ?? [], [ingredientsQ.data]);
+  const categories = useMemo(() => categoriesQ.data ?? [], [categoriesQ.data]);
   const ingredientById = useMemo(() => {
     const m = new Map<string, Ingredient>();
     for (const i of ingredients) m.set(i.id, i);
     return m;
   }, [ingredients]);
+  const categoryById = useMemo(() => {
+    const m = new Map<string, IngredientCategory>();
+    for (const c of categories) m.set(c.id, c);
+    return m;
+  }, [categories]);
   const recipeIngredients = useMemo(
     () => (riQ.data ?? []).filter((ri) => ri.recipeId === recipe.id),
     [riQ.data, recipe.id],
@@ -872,11 +888,13 @@ function RecipeEditor({ recipe, onBack }: { recipe: Recipe; onBack: () => void }
           <div style={{ fontSize: 12, color: "var(--fg-subtle)" }}>Sin ingredientes.</div>
         )}
         {recipeIngredients.map((ri) => {
-          const ing = ingredientById.get(ri.ingredientId);
+          const ing = ri.ingredientId ? ingredientById.get(ri.ingredientId) : undefined;
+          const cat = ri.categoryId ? categoryById.get(ri.categoryId) : undefined;
           return (
             <div key={ri.id} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13 }}>
               {ing && <Pill tone={DIMENSION_TONE[ing.dimension]}>{DIMENSION_LABELS[ing.dimension]}</Pill>}
-              <span style={{ flex: 1 }}>{ing?.name ?? "—"}</span>
+              {cat && <Pill tone="neutral">generico</Pill>}
+              <span style={{ flex: 1 }}>{ing?.name ?? (cat ? `[${cat.name}]` : "—")}</span>
               <span style={{ color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums" }}>
                 {ing ? formatQuantity(ri.quantity, ing.dimension) : ri.quantity}
               </span>
@@ -888,7 +906,8 @@ function RecipeEditor({ recipe, onBack }: { recipe: Recipe; onBack: () => void }
         })}
         <RecipeIngredientAdder
           ingredients={ingredients}
-          onAdd={(ingredientId, quantity) => createRI.mutate({ recipeId: recipe.id, ingredientId, quantity })}
+          categories={categories}
+          onAdd={(sel) => createRI.mutate({ recipeId: recipe.id, ...sel })}
         />
       </section>
 
@@ -946,12 +965,16 @@ function RecipeEditor({ recipe, onBack }: { recipe: Recipe; onBack: () => void }
 
 function RecipeIngredientAdder({
   ingredients,
+  categories,
   onAdd,
 }: {
   ingredients: Ingredient[];
-  onAdd: (ingredientId: string, quantityBase: number) => void;
+  categories: IngredientCategory[];
+  onAdd: (sel: { ingredientId?: string | null; categoryId?: string | null; quantity: number }) => void;
 }) {
+  const [mode, setMode] = useState<"ingrediente" | "categoria">("ingrediente");
   const [ingredientId, setIngredientId] = useState("");
+  const [categoryId, setCategoryId] = useState("");
   const [amount, setAmount] = useState("");
   const selected = ingredients.find((i) => i.id === ingredientId) ?? null;
   const units = selected ? unitOptions(selected.dimension) : [];
@@ -960,14 +983,20 @@ function RecipeIngredientAdder({
   const effectiveUnit = unit || units[0]?.unit || "u";
 
   const add = () => {
-    if (!selected) return;
     const amt = parseQuantity(amount);
     if (amt == null || amt <= 0) return;
-    onAdd(selected.id, toBase(amt, effectiveUnit));
+    if (mode === "categoria") {
+      if (!categoryId) return;
+      onAdd({ categoryId, ingredientId: null, quantity: amt });
+      setAmount(""); setCategoryId("");
+      return;
+    }
+    if (!selected) return;
+    onAdd({ ingredientId: selected.id, categoryId: null, quantity: toBase(amt, effectiveUnit) });
     setAmount("");
   };
 
-  if (ingredients.length === 0) {
+  if (ingredients.length === 0 && categories.length === 0) {
     return (
       <div style={{ fontSize: 12, color: "var(--fg-subtle)" }}>
         Cargá ingredientes en la pestaña Ingredientes para poder agregarlos.
@@ -985,28 +1014,54 @@ function RecipeIngredientAdder({
     >
       <select
         className="input"
-        value={ingredientId}
-        onChange={(e) => {
-          setIngredientId(e.target.value);
-          setUnit("");
-        }}
-        style={{ flex: 1, minWidth: 160 }}
+        value={mode}
+        onChange={(e) => setMode(e.target.value as "ingrediente" | "categoria")}
+        style={{ width: 110 }}
+        title="Ingrediente concreto o categoria generica"
       >
-        <option value="">Elegí ingrediente…</option>
-        {ingredients.map((i) => (
-          <option key={i.id} value={i.id}>
-            {i.name}
-          </option>
-        ))}
+        <option value="ingrediente">Ingrediente</option>
+        <option value="categoria">Categoria</option>
       </select>
+      {mode === "ingrediente" ? (
+        <select
+          className="input"
+          value={ingredientId}
+          onChange={(e) => {
+            setIngredientId(e.target.value);
+            setUnit("");
+          }}
+          style={{ flex: 1, minWidth: 160 }}
+        >
+          <option value="">Elegí ingrediente…</option>
+          {ingredients.map((i) => (
+            <option key={i.id} value={i.id}>
+              {i.name}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <select
+          className="input"
+          value={categoryId}
+          onChange={(e) => setCategoryId(e.target.value)}
+          style={{ flex: 1, minWidth: 160 }}
+        >
+          <option value="">Elegí categoría…</option>
+          {categories.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </select>
+      )}
       <input
         className="input"
-        placeholder="Cant. (admite 1/2)"
+        placeholder={mode === "categoria" ? "Cantidad" : "Cant. (admite 1/2)"}
         value={amount}
         onChange={(e) => setAmount(e.target.value)}
         style={{ width: 120 }}
       />
-      {selected && units.length > 1 ? (
+      {mode === "ingrediente" && selected && units.length > 1 ? (
         <select className="input" value={effectiveUnit} onChange={(e) => setUnit(e.target.value)}>
           {units.map((u) => (
             <option key={u.unit} value={u.unit}>
@@ -1014,10 +1069,14 @@ function RecipeIngredientAdder({
             </option>
           ))}
         </select>
-      ) : selected ? (
+      ) : mode === "ingrediente" && selected ? (
         <span style={{ fontSize: 12, color: "var(--fg-muted)", width: 24 }}>{units[0]?.label}</span>
       ) : null}
-      <button className="btn" type="submit" disabled={!selected || !amount.trim()}>
+      <button
+        className="btn"
+        type="submit"
+        disabled={mode === "categoria" ? !categoryId || !amount.trim() : !selected || !amount.trim()}
+      >
         <IPlus size={11} /> Agregar
       </button>
     </form>
@@ -1429,6 +1488,7 @@ function PlanPanel() {
   const recipesQ = useRecipes();
   const riQ = useRecipeIngredients();
   const ingredientsQ = useIngredients();
+  const categoriesQ = useIngredientCategories();
   const presentationsQ = useIngredientPresentations();
   const shoppingItemsQ = useShoppingItems();
   const inventoryQ = useInventory();
@@ -1507,16 +1567,16 @@ function PlanPanel() {
       arr.push(ri);
       byRecipe.set(ri.recipeId, arr);
     }
-    const need = aggregateNeed(
-      entries.map((e) => {
-        const r = recipeById.get(e.recipeId);
-        return {
-          recipeIngredients: byRecipe.get(e.recipeId) ?? [],
-          servings: r?.servings ?? 1,
-          portions: e.targetServings,
-        };
-      }),
-    );
+    const planEntries = entries.map((e) => {
+      const r = recipeById.get(e.recipeId);
+      return {
+        recipeIngredients: byRecipe.get(e.recipeId) ?? [],
+        servings: r?.servings ?? 1,
+        portions: e.targetServings,
+      };
+    });
+    const need = aggregateNeed(planEntries);
+    const needByCategory = aggregateCategoryNeed(planEntries);
     // subtract what's already at home (inventory)
     for (const row of inventoryQ.data ?? []) {
       if (need.has(row.ingredientId)) {
@@ -1525,13 +1585,18 @@ function PlanPanel() {
     }
     const ingredientById = new Map<string, Ingredient>();
     for (const i of ingredientsQ.data ?? []) ingredientById.set(i.id, i);
+    const categoryById = new Map<string, IngredientCategory>();
+    for (const c of categoriesQ.data ?? []) categoryById.set(c.id, c);
     const presentationsByIngredient = new Map<string, IngredientPresentation[]>();
     for (const p of presentationsQ.data ?? []) {
       const arr = presentationsByIngredient.get(p.ingredientId) ?? [];
       arr.push(p);
       presentationsByIngredient.set(p.ingredientId, arr);
     }
-    const items = neededToShoppingItems(need, ingredientById, presentationsByIngredient);
+    const items = [
+      ...neededToShoppingItems(need, ingredientById, presentationsByIngredient),
+      ...categoryNeedToShoppingItems(needByCategory, categoryById),
+    ];
     const current = shoppingItemsQ.data ?? [];
     for (const it of items) {
       const target = findMergeTarget(current, it);

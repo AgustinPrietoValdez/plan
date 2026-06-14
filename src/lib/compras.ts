@@ -1,5 +1,6 @@
 import type {
   Ingredient,
+  IngredientCategory,
   IngredientPresentation,
   InventoryItem,
   Recipe,
@@ -115,6 +116,7 @@ export function suggestRecipesForExpiringLots(
     const matched: string[] = [];
     let earliest: string | null = null;
     for (const ri of ris) {
+      if (!ri.ingredientId) continue; // slot generico (categoria): no matchea lotes
       const exp = earliestByIngredient.get(ri.ingredientId);
       if (!exp) continue;
       matched.push(ri.ingredientId);
@@ -145,8 +147,49 @@ export function aggregateNeed(
   for (const e of entries) {
     const factor = e.servings > 0 ? e.portions / e.servings : 1;
     for (const ri of e.recipeIngredients) {
+      if (!ri.ingredientId) continue; // slot generico -> va por aggregateCategoryNeed
       need.set(ri.ingredientId, (need.get(ri.ingredientId) ?? 0) + ri.quantity * factor);
     }
   }
   return need;
+}
+
+/** Igual que aggregateNeed pero para los slots genericos (por categoria de
+ *  ingrediente). Devuelve categoryId -> cantidad requerida. */
+export function aggregateCategoryNeed(
+  entries: { recipeIngredients: RecipeIngredient[]; servings: number; portions: number }[],
+): Map<string, number> {
+  const need = new Map<string, number>();
+  for (const e of entries) {
+    const factor = e.servings > 0 ? e.portions / e.servings : 1;
+    for (const ri of e.recipeIngredients) {
+      if (!ri.categoryId) continue;
+      need.set(ri.categoryId, (need.get(ri.categoryId) ?? 0) + ri.quantity * factor);
+    }
+  }
+  return need;
+}
+
+/** Convierte los slots genericos en items de lista de texto libre "[Categoria] · qty".
+ *  El usuario elige el producto concreto al comprar. Merge por nombre lo une si
+ *  dos recetas piden la misma categoria. */
+export function categoryNeedToShoppingItems(
+  needByCategory: Map<string, number>,
+  categoryById: Map<string, IngredientCategory>,
+): ShoppingItemCreate[] {
+  const out: ShoppingItemCreate[] = [];
+  for (const [categoryId, needed] of needByCategory) {
+    if (needed <= 0) continue;
+    const cat = categoryById.get(categoryId);
+    if (!cat) continue;
+    const qtyText = Number.isInteger(needed) ? String(needed) : needed.toFixed(1);
+    out.push({
+      name: `[${cat.name}] x${qtyText}`,
+      quantity: 1,
+      ingredientId: null,
+      presentationId: null,
+      unit: null,
+    });
+  }
+  return out;
 }
