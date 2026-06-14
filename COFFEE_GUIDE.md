@@ -54,18 +54,22 @@ Nota: el tiempo total rara vez se fuerza solo; en filtro se controla sobre todo 
 molienda (mas fino = drena mas lento = mas tiempo). (Wikipedia, Coffee extraction; principios
 del Coffee Compass de Matt Perger / Barista Hustle.)
 
-**Importante - las palancas NO son 100% independientes (el ratio tambien toca el tiempo y la
-extraccion):** el ratio es sobre todo fuerza (TDS), pero al cambiarlo se mueve el tiempo y eso
-roza la extraccion. La direccion NO es simetrica:
-- **Subir el AGUA (ratio mas debil, ej 1:15 -> 1:16, misma dosis):** mas solvente por gramo +
-  drawdown mas largo -> la **EXTRACCION (EY) SUBE mas** (y la taza queda mas diluida). Este es el
-  movimiento que mas sube la extraccion.
-- **Subir la DOSIS (ratio mas fuerte, ej 1:16 -> 1:15, misma agua):** lecho mas profundo -> mas
-  lento -> mas tiempo, PERO hay menos agua por gramo -> la taza queda mas fuerte y el **EY puede
-  BAJAR** (riesgo de agrio si te pasas de dosis), no subir.
-- Por eso, al cambiar la dosis conviene **reajustar la molienda** para mantener el tiempo y aislar
-  el efecto de fuerza, y **re-catar** despues de tocar el ratio (moviste dos cosas a la vez).
-(Mecanismo de lecho/flujo: Moroney et al. 2019, PLOS ONE; relacion TDS-EY-ratio: UC Davis.)
+**Importante - las palancas NO son 100% independientes, y el ratio NO es simetrico para la
+extraccion.** (Terminologia: subir el ratio = mas agua, 1:15 -> 1:16, mas debil; bajar el ratio
+= mas cafe / menos agua, 1:16 -> 1:15, mas fuerte.)
+
+**Cual mueve mas la extraccion: SUBIR el ratio (agregar agua) mueve MAS la extraccion que
+bajarlo.** Subir el ratio es la palanca de extraccion (secundaria); bajarlo es sobre todo fuerza.
+- **Subir el ratio (mas AGUA, mas debil):** mas solvente por gramo + gradiente de concentracion
+  mas alto + drawdown mas largo -> la **EXTRACCION (EY) SUBE** (taza mas diluida pero mas extraida).
+  Es el movimiento de ratio que mas mueve la extraccion.
+- **Bajar el ratio (mas CAFE, mas fuerte):** efecto sobre todo en la **fuerza (TDS)**; sobre la
+  extraccion su efecto es **chico y, si acaso, a la baja** (con poca agua por gramo el liquido se
+  satura antes y la extraccion se frena). Ademas el lecho mas profundo alarga el tiempo.
+- Igual sigue siendo **secundario**: para extraccion, la **molienda** manda. Y al tocar la dosis
+  conviene **reajustar molienda** (mantener tiempo) y **re-catar** (moviste dos cosas).
+(Mas solvente -> mas EY hasta saturacion: fisica de extraccion. Lecho/flujo: Moroney et al. 2019,
+PLOS ONE; relacion TDS-EY-ratio: UC Davis. Es la direccion/consenso, no un numero exacto.)
 
 ## 2. La caja ideal de la SCA (Brewing Control Chart)
 
