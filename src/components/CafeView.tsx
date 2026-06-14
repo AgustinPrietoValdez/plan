@@ -91,12 +91,15 @@ interface BeanFormState {
   roastedOn: string;
   weightGrams: string;
   notes: string;
+  cataInicial: string;
+  notaFinal: string;
 }
 
 const defaultBeanForm = (): BeanFormState => ({
   name: "", roaster: "", varietal: "", country: "",
   process: "", producer: "", roastedOn: "",
   weightGrams: "0", notes: "",
+  cataInicial: "", notaFinal: "",
 });
 
 function beanFormFromBean(b: CoffeeBean): BeanFormState {
@@ -105,6 +108,8 @@ function beanFormFromBean(b: CoffeeBean): BeanFormState {
     process: b.process, producer: b.producer, roastedOn: b.roastedOn ?? "",
     weightGrams: String(b.weightGrams),
     notes: b.notes,
+    cataInicial: b.cataInicial,
+    notaFinal: b.notaFinal,
   };
 }
 
@@ -193,6 +198,8 @@ export function CafeView() {
       roastedOn: beanForm.roastedOn || null,
       weightGrams: parseFloat(beanForm.weightGrams) || 0,
       notes: beanForm.notes.trim(),
+      cataInicial: beanForm.cataInicial.trim(),
+      notaFinal: beanForm.notaFinal.trim(),
     };
     if (!payload.name) return;
     const timeout = new Promise<never>((_, rej) =>
@@ -681,6 +688,29 @@ function BeanCard({
               </button>
             )}
           </div>
+
+          {/* diario de cata */}
+          {b.cataInicial && (
+            <div style={{ marginTop: 8, fontSize: 12, color: "var(--fg-muted)" }}>
+              <span style={{ color: "var(--fg-subtle)", fontWeight: 500 }}>Cata inicial: </span>
+              {b.cataInicial}
+            </div>
+          )}
+          {b.notaFinal && (
+            <div style={{ marginTop: 4, fontSize: 12, color: "var(--fg-muted)" }}>
+              <span style={{ color: "var(--fg-subtle)", fontWeight: 500 }}>Nota final: </span>
+              {b.notaFinal}
+            </div>
+          )}
+          {b.lastTweak && (b.lastTweak.notes || b.lastTweak.grindSize || b.lastTweak.doseGrams) && (
+            <div style={{ marginTop: 4, fontSize: 11, color: "var(--fg-subtle)" }}>
+              Ultimo ajuste:
+              {b.lastTweak.grindSize ? ` molienda ${b.lastTweak.grindSize}` : ""}
+              {b.lastTweak.doseGrams ? ` · ${b.lastTweak.doseGrams}g` : ""}
+              {b.lastTweak.tempCelsius ? ` · ${b.lastTweak.tempCelsius}C` : ""}
+              {b.lastTweak.notes ? ` · ${b.lastTweak.notes}` : ""}
+            </div>
+          )}
         </div>
 
         {/* actions */}
@@ -856,6 +886,14 @@ function BeanModal({ form, isEdit, saving, error, onChange, onSave, onClose }: {
         <Field label="Notas">
           <textarea className="input" value={form.notes} rows={2} style={{ resize: "vertical" }}
             onChange={(e) => onChange("notes", e.target.value)} placeholder="notas libres…" />
+        </Field>
+        <Field label="Cata inicial (qué buscás)">
+          <textarea className="input" value={form.cataInicial} rows={2} style={{ resize: "vertical" }}
+            onChange={(e) => onChange("cataInicial", e.target.value)} placeholder="al abrir el grano: qué perfil buscás…" />
+        </Field>
+        <Field label="Nota final (a dónde llegaste)">
+          <textarea className="input" value={form.notaFinal} rows={2} style={{ resize: "vertical" }}
+            onChange={(e) => onChange("notaFinal", e.target.value)} placeholder="al terminarlo: lograste algo parecido?…" />
         </Field>
       </div>
       <ModalFooter saving={saving} isEdit={isEdit} onSave={onSave} onClose={onClose} saveLabel="grano" />

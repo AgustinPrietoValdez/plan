@@ -1,0 +1,3 @@
+ALTER TABLE coffee_beans ADD COLUMN cata_inicial TEXT NOT NULL DEFAULT '';
+ALTER TABLE coffee_beans ADD COLUMN nota_final TEXT NOT NULL DEFAULT '';
+ALTER TABLE coffee_beans ADD COLUMN last_tweak TEXT NOT NULL DEFAULT '';

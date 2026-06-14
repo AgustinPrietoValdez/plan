@@ -168,6 +168,7 @@ export function BrewView() {
   const [selectedBean, setSelectedBean] = useState<CoffeeBean | null>(null);
   const [selectedRecipe, setSelectedRecipe] = useState<CoffeeRecipe | null>(null);
   const [doseGrams, setDoseGrams] = useState<number | null>(null);
+  const [tweakNotes, setTweakNotes] = useState("");
   const returnToReadyRef = useRef(false);
 
   // ── brewing ──
@@ -297,15 +298,31 @@ export function BrewView() {
     if (selectedRecipe && doseGrams != null) {
       const totalWater = selectedRecipe.ratio * doseGrams;
       try {
-        const saved = await createBrewSession.mutateAsync({
+        await createBrewSession.mutateAsync({
           recipeId: selectedRecipe.id, recipeName: selectedRecipe.name,
           beanId: selectedBean?.id ?? null, beanName: selectedBean?.name ?? "",
           doseGrams, totalWaterGrams: totalWater, durationMs: brewTimerMs,
+          datapoints: datapointsRef.current,
         });
-        await repo.addBrewDatapoints(saved.id, datapointsRef.current);
       } catch { /* best-effort */ }
+      // guardar el ajuste en el grano: salta la proxima vez que se levante este cafe
+      if (selectedBean) {
+        try {
+          await repo.patchCoffeeBean(selectedBean.id, {
+            lastTweak: {
+              grindSize: selectedRecipe.grindSize || undefined,
+              doseGrams,
+              totalWaterGrams: totalWater,
+              tempCelsius: selectedRecipe.tempCelsius || undefined,
+              notes: tweakNotes.trim(),
+              recipeId: selectedRecipe.id,
+              at: new Date().toISOString(),
+            },
+          });
+        } catch { /* best-effort */ }
+      }
     }
-    datapointsRef.current = []; setWaterDetected(false); setBrewTimerMs(0);
+    datapointsRef.current = []; setWaterDetected(false); setBrewTimerMs(0); setTweakNotes("");
     setPhase("home");
   }
 
@@ -458,8 +475,16 @@ export function BrewView() {
           {activeBeans.map(b => (
             <button key={b.id} className="btn" style={{ textAlign: "left", padding: "12px 14px", fontSize: 14, flexShrink: 0, border: selectedBean?.id === b.id ? "2px solid var(--accent)" : "2px solid transparent" }}
               onClick={() => setSelectedBean(b)}>
-              <div style={{ fontWeight: 600 }}>{b.name}</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontWeight: 600 }}>{b.name}</span>
+                {b.lastTweak && (
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "var(--accent, #4caf50)", border: "1px solid currentColor", borderRadius: 6, padding: "1px 5px" }}>
+                    tiene ajuste
+                  </span>
+                )}
+              </div>
               {b.roaster && <div style={{ fontSize: 11, color: "var(--fg-muted)", marginTop: 2 }}>{b.roaster}{b.country ? ` · ${b.country}` : ""}</div>}
+              {b.cataInicial && <div style={{ fontSize: 11, color: "var(--fg-subtle)", marginTop: 2 }}>busco: {b.cataInicial}</div>}
             </button>
           ))}
 
@@ -588,6 +613,19 @@ export function BrewView() {
             )}
           </div>
 
+          {/* ultimo ajuste guardado de este grano */}
+          {selectedBean?.lastTweak && (
+            <div style={{ background: "color-mix(in srgb, var(--accent, #4caf50) 12%, transparent)", borderRadius: 12, padding: "12px 14px", fontSize: 13 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "var(--accent, #4caf50)", marginBottom: 4 }}>ÚLTIMO AJUSTE DE ESTE CAFÉ</div>
+              <div style={{ color: "var(--fg-muted)" }}>
+                {selectedBean.lastTweak.grindSize ? `molienda ${selectedBean.lastTweak.grindSize}` : ""}
+                {selectedBean.lastTweak.doseGrams ? ` · ${selectedBean.lastTweak.doseGrams}g` : ""}
+                {selectedBean.lastTweak.tempCelsius ? ` · ${selectedBean.lastTweak.tempCelsius}°C` : ""}
+              </div>
+              {selectedBean.lastTweak.notes && <div style={{ marginTop: 4 }}>{selectedBean.lastTweak.notes}</div>}
+            </div>
+          )}
+
           {/* steps preview */}
           <div style={{ fontSize: 13, fontWeight: 600, color: "var(--fg-subtle)" }}>Pasos</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -693,6 +731,16 @@ export function BrewView() {
           )}
 
           <div style={{ flex: 1 }} />
+          {selectedBean && (
+            <textarea
+              className="input"
+              value={tweakNotes}
+              rows={2}
+              style={{ resize: "vertical", fontSize: 13 }}
+              placeholder="Ajuste para la proxima (ej. moler mas fino, menos agua)…"
+              onChange={(e) => setTweakNotes(e.target.value)}
+            />
+          )}
           <button className="btn ghost" style={{ fontSize: 14, padding: "12px", borderRadius: 10 }} onClick={finishBrew}>
             Finalizar brew
           </button>
