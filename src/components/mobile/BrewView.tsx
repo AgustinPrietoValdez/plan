@@ -17,6 +17,12 @@ function fmtTimer(ms: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
+// Extrae el numero de clicks de una molienda guardada como texto ("90", "media-gruesa (~90 K6)").
+function parseGrindClicks(s?: string): number {
+  const m = (s ?? "").match(/\d+/);
+  return m ? parseInt(m[0], 10) : 0;
+}
+
 // Cumulative water target for a step (from brew start, not per-step)
 function stepCumulativeTarget(step: CoffeeRecipeStep, dose: number, totalWater: number): number | null {
   if (step.type !== "pour") return null;
@@ -88,16 +94,6 @@ function ConnDot({ on }: { on: boolean }) {
   );
 }
 
-function FlowBand({ flow, target }: { flow: number | null; target?: number }) {
-  if (flow == null) return null;
-  const tgt = target ?? 3;
-  const lo = tgt * 0.7, hi = tgt * 1.3;
-  const abs = Math.abs(flow);
-  const label = abs < lo ? "lento" : abs > hi ? "rápido" : "bien";
-  const color = label === "bien" ? "#4caf50" : label === "rápido" ? "var(--danger)" : "#ff9800";
-  return <span style={{ fontSize: 11, fontWeight: 700, color, marginLeft: 4 }}>{label}</span>;
-}
-
 function KettleIcon({ state }: { state: KettleData["state"] }) {
   const map: Record<KettleData["state"], string> = { heating: "🔥", hold: "✓", cooling: "↓", idle: "○" };
   return <span>{map[state]}</span>;
@@ -143,10 +139,59 @@ function SlideToStart({ onStart, disabled }: { onStart: () => void; disabled?: b
   );
 }
 
+// Stepper con botones + / - (ajuste al finalizar). decimals controla la precision.
+function Stepper({ label, value, onChange, step, decimals = 0, unit, min, prefix }: {
+  label: string; value: number; onChange: (v: number) => void;
+  step: number; decimals?: number; unit?: string; min?: number; prefix?: string;
+}) {
+  const pow = 10 ** decimals;
+  function bump(dir: number) {
+    const next = Math.round((value + dir * step) * pow) / pow;
+    onChange(min != null ? Math.max(min, next) : next);
+  }
+  const btn: React.CSSProperties = {
+    fontSize: 24, fontWeight: 800, width: 46, height: 46, borderRadius: 10, lineHeight: 1, padding: 0, flexShrink: 0,
+  };
+  return (
+    <div style={{ background: "var(--bg-sunken)", borderRadius: 12, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 6 }}>
+      <div style={{ fontSize: 11, color: "var(--fg-subtle)", fontWeight: 700 }}>{label}</div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+        <button className="btn ghost" style={btn} onClick={() => bump(-1)}>−</button>
+        <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "var(--font-mono)", textAlign: "center", flex: 1, minWidth: 0 }}>
+          {prefix}{value.toFixed(decimals)}{unit && <span style={{ fontSize: 12, color: "var(--fg-subtle)", fontWeight: 600 }}> {unit}</span>}
+        </div>
+        <button className="btn ghost" style={btn} onClick={() => bump(1)}>+</button>
+      </div>
+    </div>
+  );
+}
+
+// Barra de flow: punto centrado = en objetivo; izquierda = lento (por debajo); derecha = rapido.
+function FlowGauge({ flow, target }: { flow: number; target?: number }) {
+  const tgt = target && target > 0 ? target : 4;
+  const rel = (flow - tgt) / tgt;                       // -1..+1 dentro del rango normal
+  const pos = Math.max(0, Math.min(1, 0.5 + rel * 0.5)); // 0=lento, 0.5=centro, 1=rapido
+  const mag = Math.abs(rel);
+  const color = mag <= 0.3 ? "#4caf50" : mag <= 0.6 ? "#ff9800" : "var(--danger)";
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 5, alignItems: "center" }}>
+      <div style={{ position: "relative", width: "100%", height: 16, borderRadius: 8, background: "var(--bg-base)", overflow: "hidden" }}>
+        <div style={{ position: "absolute", top: 0, bottom: 0, left: "35%", width: "30%", background: "color-mix(in srgb, #4caf50 22%, transparent)" }} />
+        <div style={{ position: "absolute", top: 0, bottom: 0, left: "50%", width: 2, marginLeft: -1, background: "var(--fg-subtle)" }} />
+        <div style={{ position: "absolute", top: "50%", left: `${pos * 100}%`, width: 18, height: 18, borderRadius: "50%", background: color, transform: "translate(-50%,-50%)", transition: "left 0.15s, background 0.2s", boxShadow: "0 0 0 2px var(--bg-sunken)" }} />
+      </div>
+      <div style={{ fontSize: 14, fontFamily: "var(--font-mono)", fontWeight: 700, color }}>
+        {flow.toFixed(1)} <span style={{ fontSize: 11, color: "var(--fg-subtle)", fontWeight: 600 }}>g/s</span>
+        {target ? <span style={{ fontSize: 11, color: "var(--fg-subtle)", fontWeight: 600 }}> · obj {target}</span> : null}
+      </div>
+    </div>
+  );
+}
+
 // ── types ─────────────────────────────────────────────────────────────────────
 
 type ConnStatus = "off" | "connecting" | "on";
-type Phase = "home" | "scanning" | "bean" | "recipe" | "tweak" | "dose" | "ready" | "brewing";
+type Phase = "home" | "scanning" | "bean" | "recipe" | "tweak" | "dose" | "ready" | "brewing" | "finish";
 
 // ── main component ────────────────────────────────────────────────────────────
 
@@ -172,11 +217,13 @@ export function BrewView() {
   const [selectedBean, setSelectedBean] = useState<CoffeeBean | null>(null);
   const [selectedRecipe, setSelectedRecipe] = useState<CoffeeRecipe | null>(null);
   const [doseGrams, setDoseGrams] = useState<number | null>(null);
-  // ajuste "para la proxima" (mixto: campos de receta editables + notas)
-  const [tweakGrind, setTweakGrind] = useState("");
-  const [tweakDose, setTweakDose] = useState("");
-  const [tweakWater, setTweakWater] = useState("");
-  const [tweakTemp, setTweakTemp] = useState("");
+  // objetivo de dosis sugerido por el ultimo ajuste (se muestra en la pantalla de dosis; el usuario igual pesa)
+  const [doseTarget, setDoseTarget] = useState<number | null>(null);
+  // ajuste "para la proxima": steppers numericos (ratio/temp/dosis/molienda) + consumo + notas
+  const [tweakGrind, setTweakGrind] = useState(0);  // clicks K6
+  const [tweakRatio, setTweakRatio] = useState(15); // 1:ratio
+  const [tweakDose, setTweakDose] = useState(0);    // g
+  const [tweakTemp, setTweakTemp] = useState(0);    // C
   const [tweakNotes, setTweakNotes] = useState("");
   const [tweakConsume, setTweakConsume] = useState(""); // gramos a descontar del stock
   // pre-dosis: que variables del ultimo tweak aplicar (toggle por categoria)
@@ -210,6 +257,11 @@ export function BrewView() {
   // una sesion duplicada). savingRef es el guard sincrono; saving controla el overlay.
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
+
+  // flow suavizado (EMA) para mostrar y para la barra: el flow crudo de la balanza (~10Hz)
+  // salta mucho y hace parpadear el numero / la etiqueta. El crudo se sigue logueando tal cual.
+  const [flowSmooth, setFlowSmooth] = useState(0);
+  const flowSmoothRef = useRef(0);
 
   const [error, setError] = useState<string | null>(null);
 
@@ -255,7 +307,7 @@ export function BrewView() {
     if (Math.abs(flow) > 0.4) {
       flowConsecutiveRef.current++;
       if (flowConsecutiveRef.current >= 2) {
-        void sendStartTimer();
+        sendStartTimer().catch(() => { /* best-effort: la balanza puede rechazar el write */ });
         brewTimerStartRef.current = Date.now();
         setWaterDetected(true);
       }
@@ -301,6 +353,13 @@ export function BrewView() {
 
   // mantener un ref fresco de la balanza para el muestreo (sin depender de renders)
   useEffect(() => { scaleDataRef.current = scaleData; }, [scaleData]);
+
+  // EMA del flow para display/barra (alpha 0.25 ~ ventana de 4-5 muestras a 10Hz)
+  useEffect(() => {
+    const f = scaleData?.flow ?? 0;
+    flowSmoothRef.current = 0.25 * f + 0.75 * flowSmoothRef.current;
+    setFlowSmooth(flowSmoothRef.current);
+  }, [scaleData?.flow]);
 
   // ── datapoint sampling ~10Hz ─────────────────────────────────────────────────
   // El intervalo se crea UNA sola vez al arrancar el brew y lee de refs. Antes tenia
@@ -372,7 +431,9 @@ export function BrewView() {
   function confirmRecipe() {
     if (returnToReadyRef.current) { returnToReadyRef.current = false; setPhase("ready"); return; }
     // si el grano tiene un ultimo ajuste, ofrecer aplicarlo por variable antes de la dosis
-    setPhase(selectedBean?.lastTweak ? "tweak" : "dose");
+    if (selectedBean?.lastTweak) { setPhase("tweak"); return; }
+    setDoseTarget(null);
+    setPhase("dose");
   }
   function confirmTweak() {
     const t = selectedBean?.lastTweak;
@@ -384,7 +445,11 @@ export function BrewView() {
         next.ratio = Math.round((t.totalWaterGrams / t.doseGrams) * 100) / 100;
       }
       setSelectedRecipe(next);
-      if (applyDose && t.doseGrams != null) { setDoseGrams(t.doseGrams); setPhase("ready"); return; }
+      // #16: NO saltear la pantalla de dosis. La dosis del ajuste va como OBJETIVO sugerido;
+      // el usuario igual pesa el cafe en la balanza.
+      setDoseTarget(applyDose && t.doseGrams != null ? t.doseGrams : null);
+    } else {
+      setDoseTarget(null);
     }
     setPhase("dose");
   }
@@ -400,31 +465,39 @@ export function BrewView() {
     setWaterDetected(false); setBrewTimerMs(0);
     setBrewStopped(false); peakWeightRef.current = 0; removalConsecutiveRef.current = 0;
     datapointsRef.current = [];
-    // prefill del ajuste con lo que se uso (editable al terminar)
-    setTweakGrind(selectedRecipe.grindSize ?? "");
-    setTweakDose(String(doseGrams));
-    setTweakWater(String(Math.round(selectedRecipe.ratio * doseGrams)));
-    setTweakTemp(selectedRecipe.tempCelsius ? String(selectedRecipe.tempCelsius) : "");
+    // prefill del ajuste (steppers) con lo que se uso (editable al terminar)
+    setTweakGrind(parseGrindClicks(selectedRecipe.grindSize));
+    setTweakRatio(selectedRecipe.ratio);
+    setTweakDose(doseGrams);
+    setTweakTemp(selectedRecipe.tempCelsius || 0);
     setTweakConsume(String(doseGrams));
     // receta de cata: precargar el template de cata en las notas del cierre (se guarda en la sesion de brew)
     setTweakNotes(selectedRecipe.coffeeType === "cata" ? (selectedRecipe.notes ?? "") : "");
+    flowSmoothRef.current = 0; setFlowSmooth(0);
     if (kettleStatus === "on" && selectedRecipe.tempCelsius > 0) {
       try { await sendKettleTemp(selectedRecipe.tempCelsius); } catch { /* best-effort */ }
     }
-    await sendTare();
+    try { await sendTare(); } catch { /* best-effort */ }
     setPhase("brewing");
   }
 
-  async function finishBrew() {
-    // guard: el guardado tarda; sin esto un doble-tap creaba varias sesiones identicas.
+  // tocar "Finalizar brew": desconecta los dispositivos y pasa a la pantalla de ajuste/cata.
+  // NO guarda todavia (el brew queda congelado: brewTimerMs + datapointsRef intactos).
+  async function endBrew() {
     if (savingRef.current) return;
-    savingRef.current = true;
-    setSaving(true);
-    // soltar los dispositivos apenas se finaliza (no se usan mas en este brew).
     try { if (scaleConnRef.current) { await unsubscribeFromScale(); await bleDisconnect(); } } catch { /* best-effort */ }
     scaleConnRef.current = false; setScaleStatus("off"); setScaleData(null); setScaleName(null);
     try { if (kettleConnRef.current) { await unsubscribeFromKettle(); await kettleDisconnect(); } } catch { /* best-effort */ }
     kettleConnRef.current = false; setKettleStatus("off"); setKettleData(null); setKettleName(null);
+    setPhase("finish");
+  }
+
+  // tocar "Guardar" en la pantalla de ajuste: encola la sesion + el ajuste y vuelve al home.
+  async function saveBrew() {
+    // guard: el guardado tarda; sin esto un doble-tap creaba varias sesiones identicas.
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
 
     if (selectedRecipe && doseGrams != null) {
       const totalWater = selectedRecipe.ratio * doseGrams;
@@ -436,8 +509,7 @@ export function BrewView() {
           datapoints: datapointsRef.current,
         });
       } catch { /* best-effort */ }
-      // guardar el ajuste en el grano (mixto: campos editados + notas).
-      // salta la proxima vez que se levante este cafe.
+      // guardar el ajuste en el grano (steppers + notas). Salta la proxima vez que se levante este cafe.
       if (selectedBean) {
         const cupping = selectedRecipe.coffeeType === "cupping";
         if (cupping) {
@@ -455,16 +527,13 @@ export function BrewView() {
           }
           if (doseGrams > 0) { try { await repo.consumeCoffeeBean(selectedBean.id, doseGrams); } catch { /* best-effort */ } }
         } else {
-          const doseN = parseFloat(tweakDose);
-          const waterN = parseFloat(tweakWater);
-          const tempN = parseFloat(tweakTemp);
           try {
             await repo.patchCoffeeBean(selectedBean.id, {
               lastTweak: {
-                grindSize: tweakGrind.trim() || undefined,
-                doseGrams: Number.isFinite(doseN) ? doseN : doseGrams,
-                totalWaterGrams: Number.isFinite(waterN) ? waterN : totalWater,
-                tempCelsius: Number.isFinite(tempN) ? tempN : (selectedRecipe.tempCelsius || undefined),
+                grindSize: tweakGrind > 0 ? String(tweakGrind) : undefined,
+                doseGrams: tweakDose > 0 ? tweakDose : doseGrams,
+                totalWaterGrams: Math.round(tweakRatio * (tweakDose > 0 ? tweakDose : doseGrams)),
+                tempCelsius: tweakTemp > 0 ? tweakTemp : (selectedRecipe.tempCelsius || undefined),
                 notes: tweakNotes.trim(),
                 recipeId: selectedRecipe.id,
                 at: new Date().toISOString(),
@@ -481,7 +550,8 @@ export function BrewView() {
     }
     datapointsRef.current = []; setWaterDetected(false); setBrewTimerMs(0);
     setBrewStopped(false); peakWeightRef.current = 0; removalConsecutiveRef.current = 0;
-    setTweakNotes(""); setTweakGrind(""); setTweakDose(""); setTweakWater(""); setTweakTemp(""); setTweakConsume("");
+    setTweakNotes(""); setTweakGrind(0); setTweakDose(0); setTweakRatio(15); setTweakTemp(0); setTweakConsume("");
+    setDoseTarget(null);
     setCupFragancia(""); setCupSabor(""); setCupAcidez(""); setCupDulzor(""); setCupCuerpo(""); setCupDefectos(""); setCupNota("");
     setPhase("home");
     setSaving(false);
@@ -498,15 +568,16 @@ export function BrewView() {
   const nextStep = steps[currentIdx + 1] ?? null;
   const totalWater = selectedRecipe && doseGrams ? selectedRecipe.ratio * doseGrams : 0;
 
-  // Per-step pour progress (not cumulative)
+  // Pesos ACUMULADOS (la balanza lee el peso total). Objetivo del paso = agua de pasos previos
+  // + agua de este paso, para que el numero coincida con lo que marca la balanza.
   const dose = doseGrams ?? 0;
-  const cumulativeTarget = currentStep ? resolvedStepTarget(currentStep, steps, currentIdx, dose, totalWater) : null;
+  const thisStepAmount = currentStep ? resolvedStepTarget(currentStep, steps, currentIdx, dose, totalWater) : null;
   const prevTarget = currentStep ? prevPourCumulative(steps, currentIdx, dose, totalWater) : 0;
-  const thisStepAmount = cumulativeTarget; // per-step water (not minus prev — prevTarget is the scale offset)
   const currentWeight = scaleData?.weight ?? 0;
-  const stepPoured = Math.max(0, currentWeight - prevTarget);
-  const pourPct = thisStepAmount != null && thisStepAmount > 0
-    ? Math.min((stepPoured / thisStepAmount) * 100, 100) : 0;
+  const isPour = currentStep?.type === "pour";
+  const stepCumTarget = isPour ? prevTarget + (thisStepAmount ?? 0) : prevTarget;
+  const cumPct = stepCumTarget > 0 ? Math.min((currentWeight / stepCumTarget) * 100, 100) : 0;
+  const reachedTarget = isPour && stepCumTarget > 0 && currentWeight >= stepCumTarget - 1;
 
   // Per-step time (seconds): elapsed within the current step / its duration (timeSeconds).
   const stepDur = currentStep ? Math.max(0, Math.round(currentStep.timeSeconds || 0)) : null;
@@ -606,7 +677,7 @@ export function BrewView() {
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
               {[
                 { label: "Peso", val: scaleData.weight?.toFixed(1), unit: scaleData.unit },
-                { label: "Flow", val: scaleData.flow != null ? Math.abs(scaleData.flow).toFixed(1) : "—", unit: "g/s" },
+                { label: "Flow", val: scaleData.flow != null ? Math.abs(flowSmooth).toFixed(1) : "—", unit: "g/s" },
                 { label: "Timer", val: scaleData.timer_ms != null ? fmtTimer(scaleData.timer_ms) : "—:——", unit: "" },
               ].map(({ label, val, unit }) => (
                 <div key={label} style={{ background: "var(--bg-sunken)", borderRadius: 10, padding: "14px 10px", textAlign: "center" }}>
@@ -619,7 +690,7 @@ export function BrewView() {
           )}
 
           {scaleStatus === "on" && (
-            <button className="btn ghost" style={{ fontSize: 14, padding: "10px" }} onClick={sendTare}>
+            <button className="btn ghost" style={{ fontSize: 14, padding: "10px" }} onClick={() => { void sendTare().catch(() => undefined); }}>
               Tara
             </button>
           )}
@@ -782,6 +853,12 @@ export function BrewView() {
             Poné el recipiente → Tara → agregá el café molido.
           </div>
 
+          {doseTarget != null && (
+            <div style={{ fontSize: 13, fontWeight: 700, color: "var(--accent, #4caf50)", textAlign: "center" }}>
+              Objetivo del último ajuste: {doseTarget.toFixed(1)} g
+            </div>
+          )}
+
           <div style={{ background: "var(--bg-sunken)", borderRadius: 14, padding: "24px", textAlign: "center", flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", gap: 8 }}>
             <div style={{ fontSize: 72, fontWeight: 800, fontFamily: "var(--font-mono)", lineHeight: 1 }}>
               {scaleData?.weight != null ? scaleData.weight.toFixed(1) : "—"}
@@ -794,7 +871,7 @@ export function BrewView() {
             )}
           </div>
 
-          <button className="btn ghost" style={{ fontSize: 15, padding: "14px", borderRadius: 10 }} onClick={sendTare}>
+          <button className="btn ghost" style={{ fontSize: 15, padding: "14px", borderRadius: 10 }} onClick={() => { void sendTare().catch(() => undefined); }}>
             Tara
           </button>
 
@@ -934,37 +1011,50 @@ export function BrewView() {
           {/* current step */}
           {waterDetected && currentStep && (
             <>
-              <div style={{ fontSize: 12, color: "var(--fg-subtle)" }}>
-                Paso {currentIdx + 1} de {steps.length}
+              {/* paso X de N + tipo */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 12, color: "var(--fg-subtle)" }}>Paso {currentIdx + 1} de {steps.length}</span>
+                <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: isPour ? "var(--accent, #4caf50)" : "var(--fg-subtle)" }}>
+                  {isPour ? "Vertida" : "Acción"}
+                </span>
               </div>
-              <div style={{ background: "var(--bg-sunken)", borderRadius: 12, padding: "16px", display: "flex", flexDirection: "column", gap: 10 }}>
-                <div style={{ display: "flex", justifyContent: "center" }}>
-                  <span style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: currentStep.type === "pour" ? "var(--accent, #4caf50)" : "var(--fg-subtle)" }}>
-                    {currentStep.type === "pour" ? "Vertida" : "Acción"}
-                  </span>
-                </div>
-                {/* what to do */}
-                <div style={{ fontSize: 18, fontWeight: 700, lineHeight: 1.3, textAlign: "center" }}>
-                  {currentStep.description || (currentStep.type === "pour" ? "Verter" : "Esperar")}
-                </div>
-                {currentStep.type === "pour" && thisStepAmount != null && (
-                  <>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13 }}>
-                      <span style={{ color: "var(--fg-muted)" }}>{stepPoured.toFixed(1)} g</span>
-                      <span style={{ fontWeight: 700 }}>{thisStepAmount.toFixed(0)} g</span>
-                    </div>
-                    <div style={{ background: "var(--bg-base)", borderRadius: 6, height: 10, overflow: "hidden" }}>
-                      <div style={{ height: "100%", borderRadius: 6, background: "var(--accent, #4caf50)", width: `${pourPct}%`, transition: "width 0.2s" }} />
-                    </div>
-                    {scaleData?.flow != null && (
-                      <div style={{ fontSize: 13, color: "var(--fg-muted)" }}>
-                        Flow: {Math.abs(scaleData.flow).toFixed(1)} g/s
-                        <FlowBand flow={scaleData.flow} target={currentStep.flowTarget} />
+
+              {/* peso ACUMULADO: lo que voy (grande) + objetivo del paso (derecha) */}
+              {isPour ? (
+                <>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 12 }}>
+                    <div>
+                      <div style={{ fontSize: 11, color: "var(--fg-subtle)", fontWeight: 700, marginBottom: 2 }}>VAS</div>
+                      <div style={{ fontSize: 58, fontWeight: 800, fontFamily: "var(--font-mono)", lineHeight: 0.95, color: reachedTarget ? "#4caf50" : "var(--fg)" }}>
+                        {currentWeight.toFixed(0)}<span style={{ fontSize: 20, color: "var(--fg-subtle)", fontWeight: 600 }}> g</span>
                       </div>
-                    )}
-                  </>
-                )}
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: 11, color: "var(--fg-subtle)", fontWeight: 700, marginBottom: 2 }}>OBJETIVO</div>
+                      <div style={{ fontSize: 40, fontWeight: 800, fontFamily: "var(--font-mono)", lineHeight: 0.95 }}>
+                        {stepCumTarget.toFixed(0)}<span style={{ fontSize: 16, color: "var(--fg-subtle)", fontWeight: 600 }}> g</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ background: "var(--bg-sunken)", borderRadius: 6, height: 12, overflow: "hidden" }}>
+                    <div style={{ height: "100%", borderRadius: 6, background: reachedTarget ? "#4caf50" : "var(--accent, #4caf50)", width: `${cumPct}%`, transition: "width 0.2s" }} />
+                  </div>
+                </>
+              ) : (
+                <div style={{ textAlign: "center", fontSize: 14, color: "var(--fg-muted)" }}>
+                  Agua en la balanza: <b style={{ fontFamily: "var(--font-mono)" }}>{currentWeight.toFixed(0)} g</b>
+                </div>
+              )}
+
+              {/* texto del paso, grande y legible */}
+              <div style={{ fontSize: 22, fontWeight: 700, lineHeight: 1.35, textAlign: "center", padding: "2px 0" }}>
+                {currentStep.description || (isPour ? "Verter" : "Esperar")}
               </div>
+
+              {/* barra de flow (solo vertidos) */}
+              {isPour && scaleData?.flow != null && (
+                <FlowGauge flow={Math.max(0, flowSmooth)} target={currentStep.flowTarget} />
+              )}
 
               {nextStep && (
                 <div style={{ background: "var(--bg-base)", borderRadius: 10, padding: "12px 14px", opacity: 0.7, display: "flex", justifyContent: "space-between" }}>
@@ -982,80 +1072,101 @@ export function BrewView() {
           )}
 
           <div style={{ flex: 1 }} />
-          {selectedBean && !isCupping && (
-            <div style={{ background: "var(--bg-sunken)", borderRadius: 12, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: "var(--fg-subtle)" }}>
-                Ajuste para la próxima (sale al levantar este café)
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                <label style={{ fontSize: 11, color: "var(--fg-muted)", display: "flex", flexDirection: "column", gap: 2 }}>
-                  Molienda
-                  <input className="input" value={tweakGrind} placeholder="ej. 18 / medio-fino"
-                    onChange={(e) => setTweakGrind(e.target.value)} />
-                </label>
-                <label style={{ fontSize: 11, color: "var(--fg-muted)", display: "flex", flexDirection: "column", gap: 2 }}>
-                  Dosis (g)
-                  <input className="input" type="number" inputMode="decimal" value={tweakDose}
-                    onChange={(e) => setTweakDose(e.target.value)} />
-                </label>
-                <label style={{ fontSize: 11, color: "var(--fg-muted)", display: "flex", flexDirection: "column", gap: 2 }}>
-                  Agua (g)
-                  <input className="input" type="number" inputMode="decimal" value={tweakWater}
-                    onChange={(e) => setTweakWater(e.target.value)} />
-                </label>
-                <label style={{ fontSize: 11, color: "var(--fg-muted)", display: "flex", flexDirection: "column", gap: 2 }}>
-                  Temp (°C)
-                  <input className="input" type="number" inputMode="decimal" value={tweakTemp}
-                    onChange={(e) => setTweakTemp(e.target.value)} />
-                </label>
-              </div>
-              <label style={{ fontSize: 11, color: "var(--fg-muted)", display: "flex", flexDirection: "column", gap: 2 }}>
-                Café usado (g) — se descuenta del stock
-                <input className="input" type="number" inputMode="decimal" value={tweakConsume}
-                  onChange={(e) => setTweakConsume(e.target.value)} />
-              </label>
-              <textarea
-                className="input"
-                value={tweakNotes}
-                rows={2}
-                style={{ resize: "vertical", fontSize: 13 }}
-                placeholder="Notas (ej. quedó ácido, moler más fino la próxima)…"
-                onChange={(e) => setTweakNotes(e.target.value)}
-              />
-            </div>
-          )}
-          {selectedBean && isCupping && (
-            <div style={{ background: "var(--bg-sunken)", borderRadius: 12, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: "var(--accent, #4caf50)" }}>
-                Cata inicial — notas a buscar (se guarda en el café si está vacía)
-              </div>
-              {(() => {
-                const fields: Array<[string, string, (v: string) => void, string]> = [
-                  ["Fragancia / aroma", cupFragancia, setCupFragancia, "floral, frutal, dulce, tostado..."],
-                  ["Sabores (notas a buscar)", cupSabor, setCupSabor, "durazno, panela, te negro..."],
-                  ["Acidez", cupAcidez, setCupAcidez, "citrica, brillante, media..."],
-                  ["Dulzor", cupDulzor, setCupDulzor, "alto, a panela..."],
-                  ["Cuerpo", cupCuerpo, setCupCuerpo, "liviano, sedoso, jugoso..."],
-                  ["Defectos", cupDefectos, setCupDefectos, "ninguno / astringente / fermento..."],
-                ];
-                return fields.map(([label, val, setter, ph]) => (
-                  <label key={label} style={{ fontSize: 11, color: "var(--fg-muted)", display: "flex", flexDirection: "column", gap: 2 }}>
-                    {label}
-                    <input className="input" value={val} placeholder={ph} onChange={(e) => setter(e.target.value)} />
-                  </label>
-                ));
-              })()}
-              <label style={{ fontSize: 11, color: "var(--fg-muted)", display: "flex", flexDirection: "column", gap: 2 }}>
-                Nota global (1-10)
-                <input className="input" type="number" inputMode="decimal" value={cupNota}
-                  onChange={(e) => setCupNota(e.target.value)} />
-              </label>
-            </div>
-          )}
-          <button className="btn ghost" style={{ fontSize: 14, padding: "12px", borderRadius: 10, opacity: saving ? 0.6 : 1 }}
-            onClick={finishBrew} disabled={saving}>
-            {saving ? "Guardando…" : (isCupping ? "Guardar cata inicial" : "Finalizar brew")}
+          <button className="btn primary" style={{ fontSize: 16, fontWeight: 800, padding: "14px", borderRadius: 12 }}
+            onClick={endBrew}>
+            {isCupping ? "Terminar cata" : "Finalizar brew"}
           </button>
+        </div>
+      )}
+
+      {/* ── FINISH (ajuste para la proxima / cata) ── */}
+      {phase === "finish" && (
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+          <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <button className="btn ghost" style={{ fontSize: 12, padding: "6px 10px" }}
+                onClick={() => setPhase("brewing")}>← Volver</button>
+              <span style={{ fontSize: 16, fontWeight: 700 }}>{isCupping ? "Cata inicial" : "Ajuste para la próxima"}</span>
+            </div>
+
+            {/* resumen del brew */}
+            <div style={{ display: "flex", gap: 8 }}>
+              <div style={{ flex: 1, background: "var(--bg-sunken)", borderRadius: 10, padding: "10px 12px", textAlign: "center" }}>
+                <div style={{ fontSize: 10, color: "var(--fg-subtle)" }}>Tiempo</div>
+                <div style={{ fontSize: 20, fontWeight: 800, fontFamily: "var(--font-mono)" }}>{fmtTimer(brewTimerMs)}</div>
+              </div>
+              <div style={{ flex: 1, background: "var(--bg-sunken)", borderRadius: 10, padding: "10px 12px", textAlign: "center" }}>
+                <div style={{ fontSize: 10, color: "var(--fg-subtle)" }}>Agua</div>
+                <div style={{ fontSize: 20, fontWeight: 800, fontFamily: "var(--font-mono)" }}>{totalWater.toFixed(0)} g</div>
+              </div>
+            </div>
+
+            {/* ajuste con steppers (no-cata, con grano) */}
+            {!isCupping && selectedBean && (
+              <>
+                <div style={{ fontSize: 12, color: "var(--fg-subtle)" }}>
+                  Tocá + / − para dejar el ajuste que sale la próxima vez que levantes este café.
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  <Stepper label="Ratio (1:x)" prefix="1:" value={tweakRatio} step={0.1} decimals={1} min={1} onChange={setTweakRatio} />
+                  <Stepper label="Temp" unit="°C" value={tweakTemp} step={1} decimals={0} min={0} onChange={setTweakTemp} />
+                  <Stepper label="Dosis" unit="g" value={tweakDose} step={0.1} decimals={1} min={0} onChange={setTweakDose} />
+                  <Stepper label="Molienda (K6)" unit="clicks" value={tweakGrind} step={1} decimals={0} min={0} onChange={setTweakGrind} />
+                </div>
+                <label style={{ fontSize: 11, color: "var(--fg-muted)", display: "flex", flexDirection: "column", gap: 2 }}>
+                  Café usado (g) — se descuenta del stock
+                  <input className="input" type="number" inputMode="decimal" value={tweakConsume}
+                    onChange={(e) => setTweakConsume(e.target.value)} />
+                </label>
+                <textarea className="input" value={tweakNotes} rows={3} style={{ resize: "vertical", fontSize: 13 }}
+                  placeholder="Notas (ej. quedó ácido, moler más fino la próxima)…"
+                  onChange={(e) => setTweakNotes(e.target.value)} />
+              </>
+            )}
+
+            {/* sin grano: nada para ajustar */}
+            {!isCupping && !selectedBean && (
+              <div style={{ fontSize: 13, color: "var(--fg-muted)" }}>
+                Sin café especificado: se guarda la sesión sin ajuste.
+              </div>
+            )}
+
+            {/* cata (receta cupping con grano) */}
+            {isCupping && selectedBean && (
+              <div style={{ background: "var(--bg-sunken)", borderRadius: 12, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "var(--accent, #4caf50)" }}>
+                  Cata inicial — notas a buscar (se guarda en el café si está vacía)
+                </div>
+                {(() => {
+                  const fields: Array<[string, string, (v: string) => void, string]> = [
+                    ["Fragancia / aroma", cupFragancia, setCupFragancia, "floral, frutal, dulce, tostado..."],
+                    ["Sabores (notas a buscar)", cupSabor, setCupSabor, "durazno, panela, te negro..."],
+                    ["Acidez", cupAcidez, setCupAcidez, "citrica, brillante, media..."],
+                    ["Dulzor", cupDulzor, setCupDulzor, "alto, a panela..."],
+                    ["Cuerpo", cupCuerpo, setCupCuerpo, "liviano, sedoso, jugoso..."],
+                    ["Defectos", cupDefectos, setCupDefectos, "ninguno / astringente / fermento..."],
+                  ];
+                  return fields.map(([label, val, setter, ph]) => (
+                    <label key={label} style={{ fontSize: 11, color: "var(--fg-muted)", display: "flex", flexDirection: "column", gap: 2 }}>
+                      {label}
+                      <input className="input" value={val} placeholder={ph} onChange={(e) => setter(e.target.value)} />
+                    </label>
+                  ));
+                })()}
+                <label style={{ fontSize: 11, color: "var(--fg-muted)", display: "flex", flexDirection: "column", gap: 2 }}>
+                  Nota global (1-10)
+                  <input className="input" type="number" inputMode="decimal" value={cupNota}
+                    onChange={(e) => setCupNota(e.target.value)} />
+                </label>
+              </div>
+            )}
+          </div>
+          <div style={{ padding: 16, flexShrink: 0, borderTop: "1px solid var(--border-subtle)", background: "var(--bg)" }}>
+            <button className="btn primary" style={{ width: "100%", fontSize: 16, fontWeight: 800, padding: "14px", borderRadius: 12, opacity: saving ? 0.6 : 1 }}
+              onClick={saveBrew} disabled={saving}>
+              {saving ? "Guardando…" : (isCupping ? "Guardar cata" : "Guardar")}
+            </button>
+          </div>
         </div>
       )}
     </div>
