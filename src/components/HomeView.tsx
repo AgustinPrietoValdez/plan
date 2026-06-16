@@ -39,7 +39,8 @@ export function HomeView() {
   const recipes = useRecipes().data ?? [];
   const recipeIngredients = useRecipeIngredients().data ?? [];
   const ingredients = useIngredients().data ?? [];
-  const coffeeBeans = useCoffeeBeans().data ?? [];
+  // solo granos activos: los terminados (finishedAt) ya no se tienen, no van en el Home
+  const coffeeBeans = (useCoffeeBeans().data ?? []).filter((b) => !b.finishedAt && !b.deletedAt);
 
   // Project → color dot
   const catByProjectId = new Map(
