@@ -518,7 +518,6 @@ function BrewOverlayChart({
 
 function BrewHistorialTab() {
   const { data: sessions = [] } = useBrewSessions();
-  const { data: allRecipes = [] } = useCoffeeRecipes();
   const deleteSession = useDeleteBrewSession();
   const [viewingSessions, setViewingSessions] = useState<BrewSession[] | null>(null);
   const [chartSessionIds, setChartSessionIds] = useState<string[]>([]);
@@ -533,16 +532,12 @@ function BrewHistorialTab() {
     setChartData(Object.fromEntries(entries));
   }
 
-  // group sessions by recipe. Las recetas especificas por grano comparten el nombre de la
-  // receta BASE (ej. dos "Tetsu 4:6" para distintos granos = dos recipe_id), asi que agrupamos
-  // por la receta base para que la misma receta no aparezca repetida en el historial.
-  const baseRecipeKey = (rid: string | null): string => {
-    if (!rid) return "__none__";
-    const r = allRecipes.find((x) => x.id === rid);
-    return r?.baseRecipeId ?? rid;
-  };
+  // group sessions by recipe NAME. Las recetas especificas por grano comparten el nombre de la
+  // receta base (ej. dos "Tetsu 4:6" para distintos granos = dos recipe_id distintos). Agrupar por
+  // NOMBRE garantiza que la misma receta no aparezca repetida en el historial, sin depender de
+  // resolver la receta base via otra query.
   const byRecipe = sessions.reduce<Record<string, BrewSession[]>>((acc, s) => {
-    const key = baseRecipeKey(s.recipeId);
+    const key = (s.recipeName || "").trim() || "__none__";
     if (!acc[key]) acc[key] = [];
     acc[key].push(s);
     return acc;
