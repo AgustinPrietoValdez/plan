@@ -17,6 +17,20 @@
   flex-direction: column;
   overflow: hidden;
 }
+/* Scrollable middle: header + search stay pinned at top, footer at bottom.
+   Scrollbar hidden (scroll still works via wheel/trackpad). */
+.sidebar-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* old Edge/IE */
+}
+.sidebar-scroll::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
 .sidebar-head {
   padding: 14px 14px 10px;
   display: flex; align-items: center; gap: 8px;

@@ -1,22 +1,54 @@
-import { useEffect, useState } from "react";
-import { colorsForCategory } from "../lib/categoryColor";
+import { useEffect, useState, type ReactNode } from "react";
+import { colorsForHue } from "../lib/categoryColor";
 import { signOut, useSession } from "../lib/auth";
 import { onSyncStatus, type SyncStatus } from "../lib/sync";
-import { todayYmd } from "../lib/date";
 import { useApp } from "../lib/store";
-import { useCategories, useProjects, useTasks } from "../lib/queries";
-import { IChevD, ICal, ICheck, ICircle, IHabit, IBolt, IInbox, IList, IPlus, IRecurring, ISearch } from "./icons";
+import { AREA_OF_VIEW, AREA_DEFAULT_VIEW, type Area } from "../lib/store";
+import {
+  useCategories,
+  useProjects,
+  useTasks,
+  useExpenseCategories,
+  useIngredientCategories,
+  useCoffeeRecipes,
+} from "../lib/queries";
+import { IBolt, ICal, IList, IPlus, ISearch } from "./icons";
 import { MiniMonth } from "./MiniMonth";
 
 const SIDEBAR_CATEGORIES_LIMIT = 5;
+
+const emojiIcon = { width: 14, textAlign: "center", fontSize: 13, lineHeight: 1 } as const;
+const krIcon = {
+  width: 14,
+  textAlign: "center",
+  fontWeight: 700,
+  fontSize: 13,
+  lineHeight: 1,
+  fontFamily: "var(--font-mono)",
+} as const;
+
+/** The 5 top-level areas, in sidebar order. */
+const AREAS: { area: Area; label: string; icon: ReactNode }[] = [
+  { area: "home", label: "Home", icon: <span style={emojiIcon}>🏠</span> },
+  { area: "calendario", label: "Calendario", icon: <ICal size={14} /> },
+  { area: "presupuesto", label: "Presupuesto", icon: <span style={krIcon}>kr</span> },
+  { area: "compras", label: "Compras", icon: <IList size={14} /> },
+  { area: "cafe", label: "Café", icon: <span style={emojiIcon}>☕</span> },
+];
 
 export function Sidebar() {
   const tasksQ = useTasks();
   const projectsQ = useProjects();
   const categoriesQ = useCategories();
+  const expenseCategoriesQ = useExpenseCategories();
+  const ingredientCategoriesQ = useIngredientCategories();
+  const coffeeRecipesQ = useCoffeeRecipes();
   const tasks = tasksQ.data ?? [];
   const projects = projectsQ.data ?? [];
   const categories = categoriesQ.data ?? [];
+  const expenseCategories = expenseCategoriesQ.data ?? [];
+  const ingredientCategories = ingredientCategoriesQ.data ?? [];
+  const coffeeRecipes = coffeeRecipesQ.data ?? [];
 
   const {
     view,
@@ -31,27 +63,12 @@ export function Sidebar() {
     setFilterCategory,
     openCategoryManager,
     openProjectManager,
+    openExpenseCategoryManager,
   } = useApp();
 
-  const today = todayYmd();
-  const inboxCount = tasks.filter((t) => t.day === null && !t.done).length;
-  const todayCount = tasks.filter((t) => t.day === today && !t.done).length;
-  const upcomingCount = tasks.filter(
-    (t) => t.day !== null && t.day > today && !t.done,
-  ).length;
-  const doneCount = tasks.filter((t) => t.done).length;
-  const recurringCount = tasks.filter((t) => t.recurrence !== null && !t.done).length;
-  const habitCount = new Set(
-    tasks
-      .filter((t) => t.isHabit && !t.deletedAt)
-      .map((t) => t.recurrenceParentId ?? t.id),
-  ).size;
-
-  const noFilter = !filterCategoryId && view !== "project";
-
-  const visibleCategories = categories
-    .filter((c) => !c.archived)
-    .slice(0, SIDEBAR_CATEGORIES_LIMIT);
+  // Which area's button is highlighted. Automations lives in the "home" area but
+  // is reached from the header gear, so it lights up neither Home nor anything.
+  const activeArea: Area | null = view === "automations" ? null : AREA_OF_VIEW[view];
 
   return (
     <aside className="sidebar">
@@ -61,8 +78,12 @@ export function Sidebar() {
           <span>Plan</span>
         </div>
         <div style={{ flex: 1 }} />
-        <button className="icon-btn" title="Settings">
-          <IChevD size={14} />
+        <button
+          className={`icon-btn ${view === "automations" ? "active" : ""}`}
+          title="Automatizaciones"
+          onClick={() => setView("automations")}
+        >
+          <IBolt size={14} />
         </button>
       </div>
 
@@ -72,82 +93,19 @@ export function Sidebar() {
         <span className="kbd">⌘K</span>
       </div>
 
+      <div className="sidebar-scroll">
       <div className="sidebar-section" style={{ paddingTop: 8 }}>
         <div className="nav-list">
-          <div
-            className={`nav-item ${view === "home" ? "active" : ""}`}
-            onClick={() => setView("home")}
-            title="Home"
-          >
-            <span style={{ width: 14, textAlign: "center", fontSize: 13, lineHeight: 1 }}>🏠</span> Home
-          </div>
-          <div
-            className={`nav-item ${noFilter ? "active" : ""}`}
-            onClick={() => {
-              setFilterCategory(null);
-              if (view === "project") setView("month");
-            }}
-          >
-            <IInbox size={14} /> Inbox <span className="count">{inboxCount}</span>
-          </div>
-          <div
-            className="nav-item"
-            onClick={() => {
-              setSelectedDay(today);
-              setViewDate(today);
-              setView("day");
-            }}
-          >
-            <ICircle size={14} /> Today <span className="count">{todayCount}</span>
-          </div>
-          <div className="nav-item" onClick={() => setView("week")}>
-            <ICal size={14} /> Upcoming <span className="count">{upcomingCount}</span>
-          </div>
-          <div className="nav-item">
-            <ICheck size={14} /> Completed <span className="count">{doneCount}</span>
-          </div>
-          <div
-            className={`nav-item ${view === "recurring" ? "active" : ""}`}
-            onClick={() => setView("recurring")}
-          >
-            <IRecurring size={14} /> Recurring <span className="count">{recurringCount}</span>
-          </div>
-          <div
-            className={`nav-item ${view === "habits" ? "active" : ""}`}
-            onClick={() => setView("habits")}
-            title="Habits"
-          >
-            <IHabit size={14} /> Habits <span className="count">{habitCount}</span>
-          </div>
-          <div
-            className={`nav-item ${view === "budget" ? "active" : ""}`}
-            onClick={() => setView("budget")}
-            title="Budget"
-          >
-            <span style={{ width: 14, textAlign: "center", fontWeight: 700, fontSize: 13, lineHeight: 1, fontFamily: "var(--font-mono)" }}>kr</span>
-            Budget
-          </div>
-          <div
-            className={`nav-item ${view === "compras" ? "active" : ""}`}
-            onClick={() => setView("compras")}
-            title="Compras"
-          >
-            <IList size={14} /> Compras
-          </div>
-          <div
-            className={`nav-item ${view === "cafe" ? "active" : ""}`}
-            onClick={() => setView("cafe")}
-            title="Cafe"
-          >
-            <span style={{ width: 14, textAlign: "center", fontSize: 13, lineHeight: 1 }}>☕</span> Café
-          </div>
-          <div
-            className={`nav-item ${view === "automations" ? "active" : ""}`}
-            onClick={() => setView("automations")}
-            title="Automatizaciones"
-          >
-            <IBolt size={14} /> Automatizaciones
-          </div>
+          {AREAS.map((a) => (
+            <div
+              key={a.area}
+              className={`nav-item ${activeArea === a.area ? "active" : ""}`}
+              onClick={() => setView(AREA_DEFAULT_VIEW[a.area])}
+              title={a.label}
+            >
+              {a.icon} {a.label}
+            </div>
+          ))}
         </div>
       </div>
 
@@ -159,82 +117,150 @@ export function Sidebar() {
         tasks={tasks}
       />
 
-      <div className="sidebar-section">
-        <div className="sidebar-section-title">
-          Projects
-          <button className="add" title="Manage projects" onClick={openProjectManager}>
-            <IPlus size={11} />
-          </button>
-        </div>
-      </div>
-      <div className="nav-list">
-        {projects.filter((p) => !p.archived).map((p) => {
-          const cat = categories.find((c) => c.id === p.categoryId);
-          const colors = cat ? colorsForCategory(cat) : null;
-          const c = tasks.filter((t) => t.projectId === p.id && !t.done).length;
-          const active = view === "project" && viewProjectId === p.id;
-          return (
-            <div
-              key={p.id}
-              className={`nav-item ${active ? "active" : ""}`}
-              onClick={() => {
-                setViewProject(p.id);
-                setView("project");
-                setFilterCategory(null);
-              }}
-            >
-              <span
-                className="dot"
-                style={{ background: colors?.bg ?? "var(--bg-sunken)" }}
-              />
-              <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {p.name}
-              </span>
-              <span className="count">{c}</span>
+      {/* ---- Contextual lists for the current area ---- */}
+
+      {activeArea === "calendario" && (
+        <>
+          <div className="sidebar-section">
+            <div className="sidebar-section-title">
+              Projects
+              <button className="add" title="Manage projects" onClick={openProjectManager}>
+                <IPlus size={11} />
+              </button>
             </div>
-          );
-        })}
+          </div>
+          <div className="nav-list">
+            {projects
+              .filter((p) => !p.archived)
+              .map((p) => {
+                const cat = categories.find((c) => c.id === p.categoryId);
+                const colors = cat ? colorsForHue(cat.hue) : null;
+                const c = tasks.filter((t) => t.projectId === p.id && !t.done).length;
+                const active = view === "project" && viewProjectId === p.id;
+                return (
+                  <div
+                    key={p.id}
+                    className={`nav-item ${active ? "active" : ""}`}
+                    onClick={() => {
+                      setViewProject(p.id);
+                      setView("project");
+                      setFilterCategory(null);
+                    }}
+                  >
+                    <span className="dot" style={{ background: colors?.bg ?? "var(--bg-sunken)" }} />
+                    <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {p.name}
+                    </span>
+                    <span className="count">{c}</span>
+                  </div>
+                );
+              })}
+          </div>
+
+          <div className="sidebar-section" style={{ marginTop: 4 }}>
+            <div className="sidebar-section-title">
+              Categories
+              <button className="add" title="Manage categories" onClick={openCategoryManager}>
+                <IPlus size={11} />
+              </button>
+            </div>
+          </div>
+          <div className="nav-list" style={{ paddingBottom: 12 }}>
+            {categories
+              .filter((c) => !c.archived)
+              .slice(0, SIDEBAR_CATEGORIES_LIMIT)
+              .map((c) => {
+                const colors = colorsForHue(c.hue);
+                const n = tasks.filter((t) => t.categoryId === c.id && !t.done).length;
+                return (
+                  <div
+                    key={c.id}
+                    className={`nav-item ${filterCategoryId === c.id ? "active" : ""}`}
+                    onClick={() => setFilterCategory(filterCategoryId === c.id ? null : c.id)}
+                  >
+                    <span className="dot" style={{ background: colors.bg }} />
+                    <span style={{ flex: 1 }}>{c.name}</span>
+                    <span className="count">{n}</span>
+                  </div>
+                );
+              })}
+            {categories.filter((c) => !c.archived).length > SIDEBAR_CATEGORIES_LIMIT && (
+              <div
+                className="nav-item"
+                style={{ color: "var(--fg-subtle)", fontSize: 11.5 }}
+                onClick={openCategoryManager}
+              >
+                <span style={{ width: 8, flex: "0 0 auto" }} />
+                <span style={{ flex: 1 }}>
+                  + {categories.filter((c) => !c.archived).length - SIDEBAR_CATEGORIES_LIMIT} more
+                </span>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {activeArea === "presupuesto" && (
+        <>
+          <div className="sidebar-section">
+            <div className="sidebar-section-title">
+              Categorías de gasto
+              <button className="add" title="Gestionar categorías de gasto" onClick={openExpenseCategoryManager}>
+                <IPlus size={11} />
+              </button>
+            </div>
+          </div>
+          <div className="nav-list" style={{ paddingBottom: 12 }}>
+            {expenseCategories
+              .filter((c) => !c.archived)
+              .map((c) => (
+                <div key={c.id} className="nav-item" style={{ cursor: "default" }}>
+                  <span className="dot" style={{ background: colorsForHue(c.hue).bg }} />
+                  <span style={{ flex: 1 }}>{c.name}</span>
+                </div>
+              ))}
+          </div>
+        </>
+      )}
+
+      {activeArea === "compras" && (
+        <>
+          <div className="sidebar-section">
+            <div className="sidebar-section-title">Categorías</div>
+          </div>
+          <div className="nav-list" style={{ paddingBottom: 12 }}>
+            {ingredientCategories
+              .filter((c) => !c.archived)
+              .map((c) => (
+                <div key={c.id} className="nav-item" style={{ cursor: "default" }}>
+                  <span className="dot" style={{ background: colorsForHue(c.hue).bg }} />
+                  <span style={{ flex: 1 }}>{c.name}</span>
+                </div>
+              ))}
+          </div>
+        </>
+      )}
+
+      {activeArea === "cafe" && (
+        <>
+          <div className="sidebar-section">
+            <div className="sidebar-section-title">Recetas</div>
+          </div>
+          <div className="nav-list" style={{ paddingBottom: 12 }}>
+            {coffeeRecipes.filter((r) => !r.baseRecipeId).map((r) => (
+              <div key={r.id} className="nav-item" style={{ cursor: "default" }}>
+                <span style={emojiIcon}>☕</span>
+                <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {r.name}
+                </span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
       </div>
 
-      <div className="sidebar-section" style={{ marginTop: 4 }}>
-        <div className="sidebar-section-title">
-          Categories
-          <button className="add" title="Manage categories" onClick={openCategoryManager}>
-            <IPlus size={11} />
-          </button>
-        </div>
-      </div>
-      <div className="nav-list" style={{ paddingBottom: 12 }}>
-        {visibleCategories.map((c) => {
-          const colors = colorsForCategory(c);
-          const n = tasks.filter((t) => t.categoryId === c.id && !t.done).length;
-          return (
-            <div
-              key={c.id}
-              className={`nav-item ${filterCategoryId === c.id ? "active" : ""}`}
-              onClick={() => {
-                setFilterCategory(filterCategoryId === c.id ? null : c.id);
-                if (view === "project") setView("month");
-              }}
-            >
-              <span className="dot" style={{ background: colors.bg }} />
-              <span style={{ flex: 1 }}>{c.name}</span>
-              <span className="count">{n}</span>
-            </div>
-          );
-        })}
-        {categories.length > SIDEBAR_CATEGORIES_LIMIT && (
-          <div
-            className="nav-item"
-            style={{ color: "var(--fg-subtle)", fontSize: 11.5 }}
-            onClick={openCategoryManager}
-          >
-            <span style={{ width: 8, flex: "0 0 auto" }} />
-            <span style={{ flex: 1 }}>+ {categories.length - SIDEBAR_CATEGORIES_LIMIT} more</span>
-          </div>
-        )}
-      </div>
-      <div style={{ flex: 1 }} />
       <UserFooter />
     </aside>
   );
