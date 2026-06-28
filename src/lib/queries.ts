@@ -2,6 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { CalendarEvent, SavingsGoal, ShoppingItem, Task } from "../types";
 import {
   repo,
+  type AccountCreate, type AccountPatch,
+  type AccountTransferCreate, type AccountTransferPatch,
   type AutomationCreate, type AutomationPatch,
   type BudgetUpsert,
   type CoffeeBeanCreate, type CoffeeBeanPatch,
@@ -45,6 +47,8 @@ const KEYS = {
   budgets: ["budgets"] as const,
   savingsGoals: ["savings_goals"] as const,
   savingsContributions: ["savings_contributions"] as const,
+  accounts: ["accounts"] as const,
+  accountTransfers: ["account_transfers"] as const,
   incomes: ["incomes"] as const,
   habitLogs: ["habit_logs"] as const,
   shoppingItems: ["shopping_items"] as const,
@@ -252,7 +256,10 @@ export function useCreateExpense() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: ExpenseCreate) => repo.createExpense(input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.expenses }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEYS.expenses });
+      qc.invalidateQueries({ queryKey: KEYS.accounts }); // balance auto-calc
+    },
   });
 }
 
@@ -261,7 +268,10 @@ export function usePatchExpense() {
   return useMutation({
     mutationFn: ({ id, patch }: { id: string; patch: ExpensePatch }) =>
       repo.patchExpense(id, patch),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.expenses }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEYS.expenses });
+      qc.invalidateQueries({ queryKey: KEYS.accounts });
+    },
   });
 }
 
@@ -269,7 +279,10 @@ export function useDeleteExpense() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => repo.deleteExpense(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.expenses }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEYS.expenses });
+      qc.invalidateQueries({ queryKey: KEYS.accounts });
+    },
   });
 }
 
@@ -388,6 +401,36 @@ export function useUpsertSavingsContribution() {
   });
 }
 
+// ---------- accounts ----------
+export function useAccounts() {
+  return useQuery({ queryKey: KEYS.accounts, queryFn: () => repo.listAccounts() });
+}
+
+export function useCreateAccount() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: AccountCreate) => repo.createAccount(input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.accounts }),
+  });
+}
+
+export function usePatchAccount() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: AccountPatch }) =>
+      repo.patchAccount(id, patch),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.accounts }),
+  });
+}
+
+export function useDeleteAccount() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => repo.deleteAccount(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.accounts }),
+  });
+}
+
 // ---------- incomes ----------
 export function useIncomes() {
   return useQuery({ queryKey: KEYS.incomes, queryFn: () => repo.listIncomes() });
@@ -397,7 +440,10 @@ export function useUpsertIncome() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: IncomeUpsert) => repo.upsertIncome(input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.incomes }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEYS.incomes });
+      qc.invalidateQueries({ queryKey: KEYS.accounts }); // balance auto-calc
+    },
   });
 }
 
@@ -405,7 +451,49 @@ export function useDeleteIncome() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => repo.deleteIncome(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.incomes }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEYS.incomes });
+      qc.invalidateQueries({ queryKey: KEYS.accounts });
+    },
+  });
+}
+
+// ---------- account_transfers ----------
+export function useAccountTransfers() {
+  return useQuery({ queryKey: KEYS.accountTransfers, queryFn: () => repo.listAccountTransfers() });
+}
+
+export function useCreateAccountTransfer() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: AccountTransferCreate) => repo.createAccountTransfer(input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEYS.accountTransfers });
+      qc.invalidateQueries({ queryKey: KEYS.accounts }); // balance auto-calc
+    },
+  });
+}
+
+export function usePatchAccountTransfer() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: AccountTransferPatch }) =>
+      repo.patchAccountTransfer(id, patch),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEYS.accountTransfers });
+      qc.invalidateQueries({ queryKey: KEYS.accounts });
+    },
+  });
+}
+
+export function useDeleteAccountTransfer() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => repo.deleteAccountTransfer(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEYS.accountTransfers });
+      qc.invalidateQueries({ queryKey: KEYS.accounts });
+    },
   });
 }
 

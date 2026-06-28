@@ -663,6 +663,18 @@ pub fn run() {
             sql: include_str!("../migrations/0030_coffee_recipe_bean.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 31,
+            description: "add accounts table (Finanzas: holdings / net worth)",
+            sql: include_str!("../migrations/0031_accounts.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 32,
+            description: "finanzas links: account_id on expenses/incomes, destination on goals, account_transfers",
+            sql: include_str!("../migrations/0032_finanzas_links.sql"),
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()

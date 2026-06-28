@@ -1,4 +1,6 @@
 import type {
+  Account,
+  AccountTransfer,
   Automation,
   BrewDatapoint,
   BrewSession,
@@ -71,7 +73,7 @@ export type IngredientCategoryPatch = Partial<Omit<IngredientCategory, "id" | "c
 export type ExpenseCreate = Pick<
   Expense,
   "name" | "amount" | "currency" | "categoryId" | "spentOn" | "note" | "recurrence" | "recurrenceParentId"
->;
+> & { accountId?: string | null };
 export type ExpensePatch = Partial<Omit<Expense, "id" | "createdAt" | "version">>;
 
 export type ExpenseLineItemCreate = Pick<ExpenseLineItem, "expenseId" | "name" | "quantity" | "unitPrice">;
@@ -83,12 +85,39 @@ export type SavingsGoalCreate = Pick<SavingsGoal, "name" | "targetAmount"> & {
   position?: number;
   savingsPercent?: number;
   isOverflowTarget?: boolean;
+  destinationAccountId?: string | null;
 };
 export type SavingsGoalPatch = Partial<Omit<SavingsGoal, "id" | "createdAt" | "version">>;
 
 export type SavingsContributionUpsert = Pick<SavingsContribution, "goalId" | "month" | "amount">;
 
-export type IncomeUpsert = Pick<Income, "month" | "amount" | "currency"> & { note?: string };
+export type AccountCreate = Pick<
+  Account,
+  "name" | "owner" | "type" | "currency" | "balance" | "openingBalance"
+> & {
+  balanceAsOf?: string | null;
+  receivesIncome?: boolean;
+  paysExpenses?: boolean;
+  isSavingsTarget?: boolean;
+  isInvestmentTarget?: boolean;
+  syncSource?: string;
+  externalRef?: string | null;
+  institution?: string;
+  note?: string;
+  position?: number;
+};
+export type AccountPatch = Partial<Omit<Account, "id" | "createdAt" | "version">>;
+
+export type IncomeUpsert = Pick<Income, "month" | "amount" | "currency"> & {
+  note?: string;
+  accountId?: string | null;
+};
+
+export type AccountTransferCreate = Pick<
+  AccountTransfer,
+  "fromAccountId" | "toAccountId" | "amount" | "currency" | "transferredOn" | "kind"
+> & { goalId?: string | null; note?: string };
+export type AccountTransferPatch = Partial<Omit<AccountTransfer, "id" | "createdAt" | "version">>;
 
 export type HabitLogUpsert = Pick<HabitLog, "taskId" | "day" | "done">;
 
@@ -239,6 +268,16 @@ export interface Repo {
   createSavingsGoal(input: SavingsGoalCreate): Promise<SavingsGoal>;
   patchSavingsGoal(id: string, patch: SavingsGoalPatch): Promise<SavingsGoal>;
   deleteSavingsGoal(id: string): Promise<void>;
+
+  listAccounts(): Promise<Account[]>;
+  createAccount(input: AccountCreate): Promise<Account>;
+  patchAccount(id: string, patch: AccountPatch): Promise<Account>;
+  deleteAccount(id: string): Promise<void>;
+
+  listAccountTransfers(): Promise<AccountTransfer[]>;
+  createAccountTransfer(input: AccountTransferCreate): Promise<AccountTransfer>;
+  patchAccountTransfer(id: string, patch: AccountTransferPatch): Promise<AccountTransfer>;
+  deleteAccountTransfer(id: string): Promise<void>;
 
   listSavingsContributions(): Promise<SavingsContribution[]>;
   upsertSavingsContribution(input: SavingsContributionUpsert): Promise<SavingsContribution>;

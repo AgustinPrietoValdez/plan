@@ -10,6 +10,8 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { BudgetManager } from "./components/BudgetManager";
 import { BudgetView } from "./components/BudgetView";
+import { FinanzasPlaceholder } from "./components/finanzas/FinanzasPlaceholder";
+import { HoldingsView } from "./components/finanzas/HoldingsView";
 import { CategoryManager } from "./components/CategoryManager";
 import { CompletionModal } from "./components/CompletionModal";
 import { ComprasView } from "./components/ComprasView";
@@ -78,6 +80,7 @@ function App() {
     closeEventEditor,
     openEventEdit,
     openEventCreate,
+    finanzasTab,
   } = useApp();
 
   const tasksQ = useTasks();
@@ -306,7 +309,20 @@ function App() {
             />
           )}
           {view === "recurring" && <RecurringView />}
-          {view === "budget" && <BudgetView />}
+          {view === "budget" && finanzasTab === "presupuesto" && <BudgetView />}
+          {view === "budget" && finanzasTab === "holdings" && <HoldingsView />}
+          {view === "budget" && finanzasTab === "inversiones" && (
+            <FinanzasPlaceholder
+              title="Inversiones"
+              note="Por verse: queda para cuando tengan inversiones / un broker."
+            />
+          )}
+          {view === "budget" && finanzasTab === "taxes" && (
+            <FinanzasPlaceholder
+              title="Taxes"
+              note="Por verse: impuestos / declaraciones, a definir mas adelante."
+            />
+          )}
           {view === "habits" && <HabitsView />}
           {view === "compras" && <ComprasView />}
           {view === "cafe" && <CafeView />}

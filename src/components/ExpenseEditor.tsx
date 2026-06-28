@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import { colorsForHue } from "../lib/categoryColor";
 import { CURRENCY, fmtMoney, parseMoney } from "../lib/money";
 import {
+  useAccounts,
   useCreateExpense,
   useCreateExpenseLineItem,
   useDeleteExpense,
@@ -20,6 +21,7 @@ interface DraftFields {
   name: string;
   amount: number;
   categoryId: string | null;
+  accountId: string | null;
   spentOn: string;
   note: string;
   recurrence: RecurrenceRule | null;
@@ -30,6 +32,7 @@ function fromExpense(e: Expense): DraftFields {
     name: e.name,
     amount: e.amount,
     categoryId: e.categoryId,
+    accountId: e.accountId,
     spentOn: e.spentOn,
     note: e.note,
     recurrence: e.recurrence,
@@ -46,11 +49,18 @@ interface Props {
 export function ExpenseEditor({ mode, expenseId, prefill, onClose }: Props) {
   const expensesQ = useExpenses();
   const categoriesQ = useExpenseCategories();
+  const accountsQ = useAccounts();
   const expenses = expensesQ.data ?? [];
   const categories = useMemo(
     () => (categoriesQ.data ?? []).filter((c) => !c.archived),
     [categoriesQ.data],
   );
+  // Cuentas que pagan gastos; si ninguna tiene la capacidad, mostrar todas.
+  const accounts = useMemo(() => {
+    const active = (accountsQ.data ?? []).filter((a) => !a.archived);
+    const paying = active.filter((a) => a.paysExpenses);
+    return paying.length > 0 ? paying : active;
+  }, [accountsQ.data]);
 
   const create = useCreateExpense();
   const patchMut = usePatchExpense();
@@ -91,6 +101,7 @@ export function ExpenseEditor({ mode, expenseId, prefill, onClose }: Props) {
       name: prefill?.note ?? "",
       amount: prefill?.amount ?? 0,
       categoryId: prefill?.categoryId ?? null,
+      accountId: null,
       spentOn: prefill?.spentOn ?? new Date().toISOString().slice(0, 10),
       note: "",
       recurrence: null,
@@ -111,13 +122,20 @@ export function ExpenseEditor({ mode, expenseId, prefill, onClose }: Props) {
 
   const save = () => {
     if (draft.amount <= 0) return; // require positive amount
+    // Si hay cuenta elegida, la moneda del gasto sigue a la de la cuenta.
+    const selectedAccount = draft.accountId
+      ? accounts.find((a) => a.id === draft.accountId) ?? null
+      : null;
+    const currency = selectedAccount ? selectedAccount.currency : CURRENCY;
     if (mode === "edit" && existing) {
       patchMut.mutate({
         id: existing.id,
         patch: {
           name: draft.name,
           amount: draft.amount,
+          currency,
           categoryId: draft.categoryId,
+          accountId: draft.accountId,
           spentOn: draft.spentOn,
           note: draft.note,
           recurrence: draft.recurrence,
@@ -127,8 +145,9 @@ export function ExpenseEditor({ mode, expenseId, prefill, onClose }: Props) {
       create.mutate({
         name: draft.name,
         amount: draft.amount,
-        currency: CURRENCY,
+        currency,
         categoryId: draft.categoryId,
+        accountId: draft.accountId,
         spentOn: draft.spentOn,
         note: draft.note,
         recurrence: draft.recurrence,
@@ -318,6 +337,27 @@ export function ExpenseEditor({ mode, expenseId, prefill, onClose }: Props) {
               )}
             </div>
           </div>
+
+          {accounts.length > 0 && (
+            <div className="field">
+              <label>Cuenta</label>
+              <div className="control">
+                <select
+                  className="input"
+                  style={{ width: "auto" }}
+                  value={draft.accountId ?? ""}
+                  onChange={(e) => set({ accountId: e.target.value || null })}
+                >
+                  <option value="">(ninguna)</option>
+                  {accounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name} · {a.currency}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
 
           <div className="field">
             <label>Date</label>

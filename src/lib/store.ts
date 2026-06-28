@@ -52,6 +52,37 @@ export const CALENDARIO_TABS: { view: View; label: string }[] = [
   { view: "recurring", label: "Recurrentes" },
 ];
 
+/** Sub-tabs shown inside the Compras area. */
+export type ComprasTab = "ingredientes" | "recetas" | "listas" | "plan" | "inventario" | "ajustes";
+
+export const COMPRAS_TABS: { id: ComprasTab; label: string; ready: boolean }[] = [
+  { id: "ingredientes", label: "Ingredientes", ready: true },
+  { id: "recetas", label: "Recetas", ready: true },
+  { id: "listas", label: "Listas", ready: true },
+  { id: "plan", label: "Plan semanal", ready: true },
+  { id: "inventario", label: "Inventario", ready: true },
+  { id: "ajustes", label: "Ajustes", ready: true },
+];
+
+/** Sub-tabs shown inside the Cafe area. */
+export type CafeTab = "granos" | "recetas" | "historial";
+
+export const CAFE_TABS: { id: CafeTab; label: string }[] = [
+  { id: "granos", label: "Granos" },
+  { id: "recetas", label: "Recetas" },
+  { id: "historial", label: "Historial" },
+];
+
+/** Sub-tabs shown inside the Finanzas (ex-Presupuesto) area. */
+export type FinanzasTab = "presupuesto" | "holdings" | "inversiones" | "taxes";
+
+export const FINANZAS_TABS: { id: FinanzasTab; label: string }[] = [
+  { id: "presupuesto", label: "Presupuesto" },
+  { id: "holdings", label: "Holdings" },
+  { id: "inversiones", label: "Inversiones" },
+  { id: "taxes", label: "Taxes" },
+];
+
 export type EditorState =
   | { mode: "closed" }
   | { mode: "edit"; taskId: string }
@@ -76,6 +107,9 @@ interface AppState {
   budgetMonth: string;
   filterCategoryId: string | null;
   sidebarOpen: boolean;
+  comprasTab: ComprasTab;
+  cafeTab: CafeTab;
+  finanzasTab: FinanzasTab;
 
   setView: (v: View) => void;
   setViewDate: (ymd: string) => void;
@@ -108,6 +142,9 @@ interface AppState {
   setBudgetMonth: (yyyymm: string) => void;
   setFilterCategory: (id: string | null) => void;
   toggleSidebar: () => void;
+  setComprasTab: (t: ComprasTab) => void;
+  setCafeTab: (t: CafeTab) => void;
+  setFinanzasTab: (t: FinanzasTab) => void;
 }
 
 export const useApp = create<AppState>((set) => ({
@@ -129,6 +166,9 @@ export const useApp = create<AppState>((set) => ({
   budgetMonth: todayYmd().slice(0, 7),
   filterCategoryId: null,
   sidebarOpen: false,
+  comprasTab: "listas",
+  cafeTab: "granos",
+  finanzasTab: "presupuesto",
 
   setView: (view) => set({ view }),
   setViewDate: (viewDate) => set({ viewDate }),
@@ -161,4 +201,7 @@ export const useApp = create<AppState>((set) => ({
   setBudgetMonth: (budgetMonth) => set({ budgetMonth }),
   setFilterCategory: (filterCategoryId) => set({ filterCategoryId }),
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
+  setComprasTab: (comprasTab) => set({ comprasTab }),
+  setCafeTab: (cafeTab) => set({ cafeTab }),
+  setFinanzasTab: (finanzasTab) => set({ finanzasTab }),
 }));

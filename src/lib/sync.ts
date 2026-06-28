@@ -14,6 +14,8 @@ type Entity =
   | "budgets"
   | "savings_goals"
   | "savings_contributions"
+  | "accounts"
+  | "account_transfers"
   | "incomes"
   | "habit_logs"
   | "shopping_items"
@@ -187,6 +189,8 @@ export async function pullDeltas(userId: string, qc: QueryClient): Promise<void>
     any = (await pullEntity(userId, "budgets")) || any;
     any = (await pullEntity(userId, "savings_goals")) || any;
     any = (await pullEntity(userId, "savings_contributions")) || any;
+    any = (await pullEntity(userId, "accounts")) || any;
+    any = (await pullEntity(userId, "account_transfers")) || any;
     any = (await pullEntity(userId, "incomes")) || any;
     any = (await pullEntity(userId, "habit_logs")) || any;
     any = (await pullEntity(userId, "shopping_items")) || any;
@@ -211,6 +215,8 @@ export async function pullDeltas(userId: string, qc: QueryClient): Promise<void>
       qc.invalidateQueries({ queryKey: ["budgets"] });
       qc.invalidateQueries({ queryKey: ["savings_goals"] });
       qc.invalidateQueries({ queryKey: ["savings_contributions"] });
+      qc.invalidateQueries({ queryKey: ["accounts"] });
+      qc.invalidateQueries({ queryKey: ["account_transfers"] });
       qc.invalidateQueries({ queryKey: ["incomes"] });
       qc.invalidateQueries({ queryKey: ["habit_logs"] });
       qc.invalidateQueries({ queryKey: ["shopping_items"] });
@@ -322,12 +328,12 @@ async function upsertLocal(
   } else if (entity === "expenses") {
     await db.execute(
       `INSERT OR REPLACE INTO expenses
-        (id, user_id, amount, currency, category_id, spent_on, note,
+        (id, user_id, name, amount, currency, category_id, spent_on, note, account_id,
          recurrence, recurrence_parent_id, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        row.id, row.user_id, row.amount, row.currency, row.category_id,
-        row.spent_on, row.note,
+        row.id, row.user_id, row.name ?? "", row.amount, row.currency, row.category_id,
+        row.spent_on, row.note, row.account_id ?? null,
         row.recurrence ? JSON.stringify(row.recurrence) : null,
         row.recurrence_parent_id, row.created_at, row.updated_at,
         row.deleted_at, row.version,
@@ -346,10 +352,12 @@ async function upsertLocal(
   } else if (entity === "savings_goals") {
     await db.execute(
       `INSERT OR REPLACE INTO savings_goals
-        (id, user_id, name, target_amount, position, purchased_at, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, user_id, name, target_amount, savings_percent, is_overflow_target, destination_account_id, position, purchased_at, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        row.id, row.user_id, row.name, row.target_amount, row.position, row.purchased_at,
+        row.id, row.user_id, row.name, row.target_amount,
+        row.savings_percent ?? 0, row.is_overflow_target ? 1 : 0, row.destination_account_id ?? null,
+        row.position, row.purchased_at,
         row.created_at, row.updated_at, row.deleted_at, row.version,
       ],
     );
@@ -363,13 +371,43 @@ async function upsertLocal(
         row.created_at, row.updated_at, row.deleted_at, row.version,
       ],
     );
+  } else if (entity === "accounts") {
+    await db.execute(
+      `INSERT OR REPLACE INTO accounts
+        (id, user_id, name, owner, type, currency, balance, opening_balance, balance_as_of,
+         receives_income, pays_expenses, is_savings_target, is_investment_target,
+         sync_source, external_ref, institution, note, position, archived,
+         created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        row.id, row.user_id, row.name, row.owner ?? "shared", row.type ?? "checking",
+        row.currency ?? "DKK", row.balance ?? 0, row.opening_balance ?? 0, row.balance_as_of ?? null,
+        row.receives_income ? 1 : 0, row.pays_expenses ? 1 : 0,
+        row.is_savings_target ? 1 : 0, row.is_investment_target ? 1 : 0,
+        row.sync_source ?? "manual", row.external_ref ?? null, row.institution ?? "", row.note ?? "",
+        row.position ?? 0, row.archived ? 1 : 0,
+        row.created_at, row.updated_at, row.deleted_at, row.version,
+      ],
+    );
+  } else if (entity === "account_transfers") {
+    await db.execute(
+      `INSERT OR REPLACE INTO account_transfers
+        (id, user_id, from_account_id, to_account_id, amount, currency, transferred_on, kind, goal_id, note, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        row.id, row.user_id, row.from_account_id ?? null, row.to_account_id ?? null,
+        row.amount ?? 0, row.currency ?? "DKK", row.transferred_on, row.kind ?? "transfer",
+        row.goal_id ?? null, row.note ?? "",
+        row.created_at, row.updated_at, row.deleted_at, row.version,
+      ],
+    );
   } else if (entity === "incomes") {
     await db.execute(
       `INSERT OR REPLACE INTO incomes
-        (id, user_id, month, amount, currency, note, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, user_id, month, amount, currency, account_id, note, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        row.id, row.user_id, row.month, row.amount, row.currency, row.note ?? "",
+        row.id, row.user_id, row.month, row.amount, row.currency, row.account_id ?? null, row.note ?? "",
         row.created_at, row.updated_at, row.deleted_at, row.version,
       ],
     );

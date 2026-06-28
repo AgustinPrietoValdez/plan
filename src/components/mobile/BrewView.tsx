@@ -426,13 +426,29 @@ export function BrewView() {
   }
 
   // ── navigation ────────────────────────────────────────────────────────────────
+  // Arranca a calentar la pava al valor de la receta apenas se confirma (antes de pesar
+  // la dosis), asi el agua esta lista cuando se pone el cafe en la V60. Best-effort: si la
+  // pava no esta conectada o la receta no tiene temp, no hace nada.
+  function startKettleHeat(tempC: number) {
+    if (kettleStatus === "on" && tempC > 0) {
+      void sendKettleTemp(tempC).catch(() => { /* best-effort */ });
+    }
+  }
+
   function goBean() { returnToReadyRef.current = false; setPhase("bean"); }
   function confirmBean() { setPhase(returnToReadyRef.current ? "ready" : "recipe"); returnToReadyRef.current = false; }
   function confirmRecipe() {
-    if (returnToReadyRef.current) { returnToReadyRef.current = false; setPhase("ready"); return; }
+    if (returnToReadyRef.current) {
+      returnToReadyRef.current = false;
+      // editaste la receta desde "Listo": re-calienta a la temp de la receta nueva.
+      if (selectedRecipe) startKettleHeat(selectedRecipe.tempCelsius);
+      setPhase("ready");
+      return;
+    }
     // si el grano tiene un ultimo ajuste, ofrecer aplicarlo por variable antes de la dosis
     if (selectedBean?.lastTweak) { setPhase("tweak"); return; }
     setDoseTarget(null);
+    if (selectedRecipe) startKettleHeat(selectedRecipe.tempCelsius);
     setPhase("dose");
   }
   function confirmTweak() {
@@ -448,8 +464,10 @@ export function BrewView() {
       // #16: NO saltear la pantalla de dosis. La dosis del ajuste va como OBJETIVO sugerido;
       // el usuario igual pesa el cafe en la balanza.
       setDoseTarget(applyDose && t.doseGrams != null ? t.doseGrams : null);
+      startKettleHeat(next.tempCelsius);
     } else {
       setDoseTarget(null);
+      if (selectedRecipe) startKettleHeat(selectedRecipe.tempCelsius);
     }
     setPhase("dose");
   }

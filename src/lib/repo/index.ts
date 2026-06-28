@@ -3,6 +3,10 @@ import type { Repo } from "./types";
 
 export const repo: Repo = localRepo;
 export type {
+  AccountCreate,
+  AccountPatch,
+  AccountTransferCreate,
+  AccountTransferPatch,
   AutomationCreate,
   AutomationPatch,
   BudgetUpsert,

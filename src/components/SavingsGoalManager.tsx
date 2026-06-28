@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import { CURRENCY, parseMoney } from "../lib/money";
 import {
+  useAccounts,
   useCreateSavingsGoal,
   useDeleteSavingsGoal,
   usePatchSavingsGoal,
@@ -14,11 +15,18 @@ interface Props {
 
 export function SavingsGoalManager({ onClose }: Props) {
   const goalsQ = useSavingsGoals();
+  const accountsQ = useAccounts();
   const create = useCreateSavingsGoal();
   const patch = usePatchSavingsGoal();
   const remove = useDeleteSavingsGoal();
 
   const goals = useMemo(() => goalsQ.data ?? [], [goalsQ.data]);
+  // Cuentas destino de ahorro; si ninguna tiene la capacidad, mostrar todas.
+  const accounts = useMemo(() => {
+    const active = (accountsQ.data ?? []).filter((a) => !a.archived);
+    const targets = active.filter((a) => a.isSavingsTarget);
+    return targets.length > 0 ? targets : active;
+  }, [accountsQ.data]);
 
   const [editingNameId, setEditingNameId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
@@ -131,7 +139,7 @@ export function SavingsGoalManager({ onClose }: Props) {
                 key={g.id}
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "minmax(0, 1fr) auto auto auto auto",
+                  gridTemplateColumns: "minmax(0, 1fr) auto auto auto auto auto",
                   gap: 12,
                   alignItems: "center",
                   padding: "8px 8px",
@@ -264,6 +272,23 @@ export function SavingsGoalManager({ onClose }: Props) {
                   />
                   <span style={{ fontSize: 11, color: "var(--fg-muted)" }}>{CURRENCY}</span>
                 </div>
+                <select
+                  className="input"
+                  title="Cuenta destino del ahorro"
+                  value={g.destinationAccountId ?? ""}
+                  onChange={(e) =>
+                    patch.mutate({ id: g.id, patch: { destinationAccountId: e.target.value || null } })
+                  }
+                  disabled={purchased}
+                  style={{ width: 140, fontSize: 12, padding: "5px 6px" }}
+                >
+                  <option value="">Sin cuenta</option>
+                  {accounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name}
+                    </option>
+                  ))}
+                </select>
                 {confirming ? (
                   <div style={{ display: "flex", gap: 4 }}>
                     <button

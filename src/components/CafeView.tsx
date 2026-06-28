@@ -18,6 +18,7 @@ import type { CoffeeBean, CoffeeRecipe, CoffeeRecipeStep, CoffeeStepType, WaterM
 import type { CoffeeBeanCreate, CoffeeRecipeCreate } from "../lib/repo";
 import { IPlus, ITrash, IChevD, IChevU, IX } from "./icons";
 import { analyzeCoffee } from "../lib/coffeeAnalysis";
+import { useApp } from "../lib/store";
 
 // El boton "Analizar" lanza una terminal con Claude: desktop-only (en mobile no hay terminal).
 const isMobile =
@@ -162,12 +163,11 @@ function autoCompleteRatio(stepIdx: number, steps: CoffeeRecipeStep[], ratio: nu
 
 // ---------- main view ----------
 
-type Tab = "granos" | "recetas" | "historial";
 type BeanEditor = { open: false } | { open: true; bean: CoffeeBean | null };
 type RecipeEditor = { open: false } | { open: true; recipe: CoffeeRecipe | null };
 
 export function CafeView() {
-  const [tab, setTab] = useState<Tab>("granos");
+  const { cafeTab: tab } = useApp();
   const [beanEditor, setBeanEditor] = useState<BeanEditor>({ open: false });
   const [beanForm, setBeanForm] = useState<BeanFormState>(defaultBeanForm());
   const [recipeEditor, setRecipeEditor] = useState<RecipeEditor>({ open: false });
@@ -293,26 +293,6 @@ export function CafeView() {
               <IPlus size={13} /> {tab === "granos" ? "Nuevo grano" : "Nueva receta"}
             </button>
           )}
-        </div>
-        <div role="tablist" style={{ display: "flex", gap: 2 }}>
-          {(["granos", "recetas", "historial"] as Tab[]).map((t) => (
-            <button
-              key={t}
-              role="tab"
-              aria-selected={tab === t}
-              onClick={() => setTab(t)}
-              style={{
-                appearance: "none", border: "none",
-                background: tab === t ? "var(--bg-sunken)" : "transparent",
-                color: tab === t ? "var(--fg)" : "var(--fg-muted)",
-                fontSize: 12.5, fontWeight: tab === t ? 600 : 500,
-                padding: "5px 14px", borderRadius: "7px 7px 0 0", cursor: "pointer",
-                textTransform: "capitalize",
-              }}
-            >
-              {t}
-            </button>
-          ))}
         </div>
       </div>
 

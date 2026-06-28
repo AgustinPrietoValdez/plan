@@ -31,7 +31,7 @@ const krIcon = {
 const AREAS: { area: Area; label: string; icon: ReactNode }[] = [
   { area: "home", label: "Home", icon: <span style={emojiIcon}>🏠</span> },
   { area: "calendario", label: "Calendario", icon: <ICal size={14} /> },
-  { area: "presupuesto", label: "Presupuesto", icon: <span style={krIcon}>kr</span> },
+  { area: "presupuesto", label: "Finanzas", icon: <span style={krIcon}>kr</span> },
   { area: "compras", label: "Compras", icon: <IList size={14} /> },
   { area: "cafe", label: "Café", icon: <span style={emojiIcon}>☕</span> },
 ];

@@ -119,6 +119,7 @@ export interface Expense {
   categoryId: string | null;
   spentOn: string;
   note: string;
+  accountId: string | null; // cuenta que pago el gasto (null = sin cuenta)
   recurrence: RecurrenceRule | null;
   recurrenceParentId: string | null;
   createdAt: string;
@@ -156,6 +157,7 @@ export interface SavingsGoal {
   targetAmount: number | null;
   savingsPercent: number;
   isOverflowTarget: boolean;
+  destinationAccountId: string | null; // cuenta donde se acumula este ahorro
   position: number;
   purchasedAt: string | null;
   createdAt: string;
@@ -180,6 +182,7 @@ export interface Income {
   month: string;
   amount: number;
   currency: string;
+  accountId: string | null; // cuenta que recibe el ingreso (null = general)
   note: string;
   createdAt: string;
   updatedAt: string;
@@ -422,6 +425,53 @@ export interface Automation {
   enabled: boolean;
   notes: string;
   lastRunAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+  version: number;
+}
+
+export type AccountOwner = "agus" | "sofi" | "shared";
+export type AccountType = "checking" | "savings" | "investment" | "broker" | "cash";
+export type AccountCurrency = "DKK" | "USD";
+
+export interface Account {
+  id: string;
+  name: string;
+  owner: AccountOwner;
+  type: AccountType;
+  currency: AccountCurrency;
+  balance: number;
+  openingBalance: number;
+  balanceAsOf: string | null; // YYYY-MM-DD
+  receivesIncome: boolean;
+  paysExpenses: boolean;
+  isSavingsTarget: boolean;
+  isInvestmentTarget: boolean;
+  syncSource: string; // default 'manual'
+  externalRef: string | null;
+  institution: string;
+  note: string;
+  position: number;
+  archived: boolean;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+  version: number;
+}
+
+export type TransferKind = "transfer" | "savings" | "investment";
+
+export interface AccountTransfer {
+  id: string;
+  fromAccountId: string | null;
+  toAccountId: string | null;
+  amount: number; // en la moneda de la cuenta origen
+  currency: string;
+  transferredOn: string; // YYYY-MM-DD
+  kind: TransferKind;
+  goalId: string | null; // meta de ahorro asociada (opcional)
+  note: string;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;

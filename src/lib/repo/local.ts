@@ -1,4 +1,6 @@
 import type {
+  Account,
+  AccountTransfer,
   Automation,
   BrewDatapoint,
   BrewSession,
@@ -42,6 +44,9 @@ import type {
 import { supabase } from "../supabase";
 import { boolFromDb, getDb, parseJson } from "../db";
 import type {
+  AccountCreate,
+  AccountTransferCreate,
+  AccountTransferPatch,
   BrewSessionCreate,
   BudgetUpsert,
   CategoryCreate,
@@ -201,6 +206,8 @@ async function enqueue(
     | "budgets"
     | "savings_goals"
     | "savings_contributions"
+    | "accounts"
+    | "account_transfers"
     | "incomes"
     | "habit_logs"
     | "shopping_items"
@@ -228,6 +235,95 @@ async function enqueue(
   );
   // Fire-and-forget signal that there's work to drain.
   window.dispatchEvent(new CustomEvent("outbox:enqueued"));
+}
+
+// ── Account balance auto-calculation (Phase C) ────────────────────────────────
+//
+// Movements (incomes, expenses, transfers) keep account balances in sync by
+// applying a signed delta to the linked account and enqueueing the account
+// update so it syncs like any other change. Everything is centralized here so
+// the create / patch / delete call-sites stay small and consistent:
+//   * create  -> apply the effect once
+//   * patch   -> reverse the OLD row's effect, then apply the NEW row's effect
+//   * delete  -> reverse the effect (the money "comes back")
+// Accounts are nullable everywhere, so when no account is linked we simply do
+// nothing — those movements behave exactly as before Phase C.
+
+const DKK_PER_USD_FALLBACK = 6.9; // mirrors DEFAULT_DKK_PER_USD in lib/money.ts
+
+type Db = Awaited<ReturnType<typeof getDb>>;
+
+/** Read current balance, add `delta`, bump version and enqueue the account update. */
+async function adjustAccountBalance(
+  db: Db,
+  userId: string,
+  accountId: string | null,
+  delta: number,
+): Promise<void> {
+  if (!accountId || !delta) return;
+  const rows = await db.select<DbAccountRow[]>(
+    "SELECT * FROM accounts WHERE id = ? AND user_id = ? AND deleted_at IS NULL LIMIT 1",
+    [accountId, userId],
+  );
+  if (!rows[0]) return; // account missing or archived/deleted — skip silently
+  const acc = fromDbAccount(rows[0]);
+  const updated: Account = {
+    ...acc,
+    balance: acc.balance + delta,
+    updatedAt: now(),
+    version: acc.version + 1,
+  };
+  await db.execute(
+    "UPDATE accounts SET balance = ?, updated_at = ?, version = ? WHERE id = ? AND user_id = ?",
+    [updated.balance, updated.updatedAt, updated.version, accountId, userId],
+  );
+  await enqueue(userId, "update", "accounts", accountId, accountToWire(updated, userId));
+}
+
+/** DKK<->USD rate (DKK per 1 USD), from synced compras_settings. */
+async function readDkkPerUsd(db: Db, userId: string): Promise<number> {
+  const rows = await db.select<{ dkk_per_usd: number }[]>(
+    "SELECT dkk_per_usd FROM compras_settings WHERE user_id = ? AND deleted_at IS NULL LIMIT 1",
+    [userId],
+  );
+  const v = rows[0]?.dkk_per_usd;
+  return typeof v === "number" && v > 0 ? v : DKK_PER_USD_FALLBACK;
+}
+
+async function accountCurrency(db: Db, userId: string, id: string | null): Promise<string | null> {
+  if (!id) return null;
+  const rows = await db.select<{ currency: string }[]>(
+    "SELECT currency FROM accounts WHERE id = ? AND user_id = ? LIMIT 1",
+    [id, userId],
+  );
+  return rows[0]?.currency ?? null;
+}
+
+/** Convert `amount` from one DKK/USD currency to another using the Holdings rate. */
+function convertAmount(amount: number, fromCur: string, toCur: string, dkkPerUsd: number): number {
+  if (fromCur === toCur) return amount;
+  if (fromCur === "USD" && toCur === "DKK") return amount * dkkPerUsd;
+  if (fromCur === "DKK" && toCur === "USD") return dkkPerUsd > 0 ? amount / dkkPerUsd : 0;
+  return amount;
+}
+
+/**
+ * Apply (sign = +1) or reverse (sign = -1) a transfer's effect on both accounts.
+ * Money leaves `from` in its own currency and arrives at `to` converted to the
+ * destination currency (no-op conversion when both share a currency).
+ */
+async function applyTransferEffect(
+  db: Db,
+  userId: string,
+  t: AccountTransfer,
+  sign: 1 | -1,
+): Promise<void> {
+  const dkkPerUsd = await readDkkPerUsd(db, userId);
+  const fromCur = (await accountCurrency(db, userId, t.fromAccountId)) ?? t.currency;
+  const toCur = (await accountCurrency(db, userId, t.toAccountId)) ?? fromCur;
+  const converted = convertAmount(t.amount, fromCur, toCur, dkkPerUsd);
+  await adjustAccountBalance(db, userId, t.fromAccountId, sign * -t.amount);
+  await adjustAccountBalance(db, userId, t.toAccountId, sign * converted);
 }
 
 export const localRepo: Repo = {
@@ -607,6 +703,7 @@ export const localRepo: Repo = {
       categoryId: input.categoryId,
       spentOn: input.spentOn,
       note: input.note,
+      accountId: input.accountId ?? null,
       recurrence: input.recurrence,
       recurrenceParentId: input.recurrenceParentId,
       createdAt: ts,
@@ -616,18 +713,20 @@ export const localRepo: Repo = {
     };
     await db.execute(
       `INSERT INTO expenses
-        (id, user_id, name, amount, currency, category_id, spent_on, note,
+        (id, user_id, name, amount, currency, category_id, spent_on, note, account_id,
          recurrence, recurrence_parent_id, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         exp.id, userId, exp.name, exp.amount, exp.currency, exp.categoryId, exp.spentOn,
-        exp.note,
+        exp.note, exp.accountId,
         exp.recurrence ? JSON.stringify(exp.recurrence) : null,
         exp.recurrenceParentId,
         exp.createdAt, exp.updatedAt, null, 1,
       ],
     );
     await enqueue(userId, "insert", "expenses", exp.id, expenseToWire(exp, userId));
+    // Auto-calc: an expense leaves the paying account.
+    await adjustAccountBalance(db, userId, exp.accountId, -exp.amount);
     return exp;
   },
 
@@ -650,11 +749,11 @@ export const localRepo: Repo = {
     };
     await db.execute(
       `UPDATE expenses SET name = ?, amount = ?, currency = ?, category_id = ?, spent_on = ?,
-         note = ?, recurrence = ?, recurrence_parent_id = ?, updated_at = ?, deleted_at = ?, version = ?
+         note = ?, account_id = ?, recurrence = ?, recurrence_parent_id = ?, updated_at = ?, deleted_at = ?, version = ?
        WHERE id = ? AND user_id = ?`,
       [
         updated.name, updated.amount, updated.currency, updated.categoryId, updated.spentOn,
-        updated.note,
+        updated.note, updated.accountId,
         updated.recurrence ? JSON.stringify(updated.recurrence) : null,
         updated.recurrenceParentId,
         updated.updatedAt, updated.deletedAt, updated.version,
@@ -662,6 +761,11 @@ export const localRepo: Repo = {
       ],
     );
     await enqueue(userId, "update", "expenses", id, expenseToWire(updated, userId));
+    // Auto-calc: reverse the old expense's effect, then apply the new one.
+    await adjustAccountBalance(db, userId, existing.accountId, existing.amount);
+    if (!updated.deletedAt) {
+      await adjustAccountBalance(db, userId, updated.accountId, -updated.amount);
+    }
     return updated;
   },
 
@@ -669,11 +773,20 @@ export const localRepo: Repo = {
     const userId = await requireUserId();
     const db = await getDb();
     const ts = now();
+    // Read first so we can reverse the balance effect of the expense being removed.
+    const rows = await db.select<DbExpenseRow[]>(
+      "SELECT * FROM expenses WHERE id = ? AND user_id = ? AND deleted_at IS NULL LIMIT 1",
+      [id, userId],
+    );
     await db.execute(
       "UPDATE expenses SET deleted_at = ?, updated_at = ?, version = version + 1 WHERE id = ? AND user_id = ?",
       [ts, ts, id, userId],
     );
     await enqueue(userId, "delete", "expenses", id, null);
+    if (rows[0]) {
+      const old = fromDbExpense(rows[0]);
+      await adjustAccountBalance(db, userId, old.accountId, old.amount);
+    }
   },
 
   // ---------- expense_line_items ----------
@@ -839,6 +952,7 @@ export const localRepo: Repo = {
       targetAmount: input.targetAmount,
       savingsPercent: input.savingsPercent ?? 0,
       isOverflowTarget: input.isOverflowTarget ?? false,
+      destinationAccountId: input.destinationAccountId ?? null,
       position: input.position ?? 0,
       purchasedAt: null,
       createdAt: ts,
@@ -848,9 +962,9 @@ export const localRepo: Repo = {
     };
     await db.execute(
       `INSERT INTO savings_goals
-        (id, user_id, name, target_amount, savings_percent, is_overflow_target, position, purchased_at, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [goal.id, userId, goal.name, goal.targetAmount, goal.savingsPercent, goal.isOverflowTarget ? 1 : 0, goal.position, goal.purchasedAt, goal.createdAt, goal.updatedAt, null, 1],
+        (id, user_id, name, target_amount, savings_percent, is_overflow_target, destination_account_id, position, purchased_at, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [goal.id, userId, goal.name, goal.targetAmount, goal.savingsPercent, goal.isOverflowTarget ? 1 : 0, goal.destinationAccountId, goal.position, goal.purchasedAt, goal.createdAt, goal.updatedAt, null, 1],
     );
     await enqueue(userId, "insert", "savings_goals", goal.id, savingsGoalToWire(goal, userId));
     return goal;
@@ -893,11 +1007,11 @@ export const localRepo: Repo = {
     };
     await db.execute(
       `UPDATE savings_goals SET name = ?, target_amount = ?, savings_percent = ?, is_overflow_target = ?,
-         position = ?, purchased_at = ?, updated_at = ?, deleted_at = ?, version = ?
+         destination_account_id = ?, position = ?, purchased_at = ?, updated_at = ?, deleted_at = ?, version = ?
        WHERE id = ? AND user_id = ?`,
       [
         updated.name, updated.targetAmount, updated.savingsPercent, updated.isOverflowTarget ? 1 : 0,
-        updated.position, updated.purchasedAt,
+        updated.destinationAccountId, updated.position, updated.purchasedAt,
         updated.updatedAt, updated.deletedAt, updated.version,
         id, userId,
       ],
@@ -983,6 +1097,216 @@ export const localRepo: Repo = {
     await enqueue(userId, "delete", "savings_contributions", id, null);
   },
 
+  // ---------- accounts ----------
+  async listAccounts() {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const rows = await db.select<DbAccountRow[]>(
+      "SELECT * FROM accounts WHERE user_id = ? AND deleted_at IS NULL ORDER BY position ASC, created_at ASC",
+      [userId],
+    );
+    return rows.map(fromDbAccount);
+  },
+
+  async createAccount(input: AccountCreate) {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const ts = now();
+    const account: Account = {
+      id: newId(),
+      name: input.name,
+      owner: input.owner,
+      type: input.type,
+      currency: input.currency,
+      balance: input.balance,
+      openingBalance: input.openingBalance,
+      balanceAsOf: input.balanceAsOf ?? null,
+      receivesIncome: input.receivesIncome ?? false,
+      paysExpenses: input.paysExpenses ?? false,
+      isSavingsTarget: input.isSavingsTarget ?? false,
+      isInvestmentTarget: input.isInvestmentTarget ?? false,
+      syncSource: input.syncSource ?? "manual",
+      externalRef: input.externalRef ?? null,
+      institution: input.institution ?? "",
+      note: input.note ?? "",
+      position: input.position ?? 0,
+      archived: false,
+      createdAt: ts,
+      updatedAt: ts,
+      deletedAt: null,
+      version: 1,
+    };
+    await db.execute(
+      `INSERT INTO accounts
+        (id, user_id, name, owner, type, currency, balance, opening_balance, balance_as_of,
+         receives_income, pays_expenses, is_savings_target, is_investment_target,
+         sync_source, external_ref, institution, note, position, archived,
+         created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        account.id, userId, account.name, account.owner, account.type, account.currency,
+        account.balance, account.openingBalance, account.balanceAsOf,
+        account.receivesIncome ? 1 : 0, account.paysExpenses ? 1 : 0,
+        account.isSavingsTarget ? 1 : 0, account.isInvestmentTarget ? 1 : 0,
+        account.syncSource, account.externalRef, account.institution, account.note,
+        account.position, 0,
+        account.createdAt, account.updatedAt, null, 1,
+      ],
+    );
+    await enqueue(userId, "insert", "accounts", account.id, accountToWire(account, userId));
+    return account;
+  },
+
+  async patchAccount(id, patch) {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const rows = await db.select<DbAccountRow[]>(
+      "SELECT * FROM accounts WHERE id = ? AND user_id = ? AND deleted_at IS NULL LIMIT 1",
+      [id, userId],
+    );
+    if (!rows[0]) throw new Error(`Account ${id} not found`);
+    const existing = fromDbAccount(rows[0]);
+    const updated: Account = {
+      ...existing,
+      ...patch,
+      id: existing.id,
+      createdAt: existing.createdAt,
+      updatedAt: now(),
+      version: existing.version + 1,
+    };
+    await db.execute(
+      `UPDATE accounts SET
+         name = ?, owner = ?, type = ?, currency = ?, balance = ?, opening_balance = ?,
+         balance_as_of = ?, receives_income = ?, pays_expenses = ?, is_savings_target = ?,
+         is_investment_target = ?, sync_source = ?, external_ref = ?, institution = ?, note = ?,
+         position = ?, archived = ?, updated_at = ?, deleted_at = ?, version = ?
+       WHERE id = ? AND user_id = ?`,
+      [
+        updated.name, updated.owner, updated.type, updated.currency, updated.balance,
+        updated.openingBalance, updated.balanceAsOf,
+        updated.receivesIncome ? 1 : 0, updated.paysExpenses ? 1 : 0,
+        updated.isSavingsTarget ? 1 : 0, updated.isInvestmentTarget ? 1 : 0,
+        updated.syncSource, updated.externalRef, updated.institution, updated.note,
+        updated.position, updated.archived ? 1 : 0,
+        updated.updatedAt, updated.deletedAt, updated.version,
+        id, userId,
+      ],
+    );
+    await enqueue(userId, "update", "accounts", id, accountToWire(updated, userId));
+    return updated;
+  },
+
+  async deleteAccount(id) {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const ts = now();
+    await db.execute(
+      "UPDATE accounts SET deleted_at = ?, updated_at = ?, version = version + 1 WHERE id = ? AND user_id = ?",
+      [ts, ts, id, userId],
+    );
+    await enqueue(userId, "delete", "accounts", id, null);
+  },
+
+  // ---------- account_transfers ----------
+  async listAccountTransfers() {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const rows = await db.select<DbAccountTransferRow[]>(
+      "SELECT * FROM account_transfers WHERE user_id = ? AND deleted_at IS NULL ORDER BY transferred_on DESC, created_at DESC",
+      [userId],
+    );
+    return rows.map(fromDbAccountTransfer);
+  },
+
+  async createAccountTransfer(input: AccountTransferCreate) {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const ts = now();
+    const transfer: AccountTransfer = {
+      id: newId(),
+      fromAccountId: input.fromAccountId,
+      toAccountId: input.toAccountId,
+      amount: input.amount,
+      currency: input.currency,
+      transferredOn: input.transferredOn,
+      kind: input.kind,
+      goalId: input.goalId ?? null,
+      note: input.note ?? "",
+      createdAt: ts,
+      updatedAt: ts,
+      deletedAt: null,
+      version: 1,
+    };
+    await db.execute(
+      `INSERT INTO account_transfers
+        (id, user_id, from_account_id, to_account_id, amount, currency, transferred_on, kind, goal_id, note, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        transfer.id, userId, transfer.fromAccountId, transfer.toAccountId, transfer.amount,
+        transfer.currency, transfer.transferredOn, transfer.kind, transfer.goalId, transfer.note,
+        transfer.createdAt, transfer.updatedAt, null, 1,
+      ],
+    );
+    await enqueue(userId, "insert", "account_transfers", transfer.id, accountTransferToWire(transfer, userId));
+    // Auto-calc: money leaves `from` and arrives (converted) into `to`.
+    await applyTransferEffect(db, userId, transfer, 1);
+    return transfer;
+  },
+
+  async patchAccountTransfer(id, patch: AccountTransferPatch) {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const rows = await db.select<DbAccountTransferRow[]>(
+      "SELECT * FROM account_transfers WHERE id = ? AND user_id = ? AND deleted_at IS NULL LIMIT 1",
+      [id, userId],
+    );
+    if (!rows[0]) throw new Error(`Account transfer ${id} not found`);
+    const existing = fromDbAccountTransfer(rows[0]);
+    const updated: AccountTransfer = {
+      ...existing,
+      ...patch,
+      id: existing.id,
+      createdAt: existing.createdAt,
+      updatedAt: now(),
+      version: existing.version + 1,
+    };
+    await db.execute(
+      `UPDATE account_transfers SET from_account_id = ?, to_account_id = ?, amount = ?, currency = ?,
+         transferred_on = ?, kind = ?, goal_id = ?, note = ?, updated_at = ?, deleted_at = ?, version = ?
+       WHERE id = ? AND user_id = ?`,
+      [
+        updated.fromAccountId, updated.toAccountId, updated.amount, updated.currency,
+        updated.transferredOn, updated.kind, updated.goalId, updated.note,
+        updated.updatedAt, updated.deletedAt, updated.version,
+        id, userId,
+      ],
+    );
+    await enqueue(userId, "update", "account_transfers", id, accountTransferToWire(updated, userId));
+    // Auto-calc: reverse the old movement, then apply the new one.
+    await applyTransferEffect(db, userId, existing, -1);
+    if (!updated.deletedAt) await applyTransferEffect(db, userId, updated, 1);
+    return updated;
+  },
+
+  async deleteAccountTransfer(id) {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const ts = now();
+    const rows = await db.select<DbAccountTransferRow[]>(
+      "SELECT * FROM account_transfers WHERE id = ? AND user_id = ? AND deleted_at IS NULL LIMIT 1",
+      [id, userId],
+    );
+    await db.execute(
+      "UPDATE account_transfers SET deleted_at = ?, updated_at = ?, version = version + 1 WHERE id = ? AND user_id = ?",
+      [ts, ts, id, userId],
+    );
+    await enqueue(userId, "delete", "account_transfers", id, null);
+    if (rows[0]) {
+      const old = fromDbAccountTransfer(rows[0]);
+      await applyTransferEffect(db, userId, old, -1);
+    }
+  },
+
   // ---------- incomes ----------
   async listIncomes() {
     const userId = await requireUserId();
@@ -998,10 +1322,18 @@ export const localRepo: Repo = {
     const userId = await requireUserId();
     const db = await getDb();
     const ts = now();
-    const existing = await db.select<DbIncomeRow[]>(
-      "SELECT * FROM incomes WHERE user_id = ? AND month = ? AND deleted_at IS NULL LIMIT 1",
-      [userId, input.month],
-    );
+    const accountId = input.accountId ?? null;
+    // Incomes are now keyed on (month, account). NULL account = legacy "general"
+    // income, matched explicitly with IS NULL.
+    const existing = accountId
+      ? await db.select<DbIncomeRow[]>(
+          "SELECT * FROM incomes WHERE user_id = ? AND month = ? AND account_id = ? AND deleted_at IS NULL LIMIT 1",
+          [userId, input.month, accountId],
+        )
+      : await db.select<DbIncomeRow[]>(
+          "SELECT * FROM incomes WHERE user_id = ? AND month = ? AND account_id IS NULL AND deleted_at IS NULL LIMIT 1",
+          [userId, input.month],
+        );
     if (existing[0]) {
       const prev = fromDbIncome(existing[0]);
       const updated: Income = {
@@ -1018,6 +1350,9 @@ export const localRepo: Repo = {
         [updated.amount, updated.currency, updated.note, updated.updatedAt, updated.version, updated.id, userId],
       );
       await enqueue(userId, "update", "incomes", updated.id, incomeToWire(updated, userId));
+      // Auto-calc: reverse the prior income, then apply the new amount.
+      await adjustAccountBalance(db, userId, prev.accountId, -prev.amount);
+      await adjustAccountBalance(db, userId, updated.accountId, updated.amount);
       return updated;
     }
     const created: Income = {
@@ -1025,6 +1360,7 @@ export const localRepo: Repo = {
       month: input.month,
       amount: input.amount,
       currency: input.currency,
+      accountId,
       note: input.note ?? "",
       createdAt: ts,
       updatedAt: ts,
@@ -1033,12 +1369,14 @@ export const localRepo: Repo = {
     };
     await db.execute(
       `INSERT INTO incomes
-        (id, user_id, month, amount, currency, note, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [created.id, userId, created.month, created.amount, created.currency, created.note,
+        (id, user_id, month, amount, currency, account_id, note, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [created.id, userId, created.month, created.amount, created.currency, created.accountId, created.note,
        created.createdAt, created.updatedAt, null, 1],
     );
     await enqueue(userId, "insert", "incomes", created.id, incomeToWire(created, userId));
+    // Auto-calc: income arrives into the receiving account.
+    await adjustAccountBalance(db, userId, created.accountId, created.amount);
     return created;
   },
 
@@ -1046,11 +1384,20 @@ export const localRepo: Repo = {
     const userId = await requireUserId();
     const db = await getDb();
     const ts = now();
+    const rows = await db.select<DbIncomeRow[]>(
+      "SELECT * FROM incomes WHERE id = ? AND user_id = ? AND deleted_at IS NULL LIMIT 1",
+      [id, userId],
+    );
     await db.execute(
       "UPDATE incomes SET deleted_at = ?, updated_at = ?, version = version + 1 WHERE id = ? AND user_id = ?",
       [ts, ts, id, userId],
     );
     await enqueue(userId, "delete", "incomes", id, null);
+    if (rows[0]) {
+      const old = fromDbIncome(rows[0]);
+      // Reverse the income that was applied to the receiving account.
+      await adjustAccountBalance(db, userId, old.accountId, -old.amount);
+    }
   },
 
   // ---------- habit_logs ----------
@@ -2503,6 +2850,7 @@ interface DbExpenseRow {
   category_id: string | null;
   spent_on: string;
   note: string;
+  account_id: string | null;
   recurrence: string | null;
   recurrence_parent_id: string | null;
   created_at: string;
@@ -2521,6 +2869,87 @@ interface DbBudgetRow {
   updated_at: string;
   deleted_at: string | null;
   version: number;
+}
+
+interface DbAccountRow {
+  id: string;
+  user_id: string;
+  name: string;
+  owner: string;
+  type: string;
+  currency: string;
+  balance: number;
+  opening_balance: number;
+  balance_as_of: string | null;
+  receives_income: number;
+  pays_expenses: number;
+  is_savings_target: number;
+  is_investment_target: number;
+  sync_source: string;
+  external_ref: string | null;
+  institution: string;
+  note: string;
+  position: number;
+  archived: number;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+  version: number;
+}
+
+function fromDbAccount(r: DbAccountRow): Account {
+  return {
+    id: r.id,
+    name: r.name,
+    owner: r.owner as Account["owner"],
+    type: r.type as Account["type"],
+    currency: r.currency as Account["currency"],
+    balance: r.balance,
+    openingBalance: r.opening_balance,
+    balanceAsOf: r.balance_as_of,
+    receivesIncome: boolFromDb(r.receives_income),
+    paysExpenses: boolFromDb(r.pays_expenses),
+    isSavingsTarget: boolFromDb(r.is_savings_target),
+    isInvestmentTarget: boolFromDb(r.is_investment_target),
+    syncSource: r.sync_source ?? "manual",
+    externalRef: r.external_ref,
+    institution: r.institution ?? "",
+    note: r.note ?? "",
+    position: r.position,
+    archived: boolFromDb(r.archived),
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    deletedAt: r.deleted_at,
+    version: r.version,
+  };
+}
+
+function accountToWire(a: Account, userId: string) {
+  return {
+    id: a.id,
+    user_id: userId,
+    name: a.name,
+    owner: a.owner,
+    type: a.type,
+    currency: a.currency,
+    balance: a.balance,
+    opening_balance: a.openingBalance,
+    balance_as_of: a.balanceAsOf,
+    receives_income: a.receivesIncome,
+    pays_expenses: a.paysExpenses,
+    is_savings_target: a.isSavingsTarget,
+    is_investment_target: a.isInvestmentTarget,
+    sync_source: a.syncSource,
+    external_ref: a.externalRef,
+    institution: a.institution,
+    note: a.note,
+    position: a.position,
+    archived: a.archived,
+    created_at: a.createdAt,
+    updated_at: a.updatedAt,
+    deleted_at: a.deletedAt,
+    version: a.version,
+  };
 }
 
 function fromDbExpenseCategory(r: DbExpenseCategoryRow): ExpenseCategory {
@@ -2546,6 +2975,7 @@ function fromDbExpense(r: DbExpenseRow): Expense {
     categoryId: r.category_id,
     spentOn: r.spent_on,
     note: r.note,
+    accountId: r.account_id ?? null,
     recurrence: parseJson<RecurrenceRule | null>(r.recurrence, null),
     recurrenceParentId: r.recurrence_parent_id,
     createdAt: r.created_at,
@@ -2593,6 +3023,7 @@ function expenseToWire(e: Expense, userId: string) {
     category_id: e.categoryId,
     spent_on: e.spentOn,
     note: e.note,
+    account_id: e.accountId,
     recurrence: e.recurrence,
     recurrence_parent_id: e.recurrenceParentId,
     created_at: e.createdAt,
@@ -2623,6 +3054,7 @@ interface DbSavingsGoalRow {
   target_amount: number | null;
   savings_percent: number;
   is_overflow_target: number;
+  destination_account_id: string | null;
   position: number;
   purchased_at: string | null;
   created_at: string;
@@ -2650,6 +3082,7 @@ function fromDbSavingsGoal(r: DbSavingsGoalRow): SavingsGoal {
     targetAmount: r.target_amount,
     savingsPercent: r.savings_percent ?? 0,
     isOverflowTarget: boolFromDb(r.is_overflow_target ?? 0),
+    destinationAccountId: r.destination_account_id ?? null,
     position: r.position,
     purchasedAt: r.purchased_at,
     createdAt: r.created_at,
@@ -2680,6 +3113,7 @@ function savingsGoalToWire(g: SavingsGoal, userId: string) {
     target_amount: g.targetAmount,
     savings_percent: g.savingsPercent,
     is_overflow_target: g.isOverflowTarget,
+    destination_account_id: g.destinationAccountId,
     position: g.position,
     purchased_at: g.purchasedAt,
     created_at: g.createdAt,
@@ -2709,6 +3143,7 @@ interface DbIncomeRow {
   month: string;
   amount: number;
   currency: string;
+  account_id: string | null;
   note: string;
   created_at: string;
   updated_at: string;
@@ -2722,6 +3157,7 @@ function fromDbIncome(r: DbIncomeRow): Income {
     month: r.month,
     amount: r.amount,
     currency: r.currency,
+    accountId: r.account_id ?? null,
     note: r.note,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
@@ -2737,11 +3173,66 @@ function incomeToWire(i: Income, userId: string) {
     month: i.month,
     amount: i.amount,
     currency: i.currency,
+    account_id: i.accountId,
     note: i.note,
     created_at: i.createdAt,
     updated_at: i.updatedAt,
     deleted_at: i.deletedAt,
     version: i.version,
+  };
+}
+
+interface DbAccountTransferRow {
+  id: string;
+  user_id: string;
+  from_account_id: string | null;
+  to_account_id: string | null;
+  amount: number;
+  currency: string;
+  transferred_on: string;
+  kind: string;
+  goal_id: string | null;
+  note: string;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+  version: number;
+}
+
+function fromDbAccountTransfer(r: DbAccountTransferRow): AccountTransfer {
+  return {
+    id: r.id,
+    fromAccountId: r.from_account_id ?? null,
+    toAccountId: r.to_account_id ?? null,
+    amount: r.amount,
+    currency: r.currency,
+    transferredOn: r.transferred_on,
+    kind: (r.kind as AccountTransfer["kind"]) || "transfer",
+    goalId: r.goal_id ?? null,
+    note: r.note ?? "",
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    deletedAt: r.deleted_at,
+    version: r.version,
+  };
+}
+
+function accountTransferToWire(t: AccountTransfer, userId: string) {
+  return {
+    id: t.id,
+    user_id: userId,
+    from_account_id: t.fromAccountId,
+    to_account_id: t.toAccountId,
+    amount: t.amount,
+    currency: t.currency,
+    transferred_on: t.transferredOn,
+    kind: t.kind,
+    goal_id: t.goalId,
+    note: t.note,
+    created_at: t.createdAt,
+    updated_at: t.updatedAt,
+    deleted_at: t.deletedAt,
+    version: t.version,
   };
 }
 

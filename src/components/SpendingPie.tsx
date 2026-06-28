@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { colorsForHue } from "../lib/categoryColor";
 import { fmtMoney } from "../lib/money";
 import type { Expense, ExpenseCategory } from "../types";
@@ -19,6 +19,12 @@ interface Props {
   limit?: number;
   /** Per-category budgets. When set, shows "spent / budget" in the legend and colors over-budget amounts red. */
   budgets?: CategoryBudget[];
+  /** Row layout only. true (default): fill available height + center (card usage).
+   *  false: hug content at the top, size pie by viewport width (pinned-header usage). */
+  fill?: boolean;
+  /** Pinned-pie only: target pie size (px) = 40% of the column height. Keeps the
+   *  pie at a fixed share of the height and leaves room for the expenses below. */
+  sizePx?: number;
 }
 
 interface Slice {
@@ -57,9 +63,30 @@ function arcPath(start: number, end: number, ro: number, ri: number): string {
   ].join(" ");
 }
 
-export function SpendingPie({ expenses, categories, layout = "column", size = SIZE, limit, budgets }: Props) {
+export function SpendingPie({ expenses, categories, layout = "column", size = SIZE, limit, budgets, fill = true, sizePx }: Props) {
   const [hoverId, setHoverId] = useState<string | null>(null);
   const row = layout === "row";
+
+  // Pinned-pie (row + !fill): size the pie from the actual container width so it
+  // grows when the window opens, and drop the legend before names/numbers collide.
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const [rootW, setRootW] = useState<number | null>(null);
+  useEffect(() => {
+    if (!row || fill) return;
+    const el = rootRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => setRootW(entries[0].contentRect.width));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [row, fill]);
+  // Below this container width the legend would get cramped -> show pie only.
+  const showLegend = !row || fill || rootW === null || rootW >= 420;
+  // Pie size = a fixed target (40% of the column height, passed as sizePx) so it
+  // stays the same whether the legend is shown or hidden (no size jump), capped by
+  // the container width so it never overflows when narrow.
+  const pieSize = rootW === null
+    ? null
+    : Math.max(120, Math.min(sizePx ?? rootW * 0.45, rootW));
 
   const buckets = new Map<string, number>();
   for (const e of expenses) {
@@ -111,7 +138,9 @@ export function SpendingPie({ expenses, categories, layout = "column", size = SI
   const hoverSlice = hoverId != null ? pieSlices.find((s) => s.id === hoverId) ?? null : null;
 
   return (
-    <div style={row ? { display: "flex", gap: 16, alignItems: "center", flex: 1, minHeight: 0 } : undefined}>
+    <div ref={rootRef} style={row ? (fill
+      ? { display: "flex", gap: 16, alignItems: "center", flex: 1, minHeight: 0 }
+      : { display: "flex", gap: 16, alignItems: "center", justifyContent: "flex-start" }) : undefined}>
       {/* Pie chart */}
       <div
         style={row ? {
@@ -119,9 +148,10 @@ export function SpendingPie({ expenses, categories, layout = "column", size = SI
           alignItems: "center",
           justifyContent: "center",
           position: "relative",
-          flex: "0 0 auto",
-          height: "min(100%, max(100px, 22vw))",
           aspectRatio: "1 / 1",
+          ...(fill
+            ? { flex: "0 0 auto", height: "min(100%, max(100px, 22vw))" }
+            : { flex: "0 0 auto", width: pieSize != null ? `${pieSize}px` : "min(100%, 240px)" }),
         } : {
           display: "grid",
           placeItems: "center",
@@ -183,8 +213,9 @@ export function SpendingPie({ expenses, categories, layout = "column", size = SI
         </div>
       </div>
 
-      {/* Legend: all categories */}
-      <div style={{ display: "flex", flexDirection: "column", gap: "clamp(2px, 0.3vw, 4px)", flex: row ? 1 : undefined, minWidth: 0, overflowY: row ? "auto" : undefined, ...(row ? { alignSelf: "stretch", justifyContent: "center" } : {}) }}>
+      {/* Legend: all categories (hidden when too narrow -> pie only) */}
+      {showLegend && (
+      <div style={{ display: "flex", flexDirection: "column", gap: "clamp(2px, 0.3vw, 4px)", flex: row ? (fill ? 1 : "0 1 auto") : undefined, minWidth: 0, overflowY: row ? "auto" : undefined, ...(row && fill ? { alignSelf: "stretch", justifyContent: "center" } : (row ? { maxHeight: pieSize != null ? pieSize : undefined } : {})) }}>
         {legendItems.map((item) => {
           const colors = item.cat ? colorsForHue(item.cat.hue) : { bg: "var(--line-strong)", fg: "var(--fg-muted)" };
           const pct = limit && limit > 0
@@ -201,11 +232,11 @@ export function SpendingPie({ expenses, categories, layout = "column", size = SI
               onMouseLeave={() => setHoverId(null)}
               style={{
                 display: "grid",
-                gridTemplateColumns: "clamp(6px,0.5vw,12px) 1fr auto auto",
-                gap: "clamp(3px,0.4vw,8px)",
+                gridTemplateColumns: "clamp(8px,0.6vw,14px) clamp(70px,7vw,200px) auto auto",
+                gap: "clamp(6px,0.6vw,12px)",
                 alignItems: "center",
-                fontSize: "clamp(9px, 0.85vw, 14px)",
-                padding: "clamp(2px,0.25vw,4px) clamp(3px,0.4vw,6px)",
+                fontSize: "clamp(11px, 1.1vw, 18px)",
+                padding: "clamp(2px,0.3vw,5px) clamp(3px,0.4vw,7px)",
                 borderRadius: 5,
                 background: isHover ? colors.bg : "transparent",
                 color: isHover ? colors.fg : dimmed ? "var(--fg-subtle)" : "var(--fg)",
@@ -214,11 +245,11 @@ export function SpendingPie({ expenses, categories, layout = "column", size = SI
                 transition: "background .15s, color .15s",
               }}
             >
-              <span style={{ width: "clamp(6px,0.5vw,12px)", height: "clamp(6px,0.5vw,12px)", borderRadius: 3, background: colors.bg, opacity: dimmed ? 0.4 : 1 }} />
+              <span style={{ width: "clamp(8px,0.6vw,14px)", height: "clamp(8px,0.6vw,14px)", borderRadius: 3, background: colors.bg, opacity: dimmed ? 0.4 : 1 }} />
               <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {item.cat?.name ?? "Uncategorized"}
               </span>
-              <span style={{ fontVariantNumeric: "tabular-nums", fontSize: "clamp(8px,0.75vw,13px)", color: isHover ? "inherit" : isOver ? "var(--danger)" : "var(--fg-muted)" }}>
+              <span style={{ fontVariantNumeric: "tabular-nums", fontSize: "clamp(10px,1vw,16px)", color: isHover ? "inherit" : isOver ? "var(--danger)" : "var(--fg-muted)" }}>
                 {item.amount > 0 ? fmtMoney(item.amount) : "—"}
                 {catBudget != null && (
                   <span style={{ color: isHover ? "inherit" : "var(--fg-subtle)", opacity: 0.7 }}>
@@ -226,13 +257,14 @@ export function SpendingPie({ expenses, categories, layout = "column", size = SI
                   </span>
                 )}
               </span>
-              <span style={{ fontVariantNumeric: "tabular-nums", fontSize: "clamp(8px,0.7vw,12px)", color: isHover ? "inherit" : "var(--fg-subtle)", minWidth: "clamp(20px,1.6vw,36px)", textAlign: "right" }}>
+              <span style={{ fontVariantNumeric: "tabular-nums", fontSize: "clamp(9px,0.9vw,15px)", color: isHover ? "inherit" : "var(--fg-subtle)", minWidth: "clamp(24px,1.8vw,42px)", textAlign: "right" }}>
                 {item.amount > 0 ? `${pct}%` : "—"}
               </span>
             </div>
           );
         })}
       </div>
+      )}
     </div>
   );
 }

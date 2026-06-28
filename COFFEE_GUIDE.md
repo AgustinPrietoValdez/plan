@@ -220,14 +220,27 @@ color/aceite del grano, y la taza misma.
 
 | Tueste | Indicios | Solubilidad | Ajustes |
 |---|---|---|---|
-| Claro / nordico | Grano claro, seco, sin aceite; roasters de especialidad (ej La Cabra) | Baja, cuesta extraer | Agua mas caliente (95-100 C); extraer MAS: molienda algo mas fina, mas agitacion/pours, recetas tipo Lance o 4:6 a temp alta |
+| Claro / nordico | Grano claro, seco, sin aceite; roasters de especialidad (ej La Cabra) | Baja, cuesta extraer | Agua 90-96 C **segun REPOSO, no solo tueste** (ver nota abajo); la temp exacta importa poco a igual extraccion. Extraer MAS: molienda algo mas fina, mas agitacion/pours, recetas tipo Lance o 4:6 |
 | Medio | Marron parejo, seco | Media | Baseline (90-94 C); Hoffmann o 4:6 estandar |
 | Oscuro | Marron oscuro, algo aceitoso | Alta, se sobre-extrae facil | Agua MAS FRIA (85-90 C); extraer MENOS: molienda mas gruesa, menos agitacion; cuidar el amargor |
 
-- **La Cabra tuesta CLARO (estilo nordico).** Por eso para sus cafes empujamos temperatura
-  (95-96 C) y buscamos buena extraccion: si no, salen agrios/planos.
+- **La Cabra tuesta CLARO (estilo nordico), PERO ata la temperatura al REPOSO del grano, no al
+  tueste** (guia oficial La Cabra, verificada 2026-06-20). Su escalera por tiempo desde el tueste:
+  - **Fresco (<3 semanas):** **90 C** + molienda mas fina (baja la temp para no resaltar los
+    sabores asperos del degasificado temprano).
+  - **Reposado (3-6 semanas):** **94 C** -- es su estandar (el cafe que sirven en Aarhus).
+  - **Muy reposado (>6 semanas):** **94 C** pero con MAS vertidos (mas extraccion; ya se fueron
+    los asperos del tueste).
+- **CORRECCION al mito "claro = siempre 95-100 C":** la evidencia muestra que, A IGUAL extraccion
+  y fuerza, la temperatura entre ~87-93 C casi NO cambia el perfil sensorial (Batali, Ristenpart &
+  Guinard 2020, Scientific Reports; UC Davis / Coffee Science Foundation). O sea: 94 vs 96 mueve
+  poco si llegas a la misma extraccion; lo que de verdad manda es molienda / tiempo / agitacion.
+  **La recomendacion del roaster (La Cabra: 94 C reposado) vale mas que la regla generica de
+  "empujar a 96".** El 95-96 C tiene sentido sobre todo si el cafe esta MUY reposado o sale agrio
+  y ya cerraste molienda.
 - **Impacto en la opinion:** un tueste claro que sale agrio casi siempre es sub-extraido, no
-  "mal cafe" -> extraer mas antes de juzgarlo. Un oscuro amargo suele ser sobre-extraido.
+  "mal cafe" -> extraer mas (primero molienda) antes de juzgarlo. Un oscuro amargo suele ser
+  sobre-extraido.
 
 (Fuentes: solubilidad por tueste, ver sec 1-3; La Cabra = roaster nordico de especialidad.)
 
@@ -273,28 +286,42 @@ Perfect Daily Grind. Todas las generalizaciones son tendencias, no universales.)
 - **Perfil esperado:** washed + Pink Bourbon -> taza limpia y floral, acidez citrica/jugosa,
   dulzor a panela/caramelo, notas a te o tropical; cuerpo medio-liviano. (Perfil tipico de
   variedad, confianza media; ajustar con las catas reales.)
-- **Tueste:** La Cabra = claro/nordico -> empujar temperatura y extraer bien (sec 8).
+- **Tueste / TEMP por REPOSO:** La Cabra = claro/nordico, pero la temp la define el REPOSO del
+  grano (guia oficial La Cabra, ver sec 8). roasted_on 2026-05-22; a 2026-06-20 = ~4 semanas =
+  **REPOSADO (3-6 sem) -> 94 C**, que es justo el estandar de La Cabra (no 96). Si estuviera
+  fresco (<3 sem) habria sido 90 C. La temp exacta importa poco a igual extraccion (Batali 2020):
+  si sale agrio/plano, primero cerrar molienda, no subir temp a lo loco.
 - **Receta recomendada:** la cata se hace con V60. Principal = **4:6 de Kasuya** (afinable);
   alternativa = **"V60 - Lance"** (alta extraccion, la que ya tenes).
-  - **4:6 (principal):** 20 g : 300 g (1:15), 2do vertido mas grande (busca dulzor), agua **96 C**
-    (tueste claro), molienda K6 **~88-92 clicks** (4:6 usa media-gruesa).
-  - **Lance (alternativa):** 1:15, **95-96 C** (subir de 91 por ser tueste claro), K6 **~80 clicks**
-    (tu ancla). Usar si el 4:6 sale plano: extrae mas.
+  - **4:6 (principal):** 20 g : 300 g (1:15), 2do vertido mas grande (busca dulzor), agua **94 C**
+    (reposado, estandar La Cabra; antes lo tenia a 96), molienda K6 **~88-92 clicks** (media-gruesa).
+  - **Lance (alternativa):** 1:15, **94 C** (estandar La Cabra para grano reposado 3-6 sem; lo baje
+    de 96 el 2026-06-20), K6 **~80 clicks** (tu ancla). Usar si el 4:6 sale plano: extrae mas.
   - Razon: washed claro y delicado -> extraer bien para el dulzor sin matar lo floral (la
     sobre-extraccion lo pone astringente).
   - Nota app: el 4:6 todavia NO esta cargado como receta en la app (entra con la feature de
     receta recomendada).
 - **Diagnostico rapido (Coffee Compass):** agrio/plano -> mas fino o +temp; astringente/amargo
   -> mas grueso o -temp. Mover una palanca por vez.
-- **Catas y ajustes:** (se completa con cada brew; volcar cata_inicial y last_tweak.)
+- **Catas y ajustes:**
+  - **2026-06-20 (Lance, 15:225 1:15, 94 C):** brews previos a molienda K6 80 salieron **agrios y
+    planos**; bajamos 80->73 (sigue agrio) y temp 96->94. La telemetria del brew de las 08:51 mostro
+    curva LIMPIA (sin canalizacion ni stall, drawdown ~48s) pero contacto corto (2:08) -> coherente
+    con sub-extraccion. Diagnostico: **sub-extraido (EY bajo)** de forma persistente. Ajuste:
+    molienda **73->70** (palanca de extraccion; temp se mantiene en 94 porque a igual extraccion
+    +-2C casi no mueve, Batali 2020). Pendiente re-catar a 70.
 
 _Los proximos cafes se agregan abajo con el mismo formato (ficha, perfil esperado, receta
 recomendada con molienda+temp, diagnostico, catas)._
 
 ## Parte 3 - Perfil de gustos del usuario (se construye con las catas)
 
-_Placeholder: aca se acumula que sabores prefiere y evita el dueno, y sus sesgos de ajuste.
-Vacio hasta las primeras catas._
+**Observaciones (se acumulan con cada cata):**
+- **2026-06-20:** tiende a percibir **agrio/plano** (sub-extraccion) en sus V60 de tueste claro.
+  Sesgo a vigilar: probablemente **muele demasiado grueso** para washed claros (su ancla "V60 washed
+  = 80 K6" parece gruesa para estos cafes nordicos; con el Monkaaba hubo que bajar a 70). Hipotesis a
+  confirmar: le gusta la taza con cuerpo/dulzor (le molesta lo agrio-fino) -> empujar extraccion
+  (molienda fina, buena agitacion) antes que aflojar nada. Revisar tras 2-3 catas mas.
 
 ---
 
@@ -327,6 +354,11 @@ primarias y voto unanime). **[G] = gratis, [P] = pago.** Actualizado 2026-06-14.
   https://coffeecenter.ucdavis.edu/news/uc-davis-coffee-center-contributes-research-new-brewing-control-chart
   — >58.000 datos sensoriales; cuestiona la caja clasica; propone charts nuevos (no oficiales).
   Formula clave: **EY% = masa de cafe liquido x TDS% / dosis**.
+- **[G] Batali, Ristenpart & Guinard 2020** (Scientific Reports 10:16450, open access,
+  doi:10.1038/s41598-020-73341-4): https://www.nature.com/articles/s41598-020-73341-4 — "Brew
+  temperature, at fixed brew strength and extraction, has little impact on the sensory profile of
+  drip brew coffee". Probaron 87/90/93 C ajustando molienda+tiempo para igualar TDS/EY: la temp
+  por si sola casi no movio el perfil. Sostiene: la temp exacta importa poco a igual extraccion.
 - **[G] Moroney et al. 2019** (PLOS ONE, open access, doi:10.1371/journal.pone.0219906):
   https://journals.plos.org/plosone/article?id=10.1371%2Fjournal.pone.0219906 — Fisica del
   pour-over: lechos conicos (V60) extraen menos uniforme que cilindricos; molienda fina ->
@@ -344,6 +376,11 @@ primarias y voto unanime). **[G] = gratis, [P] = pago.** Actualizado 2026-06-14.
   = sub-extraido; amargo/astringente = sobre-extraido. Tool gratis; Barista Hustle ademas vende
   cursos [P]. Perger = Campeon Mundial Brewers Cup 2012. (Nota: amargo Y agrio a la vez =
   extraccion despareja/canalizacion, no un solo eje.)
+- **[G] La Cabra - V60 brew guide + Resting Coffee** (el roaster del Monkaaba):
+  https://lacabra.com/pages/v60-brew-guide y https://lacabra.com/pages/resting-coffee — receta
+  base 15 g : 250 g, media-fina, 96 C, ~3:00. TEMP POR REPOSO: fresco <3 sem = 90 C (+ molienda
+  fina); reposado 3-6 sem = **94 C (su estandar)**; muy reposado >6 sem = 94 C con mas vertidos.
+  Verificado 2026-06-20.
 - **[G] Tim Wendelboe - guia pour-over/filtro:**
   https://timwendelboe.no/pages/how-to-brew-pourover-and-filter-coffee — 65 g/L (~1:15.4).
   Ex Campeon Mundial Barista.

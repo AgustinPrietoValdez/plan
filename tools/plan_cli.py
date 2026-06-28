@@ -36,12 +36,13 @@ Uso:
 """
 
 import argparse
+import calendar
 import json
 import os
 import sqlite3
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 NO_PROJECT = "(sin proyecto)"
@@ -355,12 +356,180 @@ def cmd_check(args, value):
         print("(todas las subtareas estan hechas; podes 'complete' la tarea)")
 
 
+def today_ymd() -> str:
+    return datetime.now().strftime("%Y-%m-%d")
+
+
+def _parse_ymd(s):
+    y, m, d = (int(x) for x in s.split("-"))
+    return date(y, m, d)
+
+
+def _week_index(d):
+    return (d - date(1970, 1, 1)).days // 7
+
+
+def next_occurrence(rule, from_str):
+    """Replica src/lib/recurrence.ts nextOccurrence (estrictamente DESPUES de from)."""
+    if not rule or not from_str:
+        return None
+    frm = _parse_ymd(from_str)
+    kind = rule.get("kind")
+    if kind == "daily":
+        step = max(1, int(rule.get("interval", 1)))
+        return (frm + timedelta(days=step)).strftime("%Y-%m-%d")
+    if kind == "weekly":
+        wds = sorted(rule.get("weekdays") or [])
+        if not wds:
+            return None
+        interval = max(1, int(rule.get("interval", 1)))
+        source_week = _week_index(frm)
+        for i in range(1, 7 * interval + 8):
+            cand = frm + timedelta(days=i)
+            dow = (cand.weekday() + 1) % 7  # 0=Dom..6=Sab (como Date.getDay())
+            if (_week_index(cand) - source_week) % interval != 0:
+                continue
+            if dow in wds:
+                return cand.strftime("%Y-%m-%d")
+        return None
+    if kind == "monthly":
+        interval = max(1, int(rule.get("interval", 1)))
+        day = min(31, max(1, int(rule.get("dayOfMonth", 1))))
+        y = frm.year
+        m0 = (frm.month - 1) + interval  # 0-based
+        while m0 >= 12:
+            m0 -= 12
+            y += 1
+        last = calendar.monthrange(y, m0 + 1)[1]
+        return date(y, m0 + 1, min(day, last)).strftime("%Y-%m-%d")
+    return None
+
+
+def roll_to_today(rule, day_str):
+    """Avanza nextOccurrence hasta caer en hoy o despues (como rollForward.ts)."""
+    today = today_ymd()
+    nxt = next_occurrence(rule, day_str)
+    guard = 0
+    while nxt and nxt < today and guard < 366:
+        further = next_occurrence(rule, nxt)
+        if not further or further == nxt:
+            break
+        nxt = further
+        guard += 1
+    return nxt
+
+
+def upsert_habit_log(con, user_id, task_id, day, done):
+    """Replica repo.upsertHabitLog: UPDATE/INSERT idempotente + outbox (habit_logs)."""
+    ts = now_iso()
+    ex = con.execute(
+        "SELECT * FROM habit_logs WHERE user_id=? AND task_id=? AND day=? LIMIT 1",
+        (user_id, task_id, day),
+    ).fetchone()
+    if ex:
+        hid, created, ver, op = ex["id"], ex["created_at"], ex["version"] + 1, "update"
+        con.execute(
+            "UPDATE habit_logs SET done=?, deleted_at=NULL, updated_at=?, version=? WHERE id=? AND user_id=?",
+            (1 if done else 0, ts, ver, hid, user_id),
+        )
+    else:
+        hid, created, ver, op = str(uuid.uuid4()), ts, 1, "insert"
+        con.execute(
+            "INSERT INTO habit_logs (id, user_id, task_id, day, done, created_at, updated_at, deleted_at, version) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (hid, user_id, task_id, day, 1 if done else 0, ts, ts, None, 1),
+        )
+    wire = {
+        "id": hid, "user_id": user_id, "task_id": task_id, "day": day, "done": bool(done),
+        "created_at": created, "updated_at": ts, "deleted_at": None, "version": ver,
+    }
+    con.execute(
+        "INSERT INTO outbox (user_id, op, entity, entity_id, payload, created_at) VALUES (?,?,?,?,?,?)",
+        (user_id, op, "habit_logs", hid, json.dumps(wire), ts),
+    )
+
+
+def create_next_instance(con, base, day, rule):
+    """Crea la proxima instancia recurrente (INSERT + outbox 'insert'), como createTask()."""
+    ts = now_iso()
+    tid = str(uuid.uuid4())
+    parent = base["recurrence_parent_id"] or base["id"]
+    subs = [{**s, "done": False} for s in parse_subtasks(base["subtasks"])]
+    is_habit = bool(base["is_habit"])
+    con.execute(
+        """INSERT INTO tasks
+            (id, user_id, title, project_id, category_id, priority, duration,
+             actual_duration, day, due, recurring, recurrence, recurrence_parent_id,
+             notes, subtasks, done, is_habit, completed_at, created_at, updated_at,
+             deleted_at, version)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        [tid, base["user_id"], base["title"], base["project_id"], base["category_id"],
+         base["priority"], base["duration"], None, day, None, 1, json.dumps(rule), parent,
+         base["notes"], json.dumps(subs), 0, 1 if is_habit else 0, None, ts, ts, None, 1],
+    )
+    wire = {
+        "id": tid, "user_id": base["user_id"], "title": base["title"],
+        "project_id": base["project_id"], "category_id": base["category_id"],
+        "priority": base["priority"], "duration": base["duration"], "actual_duration": None,
+        "day": day, "due": None, "recurring": True, "recurrence": rule,
+        "recurrence_parent_id": parent, "notes": base["notes"], "subtasks": subs,
+        "done": False, "is_habit": is_habit, "completed_at": None,
+        "created_at": ts, "updated_at": ts, "deleted_at": None, "version": 1,
+    }
+    con.execute(
+        "INSERT INTO outbox (user_id, op, entity, entity_id, payload, created_at) "
+        "VALUES (?, 'insert', 'tasks', ?, ?, ?)",
+        (base["user_id"], tid, json.dumps(wire), ts),
+    )
+    return tid
+
+
 def cmd_complete(args, done):
     con = connect()
     r = find_task(con, args.substr, project=args.project)
-    patch_task(con, r, done=1 if done else 0,
-               completed_at=now_iso() if done else None)
-    print(f"Tarea '{r['title']}' -> {'completada' if done else 'reabierta (pendiente)'}.")
+    rule = json.loads(r["recurrence"]) if r["recurrence"] else None
+    if not done:
+        patch_task(con, r, done=0, completed_at=None)
+        print(f"Tarea '{r['title']}' -> reabierta (pendiente).")
+        return
+    # Completar = como la app (useCompleteTask): crear la proxima instancia,
+    # congelar la recurrencia en esta y loguear el dia si es habito.
+    nxt = next_occurrence(rule, r["day"]) if (rule and r["day"]) else None
+    if nxt:
+        create_next_instance(con, r, nxt, rule)
+    patch_task(con, r, done=1, completed_at=now_iso(), recurrence=None)
+    if r["is_habit"] and r["day"]:
+        upsert_habit_log(con, r["user_id"], r["recurrence_parent_id"] or r["id"], r["day"], True)
+    con.commit()
+    msg = f"Tarea '{r['title']}' -> completada."
+    if nxt:
+        msg += f" Proxima instancia: {nxt}."
+    print(msg)
+
+
+def cmd_repair_recurring(args):
+    """Destraba recurrentes que quedaron done=1 con la recurrencia puesta
+    (completadas por un `complete` viejo sin roll-forward): crea la proxima
+    instancia (rolleada a hoy o despues) y congela la vieja."""
+    con = connect()
+    stuck = list(con.execute(
+        "SELECT * FROM tasks WHERE done=1 AND recurrence IS NOT NULL AND deleted_at IS NULL ORDER BY day"))
+    if not stuck:
+        print("No hay recurrentes trabadas. Nada que reparar.")
+        return
+    names = project_names(con)
+    for r in stuck:
+        rule = json.loads(r["recurrence"])
+        nxt = roll_to_today(rule, r["day"]) if r["day"] else None
+        if nxt:
+            create_next_instance(con, r, nxt, rule)
+        patch_task(con, r, recurrence=None)  # congela la vieja (+ commit)
+        if r["is_habit"] and r["day"]:
+            upsert_habit_log(con, r["user_id"], r["recurrence_parent_id"] or r["id"], r["day"], True)
+        con.commit()
+        proj = names.get(r["project_id"], NO_PROJECT)
+        print(f"  [{proj}] {r['title']}: {r['day']} -> proxima {nxt or '(sin proxima)'}")
+    print(f"Listo: {len(stuck)} tarea(s) recurrente(s) destrabada(s).")
 
 
 def cmd_set_subtasks(args):
@@ -403,6 +572,7 @@ def main():
     sp = sub.add_parser("uncheck"); sp.add_argument("substr"); sp.add_argument("index", type=int); add_project_arg(sp)
     sp = sub.add_parser("complete"); sp.add_argument("substr"); add_project_arg(sp)
     sp = sub.add_parser("reopen"); sp.add_argument("substr"); add_project_arg(sp)
+    sub.add_parser("repair-recurring")
     sp = sub.add_parser("set-subtasks"); sp.add_argument("substr"); sp.add_argument("json"); add_project_arg(sp)
     sp = sub.add_parser("set"); sp.add_argument("substr")
     sp.add_argument("--day", default=None, help="YYYY-MM-DD o 'none' (sin fecha)")
@@ -431,6 +601,7 @@ def main():
     elif args.cmd == "complete": cmd_complete(args, True)
     elif args.cmd == "reopen": cmd_complete(args, False)
     elif args.cmd == "set-subtasks": cmd_set_subtasks(args)
+    elif args.cmd == "repair-recurring": cmd_repair_recurring(args)
 
 
 if __name__ == "__main__":

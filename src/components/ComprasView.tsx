@@ -1,5 +1,9 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type MouseEvent, type ReactNode } from "react";
 import {
+  useAccounts,
+  useCreateExpense,
+  useCreateExpenseLineItem,
+  useExpenseCategories,
   useCreateIngredient,
   useCreateIngredientPresentation,
   useCreateRecipe,
@@ -40,7 +44,7 @@ import {
   neededToShoppingItems,
 } from "../lib/compras";
 import type { ShoppingItemCreate } from "../lib/repo";
-import { fmtMoney, fmtUsdFromDkk } from "../lib/money";
+import { CURRENCY, fmtMoney, fmtUsdFromDkk } from "../lib/money";
 import { useUsdRate } from "../lib/useUsdRate";
 import { defaultSlot, useLogMeal } from "../lib/useLogMeal";
 import { useToggleBought } from "../lib/useToggleBought";
@@ -65,8 +69,9 @@ import type {
   ShoppingItem,
 } from "../types";
 import { colorsForHue } from "../lib/categoryColor";
+import { useApp, COMPRAS_TABS } from "../lib/store";
 import { IngredientCategoryManager } from "./IngredientCategoryManager";
-import { IChevD, IChevL, IChevR, IPlus, ITrash, IX } from "./icons";
+import { ICheck, IChevD, IChevL, IChevR, IPlus, ITrash, IX } from "./icons";
 
 const MEAL_TYPE_LABELS: Record<MealType, string> = {
   breakfast_snack: "Desayuno / Merienda",
@@ -134,19 +139,8 @@ function IconBtn({ onClick, title, children, danger }: { onClick: () => void; ti
   );
 }
 
-type Tab = "ingredientes" | "recetas" | "listas" | "plan" | "inventario" | "ajustes";
-
-const TABS: { id: Tab; label: string; ready: boolean }[] = [
-  { id: "ingredientes", label: "Ingredientes", ready: true },
-  { id: "recetas", label: "Recetas", ready: true },
-  { id: "listas", label: "Listas", ready: true },
-  { id: "plan", label: "Plan semanal", ready: true },
-  { id: "inventario", label: "Inventario", ready: true },
-  { id: "ajustes", label: "Ajustes", ready: true },
-];
-
 export function ComprasView() {
-  const [tab, setTab] = useState<Tab>("listas");
+  const { comprasTab: tab } = useApp();
 
   return (
     <div className="day-view-main" style={{ flex: 1, minHeight: 0 }}>
@@ -172,49 +166,8 @@ export function ComprasView() {
             Compras
           </div>
           <div style={{ fontSize: 24, fontWeight: 600, letterSpacing: "-0.02em", lineHeight: 1.1 }}>
-            {TABS.find((t) => t.id === tab)?.label}
+            {COMPRAS_TABS.find((t) => t.id === tab)?.label}
           </div>
-        </div>
-        <div style={{ flex: 1 }} />
-        <div
-          role="tablist"
-          style={{
-            display: "inline-flex",
-            padding: 3,
-            gap: 2,
-            background: "var(--bg-sunken)",
-            border: "1px solid var(--line)",
-            borderRadius: 10,
-          }}
-        >
-          {TABS.map((t) => {
-            const active = tab === t.id;
-            return (
-              <button
-                key={t.id}
-                role="tab"
-                aria-selected={active}
-                onClick={() => setTab(t.id)}
-                title={t.ready ? undefined : "Próximamente"}
-                style={{
-                  appearance: "none",
-                  border: "none",
-                  background: active ? "var(--bg-elev)" : "transparent",
-                  color: active ? "var(--fg)" : "var(--fg-muted)",
-                  fontSize: 12.5,
-                  fontWeight: active ? 600 : 500,
-                  padding: "6px 12px",
-                  borderRadius: 7,
-                  cursor: "pointer",
-                  boxShadow: active ? "0 1px 2px rgba(0,0,0,0.06)" : "none",
-                  opacity: t.ready ? 1 : 0.55,
-                  transition: "background .15s, color .15s",
-                }}
-              >
-                {t.label}
-              </button>
-            );
-          })}
         </div>
       </header>
 
@@ -1097,6 +1050,7 @@ function ListasPanel() {
   const toggleBought = useToggleBought();
 
   const usdRate = useUsdRate();
+  const [showClose, setShowClose] = useState(false);
   const items = useMemo(() => itemsQ.data ?? [], [itemsQ.data]);
   const saved = useMemo(() => savedQ.data ?? [], [savedQ.data]);
   const priceById = useMemo(() => {
@@ -1125,10 +1079,14 @@ function ListasPanel() {
     if (next !== it.quantity) patchItem.mutate({ id: it.id, patch: { quantity: next } });
   };
 
+  const deleteBought = () => {
+    for (const it of bought) deleteItem.mutate(it.id);
+  };
+
   const clearBought = () => {
     if (bought.length === 0) return;
     if (!window.confirm(`Vaciar ${bought.length} comprado(s)?`)) return;
-    for (const it of bought) deleteItem.mutate(it.id);
+    deleteBought();
   };
 
   const saveCurrent = () => {
@@ -1165,6 +1123,15 @@ function ListasPanel() {
   };
 
   return (
+    <>
+    {showClose && (
+      <CloseListModal
+        bought={bought}
+        priceById={priceById}
+        onClose={() => setShowClose(false)}
+        onClearBought={deleteBought}
+      />
+    )}
     <div style={{ display: "grid", gridTemplateColumns: "1fr 280px", gap: 24, maxWidth: 900 }}>
       {/* active list */}
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -1173,6 +1140,9 @@ function ListasPanel() {
             <>
               <button className="btn ghost" style={{ fontSize: 11, padding: "3px 8px" }} onClick={saveCurrent} disabled={items.length === 0}>
                 Guardar como lista
+              </button>
+              <button className="btn ghost" style={{ fontSize: 11, padding: "3px 8px" }} onClick={() => setShowClose(true)} disabled={bought.length === 0} title="Registrar lo comprado como gasto en Finanzas">
+                Cerrar lista / registrar gasto
               </button>
               <button className="btn ghost" style={{ fontSize: 11, padding: "3px 8px" }} onClick={clearBought} disabled={bought.length === 0}>
                 Vaciar comprados
@@ -1241,6 +1211,205 @@ function ListasPanel() {
           </div>
         ))}
       </aside>
+    </div>
+    </>
+  );
+}
+
+// ---------------- Cerrar lista / registrar gasto ----------------
+
+function CloseListModal({
+  bought,
+  priceById,
+  onClose,
+  onClearBought,
+}: {
+  bought: ShoppingItem[];
+  priceById: Map<string, number | null>;
+  onClose: () => void;
+  onClearBought: () => void;
+}) {
+  const categoriesQ = useExpenseCategories();
+  const accountsQ = useAccounts();
+  const createExpense = useCreateExpense();
+  const createLineItem = useCreateExpenseLineItem();
+
+  const categories = useMemo(
+    () => (categoriesQ.data ?? []).filter((c) => !c.archived),
+    [categoriesQ.data],
+  );
+  // Cuentas que pagan gastos; si ninguna tiene la capacidad, mostrar todas.
+  const accounts = useMemo(() => {
+    const active = (accountsQ.data ?? []).filter((a) => !a.archived);
+    const paying = active.filter((a) => a.paysExpenses);
+    return paying.length > 0 ? paying : active;
+  }, [accountsQ.data]);
+
+  const unitPriceOf = (it: ShoppingItem): number | null =>
+    it.presentationId ? priceById.get(it.presentationId) ?? null : null;
+
+  const priced = bought.filter((it) => unitPriceOf(it) != null);
+  const missingPrice = bought.length - priced.length;
+  const total = priced.reduce((s, it) => s + (unitPriceOf(it) ?? 0) * it.quantity, 0);
+
+  const today = todayYmd();
+  const defaultNote = useMemo(() => {
+    const d = fromYmd(today);
+    const dd = String(d.getDate()).padStart(2, "0");
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    return `Compras ${dd}/${mm}/${d.getFullYear()}`;
+  }, [today]);
+
+  const [categoryId, setCategoryId] = useState("");
+  const [accountId, setAccountId] = useState("");
+  const [spentOn, setSpentOn] = useState(today);
+  const [note, setNote] = useState(defaultNote);
+  const [clearAfter, setClearAfter] = useState(true);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const confirm = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const account = accountId ? accounts.find((a) => a.id === accountId) ?? null : null;
+      const currency = account ? account.currency : CURRENCY;
+      const expense = await createExpense.mutateAsync({
+        name: note.trim() || defaultNote,
+        amount: total,
+        currency,
+        categoryId: categoryId || null,
+        accountId: accountId || null,
+        spentOn,
+        note: note.trim() || defaultNote,
+        recurrence: null,
+        recurrenceParentId: null,
+      });
+      for (const it of priced) {
+        await createLineItem.mutateAsync({
+          expenseId: expense.id,
+          name: it.name,
+          quantity: it.quantity,
+          unitPrice: unitPriceOf(it) ?? 0,
+        });
+      }
+      if (clearAfter) onClearBought();
+      onClose();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onBackdropMouseDown = (e: MouseEvent) => {
+    if (e.target === e.currentTarget) onClose();
+  };
+
+  return (
+    <div className="modal-backdrop" onMouseDown={onBackdropMouseDown}>
+      <div className="modal" style={{ width: 460 }} onMouseDown={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <span style={{ flex: 1, fontSize: 15, fontWeight: 600, letterSpacing: "-0.01em" }}>
+            Cerrar lista / registrar gasto
+          </span>
+          <button className="icon-btn" onClick={onClose} title="Cerrar">
+            <IX size={14} />
+          </button>
+        </div>
+
+        <div className="modal-body">
+          <div className="field">
+            <label>Comprados · {bought.length}</label>
+            <div style={{ display: "flex", flexDirection: "column", gap: 3, maxHeight: 180, overflowY: "auto" }}>
+              {bought.map((it) => {
+                const unit = unitPriceOf(it);
+                return (
+                  <div
+                    key={it.id}
+                    style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 8, alignItems: "center", fontSize: 12.5, color: "var(--fg-muted)" }}
+                  >
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name}</span>
+                    <span style={{ fontVariantNumeric: "tabular-nums" }}>{it.quantity}×</span>
+                    <span style={{ color: unit == null ? "var(--fg-subtle)" : "var(--fg)", fontVariantNumeric: "tabular-nums" }}>
+                      {unit == null ? "sin precio" : fmtMoney(unit * it.quantity)}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 6 }}>
+              <span style={{ fontSize: 12, color: "var(--fg-muted)" }}>Total</span>
+              <span style={{ fontSize: 16, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{fmtMoney(total)}</span>
+            </div>
+            {missingPrice > 0 && (
+              <div style={{ fontSize: 11, color: "var(--warn)", marginTop: 2 }}>
+                {missingPrice} ítem(s) sin precio no suman al total ni se registran como detalle.
+              </div>
+            )}
+          </div>
+
+          <div className="field">
+            <label>Categoría</label>
+            <div className="control">
+              <select className="input" style={{ width: "auto" }} value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
+                <option value="">(ninguna)</option>
+                {categories.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {accounts.length > 0 && (
+            <div className="field">
+              <label>Cuenta</label>
+              <div className="control">
+                <select className="input" style={{ width: "auto" }} value={accountId} onChange={(e) => setAccountId(e.target.value)}>
+                  <option value="">(ninguna)</option>
+                  {accounts.map((a) => (
+                    <option key={a.id} value={a.id}>{a.name} · {a.currency}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
+
+          <div className="field">
+            <label>Fecha</label>
+            <div className="control">
+              <input type="date" className="input" style={{ width: "auto" }} value={spentOn} onChange={(e) => setSpentOn(e.target.value)} />
+            </div>
+          </div>
+
+          <div className="field">
+            <label>Nota</label>
+            <input type="text" className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder={defaultNote} />
+          </div>
+
+          <div className="field">
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+              <input type="checkbox" checked={clearAfter} onChange={(e) => setClearAfter(e.target.checked)} style={{ width: 16, height: 16 }} />
+              Vaciar los comprados de la lista
+            </label>
+          </div>
+        </div>
+
+        <div className="modal-foot">
+          <span />
+          <div className="actions">
+            <button className="btn ghost" onClick={onClose}>Cancelar</button>
+            <button className="btn primary" onClick={() => void confirm()} disabled={busy}>
+              <ICheck size={12} stroke={2.4} /> Registrar gasto
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

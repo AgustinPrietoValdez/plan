@@ -19,7 +19,7 @@ export default defineConfig(async () => ({
     host: host || "0.0.0.0",
     hmr: {
       protocol: "ws",
-      host: host || "192.168.0.240",
+      host: host || "localhost",
       port: 1421,
       timeout: 120000,
     },
