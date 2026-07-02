@@ -3,6 +3,7 @@ import type {
   IngredientCategory,
   IngredientPresentation,
   InventoryItem,
+  MealType,
   Recipe,
   RecipeIngredient,
   ShoppingItem,
@@ -197,4 +198,34 @@ export function categoryNeedToShoppingItems(
     });
   }
   return out;
+}
+
+/** Pick how many times ("veces") to cook each recipe to fill each meal-type's
+ *  weekly serving target. Favors variety over an exact fit: cycles round-robin
+ *  through the candidate recipes for that meal type (never repeats one before
+ *  trying the next), stopping as soon as the running total meets or passes the
+ *  target — so any overshoot ("desperdicio") is bounded by the last recipe's
+ *  own serving size, not compounded across the whole plan. Recipes with no
+ *  servings, or meal types with no target/candidates, are skipped. */
+export function planWeeklyMeals(
+  recipes: Recipe[],
+  targets: Record<MealType, number>,
+): Map<string, number> {
+  const times = new Map<string, number>();
+  const buckets: MealType[] = ["breakfast_snack", "lunch_dinner"];
+  for (const bucket of buckets) {
+    const target = targets[bucket] ?? 0;
+    if (target <= 0) continue;
+    const candidates = recipes.filter((r) => r.mealType === bucket && r.servings > 0);
+    if (candidates.length === 0) continue;
+    let remaining = target;
+    let idx = 0;
+    while (remaining > 0) {
+      const r = candidates[idx % candidates.length];
+      times.set(r.id, (times.get(r.id) ?? 0) + 1);
+      remaining -= r.servings;
+      idx++;
+    }
+  }
+  return times;
 }

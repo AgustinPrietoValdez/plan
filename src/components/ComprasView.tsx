@@ -40,6 +40,7 @@ import {
   categoryNeedToShoppingItems,
   findMergeTarget,
   neededToShoppingItems,
+  planWeeklyMeals,
 } from "../lib/compras";
 import type { ShoppingItemCreate } from "../lib/repo";
 import { CURRENCY, fmtMoney, fmtUsdFromDkk } from "../lib/money";
@@ -1224,6 +1225,23 @@ function PlanPanel() {
     if (next !== entry.targetServings) patchEntry.mutate({ id: entry.id, patch: { targetServings: next } });
   };
 
+  const generatePlan = () => {
+    if (recipes.length === 0) {
+      window.alert("Todavia no cargaste recetas.");
+      return;
+    }
+    if (targets.breakfast_snack <= 0 && targets.lunch_dinner <= 0) {
+      window.alert('Configura cuantas comidas necesitas por semana en Ajustes > "Plan semanal" primero.');
+      return;
+    }
+    if (!window.confirm(`Esto reemplaza el plan de "${weekLabel(weekStart)}" por uno generado automaticamente. ¿Continuar?`)) return;
+    for (const e of entries) deleteEntry.mutate(e.id);
+    const times = planWeeklyMeals(recipes, targets);
+    for (const [recipeId, n] of times) {
+      createEntry.mutate({ weekStart, recipeId, targetServings: n });
+    }
+  };
+
   const comi = (r: Recipe) => {
     const cookedTxt = window.prompt(`¿Cuántas porciones hiciste de "${r.name}"? (descuenta ingredientes del inventario)`, String(r.servings));
     if (cookedTxt == null) return;
@@ -1332,6 +1350,9 @@ function PlanPanel() {
         )}
         <button className="btn ghost" onClick={() => void addRecipe()}>
           <IPlus size={12} /> Agregar receta
+        </button>
+        <button className="btn" onClick={generatePlan} title="Arma el plan de la semana con las recetas que hay, cubriendo las metas de Ajustes con la menor cantidad de porciones de sobra">
+          Generar plan semanal
         </button>
       </header>
 
