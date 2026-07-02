@@ -75,13 +75,14 @@ export const CAFE_TABS: { id: CafeTab; label: string }[] = [
 ];
 
 /** Sub-tabs shown inside the Finanzas (ex-Presupuesto) area. */
-export type FinanzasTab = "presupuesto" | "ahorros" | "holdings" | "inversiones";
+// "inversiones" se fusiono adentro de "holdings" (columna derecha, con su
+// propio piechart de portfolio) — no queda como tab propio.
+export type FinanzasTab = "presupuesto" | "ahorros" | "holdings";
 
 export const FINANZAS_TABS: { id: FinanzasTab; label: string }[] = [
   { id: "presupuesto", label: "Presupuesto" },
   { id: "ahorros", label: "Ahorros" },
   { id: "holdings", label: "Holdings" },
-  { id: "inversiones", label: "Inversiones" },
 ];
 
 export type EditorState =

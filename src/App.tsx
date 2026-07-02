@@ -11,7 +11,6 @@ import { useEffect, useMemo, useState } from "react";
 import { BudgetManager } from "./components/BudgetManager";
 import { BudgetView } from "./components/BudgetView";
 import { AhorrosView } from "./components/finanzas/AhorrosView";
-import { FinanzasPlaceholder } from "./components/finanzas/FinanzasPlaceholder";
 import { HoldingsView } from "./components/finanzas/HoldingsView";
 import { CategoryManager } from "./components/CategoryManager";
 import { CompletionModal } from "./components/CompletionModal";
@@ -309,12 +308,6 @@ function App() {
           {view === "budget" && finanzasTab === "presupuesto" && <BudgetView />}
           {view === "budget" && finanzasTab === "ahorros" && <AhorrosView />}
           {view === "budget" && finanzasTab === "holdings" && <HoldingsView />}
-          {view === "budget" && finanzasTab === "inversiones" && (
-            <FinanzasPlaceholder
-              title="Inversiones"
-              note="Por verse: queda para cuando tengan inversiones / un broker."
-            />
-          )}
           {view === "habits" && <HabitsView />}
           {view === "compras" && <ComprasView />}
           {view === "cafe" && <CafeView />}

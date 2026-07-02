@@ -12,9 +12,9 @@ import {
   useUpsertFinanzasSettings,
 } from "../../lib/queries";
 import type { Account, AccountCurrency, AccountOwner, AccountType } from "../../types";
-import { useApp } from "../../lib/store";
 import { ICheck, IPlus, IRefresh, ITrash, IX } from "../icons";
 import { NetWorthChart } from "./NetWorthChart";
+import { PortfolioPie } from "./PortfolioPie";
 
 const CURRENCY_OPTIONS: AccountCurrency[] = ["DKK", "USD", "EUR", "ARS"];
 
@@ -43,7 +43,6 @@ const TYPE_OPTIONS: AccountType[] = ["checking", "savings", "investment", "broke
 const OWNER_OPTIONS: AccountOwner[] = ["agus", "sofi", "shared"];
 
 export function HoldingsView() {
-  const setFinanzasTab = useApp((s) => s.setFinanzasTab);
   const accountsQ = useAccounts();
   const finSettingsQ = useFinanzasSettings();
   const upsertFinSettings = useUpsertFinanzasSettings();
@@ -99,9 +98,16 @@ export function HoldingsView() {
 
   const netWorthSnapshotsQ = useNetWorthSnapshot(accounts, baseCurrency, ratesPerUsd, accountsQ.isSuccess);
 
+  // Holdings se divide en dos lados: cuentas bancarias (agrupadas por titular,
+  // como antes) e inversiones (broker/inversion, con su propio piechart de
+  // composicion de portfolio) — ver [[project_finanzas_tabs_reorg]].
+  const isInvestment = (a: Account) => a.type === "investment" || a.type === "broker";
+  const bankAccounts = useMemo(() => accounts.filter((a) => !isInvestment(a)), [accounts]);
+  const investmentAccounts = useMemo(() => accounts.filter(isInvestment), [accounts]);
+
   const grouped = useMemo(() => {
     const byOwner = new Map<AccountOwner, Account[]>();
-    for (const a of accounts) {
+    for (const a of bankAccounts) {
       const list = byOwner.get(a.owner) ?? [];
       list.push(a);
       byOwner.set(a.owner, list);
@@ -111,7 +117,85 @@ export function HoldingsView() {
       accounts: byOwner.get(owner)!,
       subtotal: (byOwner.get(owner) ?? []).reduce((s, a) => s + toBase(a.balance, a.currency), 0),
     }));
-  }, [accounts, ratesPerUsd, baseCurrency]);
+  }, [bankAccounts, ratesPerUsd, baseCurrency]);
+
+  const portfolioItems = useMemo(
+    () => investmentAccounts.map((a) => ({ id: a.id, name: a.name, amount: toBase(a.balance, a.currency) })),
+    [investmentAccounts, ratesPerUsd, baseCurrency],
+  );
+
+  const sectionHeaderStyle = {
+    fontSize: 11,
+    textTransform: "uppercase" as const,
+    letterSpacing: ".06em",
+    color: "var(--fg-subtle)",
+    fontWeight: 600,
+  };
+
+  const renderAccountRow = (a: Account) => (
+    <button
+      key={a.id}
+      onClick={() => setEditor({ mode: "edit", id: a.id })}
+      style={{
+        display: "grid",
+        gridTemplateColumns: "minmax(0, 1fr) auto",
+        gap: 12,
+        alignItems: "center",
+        padding: "10px 8px",
+        borderBottom: "1px solid var(--line)",
+        background: "none",
+        border: 0,
+        borderBottomWidth: 1,
+        borderBottomStyle: "solid",
+        borderBottomColor: "var(--line)",
+        textAlign: "left",
+        cursor: "pointer",
+      }}
+      title="Editar cuenta"
+    >
+      <div style={{ minWidth: 0 }}>
+        <div
+          style={{
+            fontSize: 13.5,
+            fontWeight: 500,
+            color: "var(--fg)",
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
+          {a.name}
+        </div>
+        <div style={{ fontSize: 11.5, color: "var(--fg-muted)", marginTop: 1 }}>
+          {TYPE_LABEL[a.type]}
+          {a.institution ? ` · ${a.institution}` : ""}
+        </div>
+      </div>
+      <div style={{ textAlign: "right" }}>
+        <div
+          style={{
+            fontSize: 13.5,
+            fontWeight: 600,
+            color: "var(--fg)",
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          {fmtMoneyIn(a.balance, a.currency)}
+        </div>
+        {a.currency !== baseCurrency && (
+          <div
+            style={{
+              fontSize: 11,
+              color: "var(--fg-subtle)",
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
+            ≈ {fmtMoneyIn(toBase(a.balance, a.currency), baseCurrency)}
+          </div>
+        )}
+      </div>
+    </button>
+  );
 
   return (
     <div className="day-view-main">
@@ -191,10 +275,7 @@ export function HoldingsView() {
             ))}
           </select>
         </div>
-        <button className="btn ghost" onClick={() => setFinanzasTab("ahorros")}>
-          Objetivos de ahorro
-        </button>
-        <button className="btn primary" onClick={() => setEditor({ mode: "create" })}>
+        <button className="btn primary" style={{ alignSelf: "center" }} onClick={() => setEditor({ mode: "create" })}>
           <IPlus size={12} /> Nueva cuenta
         </button>
       </header>
@@ -219,107 +300,45 @@ export function HoldingsView() {
           Todavia no hay cuentas. Crea la primera con "Nueva cuenta".
         </div>
       ) : (
-        <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 18 }}>
-          {grouped.map((group) => (
-            <section key={group.owner}>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "baseline",
-                  justifyContent: "space-between",
-                  marginBottom: 6,
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: 11,
-                    textTransform: "uppercase",
-                    letterSpacing: ".06em",
-                    color: "var(--fg-subtle)",
-                    fontWeight: 600,
-                  }}
-                >
-                  {OWNER_LABEL[group.owner]}
-                </div>
-                <div
-                  style={{
-                    fontSize: 12.5,
-                    fontWeight: 600,
-                    color: "var(--fg-muted)",
-                    fontVariantNumeric: "tabular-nums",
-                  }}
-                >
-                  {fmtMoneyIn(group.subtotal, baseCurrency)}
-                </div>
+        <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24, flex: 1, minHeight: 0, overflowY: "auto" }}>
+          {/* IZQUIERDA — cuentas bancarias, agrupadas por titular */}
+          <div>
+            <div style={sectionHeaderStyle}>Cuentas</div>
+            {bankAccounts.length === 0 ? (
+              <div style={{ fontSize: 12.5, color: "var(--fg-subtle)", padding: "12px 2px" }}>
+                Sin cuentas bancarias todavia.
               </div>
-              <div style={{ display: "flex", flexDirection: "column" }}>
-                {group.accounts.map((a) => (
-                  <button
-                    key={a.id}
-                    onClick={() => setEditor({ mode: "edit", id: a.id })}
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "minmax(0, 1fr) auto",
-                      gap: 12,
-                      alignItems: "center",
-                      padding: "10px 8px",
-                      borderBottom: "1px solid var(--line)",
-                      background: "none",
-                      border: 0,
-                      borderBottomWidth: 1,
-                      borderBottomStyle: "solid",
-                      borderBottomColor: "var(--line)",
-                      textAlign: "left",
-                      cursor: "pointer",
-                    }}
-                    title="Editar cuenta"
-                  >
-                    <div style={{ minWidth: 0 }}>
-                      <div
-                        style={{
-                          fontSize: 13.5,
-                          fontWeight: 500,
-                          color: "var(--fg)",
-                          whiteSpace: "nowrap",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                        }}
-                      >
-                        {a.name}
-                      </div>
-                      <div style={{ fontSize: 11.5, color: "var(--fg-muted)", marginTop: 1 }}>
-                        {TYPE_LABEL[a.type]}
-                        {a.institution ? ` · ${a.institution}` : ""}
+            ) : (
+              <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 18 }}>
+                {grouped.map((group) => (
+                  <section key={group.owner}>
+                    <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 6 }}>
+                      <div style={sectionHeaderStyle}>{OWNER_LABEL[group.owner]}</div>
+                      <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums" }}>
+                        {fmtMoneyIn(group.subtotal, baseCurrency)}
                       </div>
                     </div>
-                    <div style={{ textAlign: "right" }}>
-                      <div
-                        style={{
-                          fontSize: 13.5,
-                          fontWeight: 600,
-                          color: "var(--fg)",
-                          fontVariantNumeric: "tabular-nums",
-                        }}
-                      >
-                        {fmtMoneyIn(a.balance, a.currency)}
-                      </div>
-                      {a.currency !== baseCurrency && (
-                        <div
-                          style={{
-                            fontSize: 11,
-                            color: "var(--fg-subtle)",
-                            fontVariantNumeric: "tabular-nums",
-                          }}
-                        >
-                          ≈ {fmtMoneyIn(toBase(a.balance, a.currency), baseCurrency)}
-                        </div>
-                      )}
+                    <div style={{ display: "flex", flexDirection: "column" }}>
+                      {group.accounts.map((a) => renderAccountRow(a))}
                     </div>
-                  </button>
+                  </section>
                 ))}
               </div>
-            </section>
-          ))}
+            )}
+          </div>
+
+          {/* DERECHA — inversiones: piechart de composicion + lista */}
+          <div>
+            <div style={sectionHeaderStyle}>Inversiones</div>
+            <div style={{ marginTop: 8 }}>
+              <PortfolioPie items={portfolioItems} currency={baseCurrency} />
+            </div>
+            {investmentAccounts.length > 0 && (
+              <div style={{ marginTop: 12, display: "flex", flexDirection: "column" }}>
+                {investmentAccounts.map((a) => renderAccountRow(a))}
+              </div>
+            )}
+          </div>
         </div>
       )}
 

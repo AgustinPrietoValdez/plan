@@ -9,7 +9,10 @@ export interface LiveRates {
 
 export async function fetchLiveRates(): Promise<LiveRates> {
   const [ecbRes, arsRes] = await Promise.all([
-    fetch("https://api.frankfurter.app/latest?from=USD&to=DKK,EUR"),
+    // frankfurter.app rebranded to frankfurter.dev and now 301s there; the redirect's
+    // response lacks the CORS headers fetch() needs, so it fails silently in-app even
+    // though curl follows it fine. Hit the new domain directly.
+    fetch("https://api.frankfurter.dev/v1/latest?from=USD&to=DKK,EUR"),
     fetch("https://dolarapi.com/v1/dolares/oficial"),
   ]);
   if (!ecbRes.ok) throw new Error(`frankfurter.app: HTTP ${ecbRes.status}`);
