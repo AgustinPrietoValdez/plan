@@ -35,6 +35,24 @@ export const IChevR = (p: IconProps) => <Icon {...p} d="M9 6l6 6-6 6" />;
 export const IChevD = (p: IconProps) => <Icon {...p} d="M6 9l6 6 6-6" />;
 export const IChevU = (p: IconProps) => <Icon {...p} d="M18 15l-6-6-6 6" />;
 export const IPlus = (p: IconProps) => <Icon {...p} d="M12 5v14M5 12h14" />;
+export const IRefresh = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M21 12a9 9 0 0 1-15.5 6.3M3 12a9 9 0 0 1 15.5-6.3" />
+    <path d="M21 4v5h-5M3 20v-5h5" />
+  </Icon>
+);
+export const IEye = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+    <circle cx="12" cy="12" r="3" />
+  </Icon>
+);
+export const IEyeOff = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a18.5 18.5 0 0 1 5.06-5.94M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+    <path d="M1 1l22 22" />
+  </Icon>
+);
 export const ISearch = (p: IconProps) => (
   <Icon {...p}>
     <circle cx="11" cy="11" r="7" />

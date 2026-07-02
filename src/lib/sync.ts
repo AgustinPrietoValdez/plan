@@ -28,6 +28,8 @@ type Entity =
   | "inventory"
   | "meal_log"
   | "compras_settings"
+  | "finanzas_settings"
+  | "net_worth_snapshots"
   | "coffee_beans"
   | "coffee_recipes"
   | "brew_sessions";
@@ -203,6 +205,8 @@ export async function pullDeltas(userId: string, qc: QueryClient): Promise<void>
     any = (await pullEntity(userId, "inventory")) || any;
     any = (await pullEntity(userId, "meal_log")) || any;
     any = (await pullEntity(userId, "compras_settings")) || any;
+    any = (await pullEntity(userId, "finanzas_settings")) || any;
+    any = (await pullEntity(userId, "net_worth_snapshots")) || any;
     try { any = (await pullEntity(userId, "coffee_beans")) || any; } catch (e) { console.warn("coffee_beans pull skipped:", e); }
     try { any = (await pullEntity(userId, "coffee_recipes")) || any; } catch (e) { console.warn("coffee_recipes pull skipped:", e); }
     try { any = (await pullEntity(userId, "brew_sessions")) || any; } catch (e) { console.warn("brew_sessions pull skipped:", e); }
@@ -229,6 +233,8 @@ export async function pullDeltas(userId: string, qc: QueryClient): Promise<void>
       qc.invalidateQueries({ queryKey: ["inventory"] });
       qc.invalidateQueries({ queryKey: ["meal_log"] });
       qc.invalidateQueries({ queryKey: ["compras_settings"] });
+      qc.invalidateQueries({ queryKey: ["finanzas_settings"] });
+      qc.invalidateQueries({ queryKey: ["net_worth_snapshots"] });
       qc.invalidateQueries({ queryKey: ["coffee_beans"] });
       qc.invalidateQueries({ queryKey: ["coffee_recipes"] });
       qc.invalidateQueries({ queryKey: ["brew_sessions"] });
@@ -317,23 +323,23 @@ async function upsertLocal(
   } else if (entity === "expense_categories") {
     await db.execute(
       `INSERT OR REPLACE INTO expense_categories
-        (id, user_id, name, hue, position, archived, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, user_id, name, hue, position, archived, hidden_from_chart, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         row.id, row.user_id, row.name, row.hue, row.position,
-        row.archived ? 1 : 0, row.created_at, row.updated_at,
+        row.archived ? 1 : 0, row.hidden_from_chart ? 1 : 0, row.created_at, row.updated_at,
         row.deleted_at, row.version,
       ],
     );
   } else if (entity === "expenses") {
     await db.execute(
       `INSERT OR REPLACE INTO expenses
-        (id, user_id, name, amount, currency, category_id, spent_on, note, account_id,
+        (id, user_id, name, amount, currency, category_id, spent_on, note, account_id, goal_id,
          recurrence, recurrence_parent_id, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         row.id, row.user_id, row.name ?? "", row.amount, row.currency, row.category_id,
-        row.spent_on, row.note, row.account_id ?? null,
+        row.spent_on, row.note, row.account_id ?? null, row.goal_id ?? null,
         row.recurrence ? JSON.stringify(row.recurrence) : null,
         row.recurrence_parent_id, row.created_at, row.updated_at,
         row.deleted_at, row.version,
@@ -352,12 +358,12 @@ async function upsertLocal(
   } else if (entity === "savings_goals") {
     await db.execute(
       `INSERT OR REPLACE INTO savings_goals
-        (id, user_id, name, target_amount, savings_percent, is_overflow_target, destination_account_id, position, purchased_at, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, user_id, name, target_amount, savings_percent, is_overflow_target, destination_account_id, purchase_account_id, position, purchased_at, active, priority, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         row.id, row.user_id, row.name, row.target_amount,
-        row.savings_percent ?? 0, row.is_overflow_target ? 1 : 0, row.destination_account_id ?? null,
-        row.position, row.purchased_at,
+        row.savings_percent ?? 0, row.is_overflow_target ? 1 : 0, row.destination_account_id ?? null, row.purchase_account_id ?? null,
+        row.position, row.purchased_at, row.active ? 1 : 0, row.priority ? 1 : 0,
         row.created_at, row.updated_at, row.deleted_at, row.version,
       ],
     );
@@ -425,12 +431,12 @@ async function upsertLocal(
   } else if (entity === "shopping_items") {
     await db.execute(
       `INSERT OR REPLACE INTO shopping_items
-        (id, user_id, name, quantity, bought, position, ingredient_id, presentation_id, unit, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, user_id, name, quantity, bought, position, ingredient_id, presentation_id, unit, week_start, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         row.id, row.user_id, row.name, row.quantity,
         row.bought ? 1 : 0, row.position,
-        row.ingredient_id ?? null, row.presentation_id ?? null, row.unit ?? null,
+        row.ingredient_id ?? null, row.presentation_id ?? null, row.unit ?? null, row.week_start,
         row.created_at, row.updated_at, row.deleted_at, row.version,
       ],
     );
@@ -525,6 +531,26 @@ async function upsertLocal(
         row.id, row.user_id,
         typeof row.meal_times === "string" ? row.meal_times : JSON.stringify(row.meal_times ?? {}),
         row.expiry_warn_days, row.notifications_enabled ? 1 : 0, row.dkk_per_usd,
+        row.created_at, row.updated_at, row.deleted_at, row.version,
+      ],
+    );
+  } else if (entity === "finanzas_settings") {
+    await db.execute(
+      `INSERT OR REPLACE INTO finanzas_settings
+        (id, user_id, base_currency, rate_dkk_per_usd, rate_eur_per_usd, rate_ars_per_usd, rates_updated_at, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        row.id, row.user_id, row.base_currency, row.rate_dkk_per_usd, row.rate_eur_per_usd, row.rate_ars_per_usd,
+        row.rates_updated_at, row.created_at, row.updated_at, row.deleted_at, row.version,
+      ],
+    );
+  } else if (entity === "net_worth_snapshots") {
+    await db.execute(
+      `INSERT OR REPLACE INTO net_worth_snapshots
+        (id, user_id, month, amount, currency, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        row.id, row.user_id, row.month, row.amount, row.currency,
         row.created_at, row.updated_at, row.deleted_at, row.version,
       ],
     );

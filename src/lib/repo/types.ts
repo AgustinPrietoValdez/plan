@@ -14,6 +14,7 @@ import type {
   Expense,
   ExpenseCategory,
   ExpenseLineItem,
+  FinanzasSettings,
   HabitLog,
   Income,
   Ingredient,
@@ -22,6 +23,7 @@ import type {
   InventoryItem,
   MealLog,
   MealPlanEntry,
+  NetWorthSnapshot,
   Project,
   ProjectEstado,
   Milestone,
@@ -73,7 +75,7 @@ export type IngredientCategoryPatch = Partial<Omit<IngredientCategory, "id" | "c
 export type ExpenseCreate = Pick<
   Expense,
   "name" | "amount" | "currency" | "categoryId" | "spentOn" | "note" | "recurrence" | "recurrenceParentId"
-> & { accountId?: string | null };
+> & { accountId?: string | null; goalId?: string | null };
 export type ExpensePatch = Partial<Omit<Expense, "id" | "createdAt" | "version">>;
 
 export type ExpenseLineItemCreate = Pick<ExpenseLineItem, "expenseId" | "name" | "quantity" | "unitPrice">;
@@ -121,7 +123,7 @@ export type AccountTransferPatch = Partial<Omit<AccountTransfer, "id" | "created
 
 export type HabitLogUpsert = Pick<HabitLog, "taskId" | "day" | "done">;
 
-export type ShoppingItemCreate = Pick<ShoppingItem, "name" | "quantity"> & {
+export type ShoppingItemCreate = Pick<ShoppingItem, "name" | "quantity" | "weekStart"> & {
   position?: number;
   ingredientId?: string | null;
   presentationId?: string | null;
@@ -143,6 +145,12 @@ export type MealLogCreate = Pick<MealLog, "eatenOn" | "mealSlot" | "recipeId" | 
 export type ComprasSettingsUpsert = Partial<
   Pick<ComprasSettings, "mealTimes" | "expiryWarnDays" | "notificationsEnabled" | "dkkPerUsd">
 >;
+
+export type FinanzasSettingsUpsert = Partial<
+  Pick<FinanzasSettings, "baseCurrency" | "ratesPerUsd" | "ratesUpdatedAt">
+>;
+
+export type NetWorthSnapshotUpsert = Pick<NetWorthSnapshot, "month" | "amount" | "currency">;
 
 export type CoffeeBeanCreate = Pick<CoffeeBean, "name"> & {
   roaster?: string;
@@ -342,6 +350,12 @@ export interface Repo {
 
   getComprasSettings(): Promise<ComprasSettings | null>;
   upsertComprasSettings(input: ComprasSettingsUpsert): Promise<ComprasSettings>;
+
+  getFinanzasSettings(): Promise<FinanzasSettings | null>;
+  upsertFinanzasSettings(input: FinanzasSettingsUpsert): Promise<FinanzasSettings>;
+
+  listNetWorthSnapshots(): Promise<NetWorthSnapshot[]>;
+  upsertNetWorthSnapshot(input: NetWorthSnapshotUpsert): Promise<NetWorthSnapshot>;
 
   listEvents(): Promise<CalendarEvent[]>;
   createEvent(input: EventCreate): Promise<CalendarEvent>;

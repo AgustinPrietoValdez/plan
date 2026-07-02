@@ -46,3 +46,50 @@ export function fmtUsdFromDkk(dkk: number, dkkPerUsd: number): string {
   const usd = dkkPerUsd > 0 ? dkk / dkkPerUsd : 0;
   return USD_FMT.format(Number.isFinite(usd) ? usd : 0);
 }
+
+// --- Finanzas multi-currency (Holdings): DKK, USD, EUR, ARS ---
+// Rates are "units of currency per 1 USD", fetched daily (see lib/exchangeRates.ts)
+// and stored in finanzas_settings. These are fallbacks for a never-fetched app.
+export const DEFAULT_RATES_PER_USD: Record<string, number> = {
+  USD: 1,
+  DKK: 6.9,
+  EUR: 0.92,
+  ARS: 1000,
+};
+
+/** Convert `amount` between any two currencies via a USD pivot.
+ *  `ratesPerUsd` = units of each currency per 1 USD (USD: 1). Unknown currencies pass through unchanged. */
+export function convertViaUsd(
+  amount: number,
+  fromCurrency: string,
+  toCurrency: string,
+  ratesPerUsd: Record<string, number>,
+): number {
+  if (fromCurrency === toCurrency) return amount;
+  const fromRate = ratesPerUsd[fromCurrency];
+  const toRate = ratesPerUsd[toCurrency];
+  if (!fromRate || !toRate) return amount;
+  return (amount / fromRate) * toRate;
+}
+
+const CURRENCY_LOCALE: Record<string, string> = {
+  DKK: "da-DK",
+  USD: "en-US",
+  EUR: "de-DE",
+  ARS: "es-AR",
+};
+const currencyFormatters = new Map<string, Intl.NumberFormat>();
+
+/** Format `amount` in an arbitrary currency (DKK/USD/EUR/ARS), e.g. fmtMoneyIn(50, "EUR") -> "50,00 €". */
+export function fmtMoneyIn(amount: number, currency: string): string {
+  let f = currencyFormatters.get(currency);
+  if (!f) {
+    f = new Intl.NumberFormat(CURRENCY_LOCALE[currency] ?? "en-US", {
+      style: "currency",
+      currency,
+      maximumFractionDigits: currency === "ARS" ? 0 : 2,
+    });
+    currencyFormatters.set(currency, f);
+  }
+  return f.format(Number.isFinite(amount) ? amount : 0);
+}

@@ -29,6 +29,8 @@ import {
   type InventoryCreate, type InventoryPatch,
   type MealLogCreate,
   type ComprasSettingsUpsert,
+  type FinanzasSettingsUpsert,
+  type NetWorthSnapshotUpsert,
   type TaskCreate, type TaskPatch,
   type BrewSessionCreate,
 } from "./repo";
@@ -62,6 +64,8 @@ const KEYS = {
   inventory: ["inventory"] as const,
   mealLogs: ["meal_log"] as const,
   comprasSettings: ["compras_settings"] as const,
+  finanzasSettings: ["finanzas_settings"] as const,
+  netWorthSnapshots: ["net_worth_snapshots"] as const,
   brewSessions: ["brew_sessions"] as const,
   brewDatapoints: (sessionId: string) => ["brew_datapoints", sessionId] as const,
 };
@@ -843,6 +847,32 @@ export function useUpsertComprasSettings() {
   return useMutation({
     mutationFn: (input: ComprasSettingsUpsert) => repo.upsertComprasSettings(input),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.comprasSettings }),
+  });
+}
+
+// ---------- finanzas_settings ----------
+export function useFinanzasSettings() {
+  return useQuery({ queryKey: KEYS.finanzasSettings, queryFn: () => repo.getFinanzasSettings() });
+}
+
+export function useUpsertFinanzasSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: FinanzasSettingsUpsert) => repo.upsertFinanzasSettings(input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.finanzasSettings }),
+  });
+}
+
+// ---------- net_worth_snapshots ----------
+export function useNetWorthSnapshots() {
+  return useQuery({ queryKey: KEYS.netWorthSnapshots, queryFn: () => repo.listNetWorthSnapshots() });
+}
+
+export function useUpsertNetWorthSnapshot() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: NetWorthSnapshotUpsert) => repo.upsertNetWorthSnapshot(input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.netWorthSnapshots }),
   });
 }
 

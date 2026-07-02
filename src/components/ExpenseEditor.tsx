@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import { colorsForHue } from "../lib/categoryColor";
-import { CURRENCY, fmtMoney, parseMoney } from "../lib/money";
+import { CURRENCY, fmtMoney, fmtMoneyIn, parseMoney } from "../lib/money";
 import {
   useAccounts,
   useCreateExpense,
@@ -13,15 +13,19 @@ import {
   usePatchExpense,
 } from "../lib/queries";
 import { useApp } from "../lib/store";
-import type { Expense, RecurrenceRule } from "../types";
+import type { AccountCurrency, Expense, RecurrenceRule } from "../types";
 import { ICheck, IRecurring, ITrash, IX } from "./icons";
 import { RecurrencePicker } from "./RecurrencePicker";
+
+const CURRENCY_OPTIONS: AccountCurrency[] = ["DKK", "USD", "EUR", "ARS"];
 
 interface DraftFields {
   name: string;
   amount: number;
+  currency: AccountCurrency;
   categoryId: string | null;
   accountId: string | null;
+  goalId: string | null;
   spentOn: string;
   note: string;
   recurrence: RecurrenceRule | null;
@@ -31,8 +35,10 @@ function fromExpense(e: Expense): DraftFields {
   return {
     name: e.name,
     amount: e.amount,
+    currency: (e.currency as AccountCurrency) ?? CURRENCY,
     categoryId: e.categoryId,
     accountId: e.accountId,
+    goalId: e.goalId,
     spentOn: e.spentOn,
     note: e.note,
     recurrence: e.recurrence,
@@ -42,7 +48,14 @@ function fromExpense(e: Expense): DraftFields {
 interface Props {
   mode: "edit" | "create";
   expenseId?: string;
-  prefill?: { amount?: number; categoryId?: string | null; spentOn?: string; note?: string };
+  prefill?: {
+    amount?: number;
+    categoryId?: string | null;
+    spentOn?: string;
+    note?: string;
+    accountId?: string | null;
+    goalId?: string | null;
+  };
   onClose: () => void;
 }
 
@@ -97,11 +110,16 @@ export function ExpenseEditor({ mode, expenseId, prefill, onClose }: Props) {
 
   const [draft, setDraft] = useState<DraftFields>(() => {
     if (existing) return fromExpense(existing);
+    const prefillAccount = prefill?.accountId
+      ? (accountsQ.data ?? []).find((a) => a.id === prefill.accountId)
+      : null;
     return {
       name: prefill?.note ?? "",
       amount: prefill?.amount ?? 0,
+      currency: (prefillAccount?.currency as AccountCurrency) ?? (CURRENCY as AccountCurrency),
       categoryId: prefill?.categoryId ?? null,
-      accountId: null,
+      accountId: prefill?.accountId ?? null,
+      goalId: prefill?.goalId ?? null,
       spentOn: prefill?.spentOn ?? new Date().toISOString().slice(0, 10),
       note: "",
       recurrence: null,
@@ -122,20 +140,16 @@ export function ExpenseEditor({ mode, expenseId, prefill, onClose }: Props) {
 
   const save = () => {
     if (draft.amount <= 0) return; // require positive amount
-    // Si hay cuenta elegida, la moneda del gasto sigue a la de la cuenta.
-    const selectedAccount = draft.accountId
-      ? accounts.find((a) => a.id === draft.accountId) ?? null
-      : null;
-    const currency = selectedAccount ? selectedAccount.currency : CURRENCY;
     if (mode === "edit" && existing) {
       patchMut.mutate({
         id: existing.id,
         patch: {
           name: draft.name,
           amount: draft.amount,
-          currency,
+          currency: draft.currency,
           categoryId: draft.categoryId,
           accountId: draft.accountId,
+          goalId: draft.goalId,
           spentOn: draft.spentOn,
           note: draft.note,
           recurrence: draft.recurrence,
@@ -145,9 +159,10 @@ export function ExpenseEditor({ mode, expenseId, prefill, onClose }: Props) {
       create.mutate({
         name: draft.name,
         amount: draft.amount,
-        currency,
+        currency: draft.currency,
         categoryId: draft.categoryId,
         accountId: draft.accountId,
+        goalId: draft.goalId,
         spentOn: draft.spentOn,
         note: draft.note,
         recurrence: draft.recurrence,
@@ -246,16 +261,19 @@ export function ExpenseEditor({ mode, expenseId, prefill, onClose }: Props) {
                   fontWeight: 600,
                 }}
               />
-              <span
-                style={{
-                  alignSelf: "center",
-                  fontSize: 12,
-                  color: "var(--fg-muted)",
-                  fontWeight: 600,
-                }}
+              <select
+                className="input"
+                style={{ width: "auto", alignSelf: "center" }}
+                value={draft.currency}
+                onChange={(e) => set({ currency: e.target.value as AccountCurrency })}
+                title="Moneda en la que pagaste (puede diferir de la cuenta)"
               >
-                {CURRENCY}
-              </span>
+                {CURRENCY_OPTIONS.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
               {draft.amount > 0 && (
                 <span
                   style={{
@@ -265,7 +283,7 @@ export function ExpenseEditor({ mode, expenseId, prefill, onClose }: Props) {
                     marginLeft: "auto",
                   }}
                 >
-                  = {fmtMoney(draft.amount)}
+                  = {fmtMoneyIn(draft.amount, draft.currency)}
                 </span>
               )}
             </div>
@@ -346,7 +364,11 @@ export function ExpenseEditor({ mode, expenseId, prefill, onClose }: Props) {
                   className="input"
                   style={{ width: "auto" }}
                   value={draft.accountId ?? ""}
-                  onChange={(e) => set({ accountId: e.target.value || null })}
+                  onChange={(e) => {
+                    const accountId = e.target.value || null;
+                    const account = accountId ? accounts.find((a) => a.id === accountId) : null;
+                    set({ accountId, ...(account ? { currency: account.currency } : {}) });
+                  }}
                 >
                   <option value="">(ninguna)</option>
                   {accounts.map((a) => (

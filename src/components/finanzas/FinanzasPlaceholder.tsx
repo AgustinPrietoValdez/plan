@@ -1,5 +1,5 @@
 // Placeholder para las sub-pestanas de Finanzas que todavia no estan implementadas.
-// Holdings se llena en la Fase B; Inversiones y Taxes quedan "por verse".
+// Inversiones queda "por verse" hasta que haya inversiones / un broker.
 
 export function FinanzasPlaceholder({ title, note }: { title: string; note: string }) {
   return (

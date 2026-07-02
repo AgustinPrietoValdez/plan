@@ -1,15 +1,27 @@
 import { useEffect, useMemo, useState, type MouseEvent } from "react";
-import { DEFAULT_DKK_PER_USD, fmtMoney, fmtUsdFromDkk, parseMoney } from "../../lib/money";
+import { convertViaUsd, DEFAULT_RATES_PER_USD, fmtMoneyIn, parseMoney } from "../../lib/money";
+import { computeNetWorth } from "../../lib/netWorth";
+import { fetchLiveRates } from "../../lib/exchangeRates";
+import { useNetWorthSnapshot } from "../../lib/useNetWorthSnapshot";
 import {
   useAccounts,
-  useComprasSettings,
   useCreateAccount,
   useDeleteAccount,
+  useFinanzasSettings,
   usePatchAccount,
+  useUpsertFinanzasSettings,
 } from "../../lib/queries";
 import type { Account, AccountCurrency, AccountOwner, AccountType } from "../../types";
 import { useApp } from "../../lib/store";
-import { ICheck, IPlus, ITrash, IX } from "../icons";
+import { ICheck, IPlus, IRefresh, ITrash, IX } from "../icons";
+import { NetWorthChart } from "./NetWorthChart";
+
+const CURRENCY_OPTIONS: AccountCurrency[] = ["DKK", "USD", "EUR", "ARS"];
+
+function isToday(iso: string | null): boolean {
+  if (!iso) return false;
+  return iso.slice(0, 10) === new Date().toISOString().slice(0, 10);
+}
 
 const OWNER_ORDER: AccountOwner[] = ["agus", "sofi", "shared"];
 
@@ -29,18 +41,49 @@ const TYPE_LABEL: Record<AccountType, string> = {
 
 const TYPE_OPTIONS: AccountType[] = ["checking", "savings", "investment", "broker", "cash"];
 const OWNER_OPTIONS: AccountOwner[] = ["agus", "sofi", "shared"];
-const CURRENCY_OPTIONS: AccountCurrency[] = ["DKK", "USD"];
-
-/** Convert an account balance to DKK for net-worth aggregation. */
-function balanceInDkk(a: Account, dkkPerUsd: number): number {
-  return a.currency === "USD" ? a.balance * dkkPerUsd : a.balance;
-}
 
 export function HoldingsView() {
-  const openSavingsGoalManager = useApp((s) => s.openSavingsGoalManager);
+  const setFinanzasTab = useApp((s) => s.setFinanzasTab);
   const accountsQ = useAccounts();
-  const settingsQ = useComprasSettings();
-  const dkkPerUsd = settingsQ.data?.dkkPerUsd ?? DEFAULT_DKK_PER_USD;
+  const finSettingsQ = useFinanzasSettings();
+  const upsertFinSettings = useUpsertFinanzasSettings();
+
+  const ratesPerUsd: Record<string, number> = {
+    USD: 1,
+    DKK: finSettingsQ.data?.ratesPerUsd.DKK ?? DEFAULT_RATES_PER_USD.DKK,
+    EUR: finSettingsQ.data?.ratesPerUsd.EUR ?? DEFAULT_RATES_PER_USD.EUR,
+    ARS: finSettingsQ.data?.ratesPerUsd.ARS ?? DEFAULT_RATES_PER_USD.ARS,
+  };
+  const baseCurrency: AccountCurrency = finSettingsQ.data?.baseCurrency ?? "DKK";
+  const ratesUpdatedAt = finSettingsQ.data?.ratesUpdatedAt ?? null;
+
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+
+  const refreshRates = async () => {
+    setRefreshing(true);
+    setRefreshError(null);
+    try {
+      const live = await fetchLiveRates();
+      await upsertFinSettings.mutateAsync({
+        ratesPerUsd: { USD: 1, DKK: live.dkkPerUsd, EUR: live.eurPerUsd, ARS: live.arsPerUsd },
+        ratesUpdatedAt: new Date().toISOString(),
+      });
+    } catch {
+      setRefreshError("No se pudo actualizar la cotizacion");
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  // Fetch once a day, automatically, as soon as the settings row is known.
+  useEffect(() => {
+    if (!finSettingsQ.isSuccess || isToday(ratesUpdatedAt)) return;
+    refreshRates();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [finSettingsQ.isSuccess, ratesUpdatedAt]);
+
+  const toBase = (amount: number, currency: string) => convertViaUsd(amount, currency, baseCurrency, ratesPerUsd);
 
   const accounts = useMemo(
     () => (accountsQ.data ?? []).filter((a) => !a.archived),
@@ -50,9 +93,11 @@ export function HoldingsView() {
   const [editor, setEditor] = useState<{ mode: "create" } | { mode: "edit"; id: string } | null>(null);
 
   const netWorth = useMemo(
-    () => accounts.reduce((s, a) => s + balanceInDkk(a, dkkPerUsd), 0),
-    [accounts, dkkPerUsd],
+    () => computeNetWorth(accounts, baseCurrency, ratesPerUsd),
+    [accounts, ratesPerUsd, baseCurrency],
   );
+
+  const netWorthSnapshotsQ = useNetWorthSnapshot(accounts, baseCurrency, ratesPerUsd, accountsQ.isSuccess);
 
   const grouped = useMemo(() => {
     const byOwner = new Map<AccountOwner, Account[]>();
@@ -64,9 +109,9 @@ export function HoldingsView() {
     return OWNER_ORDER.filter((o) => byOwner.has(o)).map((owner) => ({
       owner,
       accounts: byOwner.get(owner)!,
-      subtotal: (byOwner.get(owner) ?? []).reduce((s, a) => s + balanceInDkk(a, dkkPerUsd), 0),
+      subtotal: (byOwner.get(owner) ?? []).reduce((s, a) => s + toBase(a.balance, a.currency), 0),
     }));
-  }, [accounts, dkkPerUsd]);
+  }, [accounts, ratesPerUsd, baseCurrency]);
 
   return (
     <div className="day-view-main">
@@ -103,23 +148,60 @@ export function HoldingsView() {
               fontVariantNumeric: "tabular-nums",
             }}
           >
-            {fmtMoney(netWorth)}
+            {fmtMoneyIn(netWorth, baseCurrency)}
           </div>
-          <div style={{ marginTop: 4, fontSize: 12, color: "var(--fg-muted)" }}>
-            <span>≈ {fmtUsdFromDkk(netWorth, dkkPerUsd)}</span>
-            <span style={{ color: "var(--line-strong)", margin: "0 8px" }}>·</span>
+          <div style={{ marginTop: 4, fontSize: 11.5, color: "var(--fg-muted)", display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
             <span>
               {accounts.length} {accounts.length === 1 ? "cuenta" : "cuentas"}
             </span>
+            <span style={{ color: "var(--line-strong)" }}>·</span>
+            <span>
+              1 USD = {ratesPerUsd.DKK.toFixed(2)} DKK · {ratesPerUsd.EUR.toFixed(2)} EUR ·{" "}
+              {Math.round(ratesPerUsd.ARS).toLocaleString("es-AR")} ARS (oficial)
+            </span>
+            <span style={{ color: "var(--fg-subtle)" }}>
+              {ratesUpdatedAt ? (isToday(ratesUpdatedAt) ? "hoy" : `actualizado ${ratesUpdatedAt.slice(0, 10)}`) : "sin cotizacion"}
+            </span>
+            <button
+              className="icon-btn"
+              onClick={refreshRates}
+              disabled={refreshing}
+              title={refreshing ? "Actualizando..." : "Actualizar cotizacion"}
+              style={{ color: "var(--fg-subtle)", opacity: refreshing ? 0.5 : 1 }}
+            >
+              <IRefresh size={12} />
+            </button>
+            {refreshError && <span style={{ color: "var(--danger)" }}>{refreshError}</span>}
           </div>
         </div>
-        <button className="btn ghost" onClick={openSavingsGoalManager}>
-          Metas de ahorro
+        <div className="control" style={{ alignSelf: "center" }}>
+          <select
+            className="input"
+            style={{ width: "auto" }}
+            value={baseCurrency}
+            onChange={(e) =>
+              upsertFinSettings.mutate({ baseCurrency: e.target.value as AccountCurrency })
+            }
+            title="Moneda base del patrimonio neto"
+          >
+            {CURRENCY_OPTIONS.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+        </div>
+        <button className="btn ghost" onClick={() => setFinanzasTab("ahorros")}>
+          Objetivos de ahorro
         </button>
         <button className="btn primary" onClick={() => setEditor({ mode: "create" })}>
           <IPlus size={12} /> Nueva cuenta
         </button>
       </header>
+
+      <div style={{ marginTop: 12 }}>
+        <NetWorthChart snapshots={netWorthSnapshotsQ.data ?? []} baseCurrency={baseCurrency} />
+      </div>
 
       {/* Body */}
       {accounts.length === 0 ? (
@@ -167,7 +249,7 @@ export function HoldingsView() {
                     fontVariantNumeric: "tabular-nums",
                   }}
                 >
-                  {fmtMoney(group.subtotal)}
+                  {fmtMoneyIn(group.subtotal, baseCurrency)}
                 </div>
               </div>
               <div style={{ display: "flex", flexDirection: "column" }}>
@@ -219,11 +301,9 @@ export function HoldingsView() {
                           fontVariantNumeric: "tabular-nums",
                         }}
                       >
-                        {a.currency === "USD"
-                          ? fmtUsdFromDkk(a.balance * dkkPerUsd, dkkPerUsd)
-                          : fmtMoney(a.balance)}
+                        {fmtMoneyIn(a.balance, a.currency)}
                       </div>
-                      {a.currency === "USD" && (
+                      {a.currency !== baseCurrency && (
                         <div
                           style={{
                             fontSize: 11,
@@ -231,7 +311,7 @@ export function HoldingsView() {
                             fontVariantNumeric: "tabular-nums",
                           }}
                         >
-                          ≈ {fmtMoney(a.balance * dkkPerUsd)}
+                          ≈ {fmtMoneyIn(toBase(a.balance, a.currency), baseCurrency)}
                         </div>
                       )}
                     </div>

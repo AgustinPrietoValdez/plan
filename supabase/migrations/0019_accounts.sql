@@ -10,7 +10,7 @@ create table if not exists public.accounts (
   name text not null,
   owner text not null default 'shared' check (owner in ('agus', 'sofi', 'shared')),
   type text not null default 'checking' check (type in ('checking', 'savings', 'investment', 'broker', 'cash')),
-  currency text not null default 'DKK' check (currency in ('DKK', 'USD')),
+  currency text not null default 'DKK' check (currency in ('DKK', 'USD', 'EUR', 'ARS')),
   balance numeric(16, 2) not null default 0,
   opening_balance numeric(16, 2) not null default 0,
   balance_as_of date,

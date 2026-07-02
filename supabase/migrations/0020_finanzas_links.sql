@@ -30,7 +30,7 @@ create table if not exists public.account_transfers (
   from_account_id uuid,
   to_account_id uuid,
   amount numeric(16, 2) not null default 0,
-  currency text not null default 'DKK' check (currency in ('DKK', 'USD')),
+  currency text not null default 'DKK' check (currency in ('DKK', 'USD', 'EUR', 'ARS')),
   transferred_on date not null,
   kind text not null default 'transfer' check (kind in ('transfer', 'savings', 'investment')),
   goal_id uuid,

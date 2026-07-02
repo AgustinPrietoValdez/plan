@@ -15,8 +15,10 @@ import type {
   Expense,
   ExpenseCategory,
   ExpenseLineItem,
+  FinanzasSettings,
   HabitLog,
   Income,
+  NetWorthSnapshot,
   Project,
   ProjectEstado,
   Milestone,
@@ -77,8 +79,11 @@ import type {
   InventoryCreate,
   MealLogCreate,
   ComprasSettingsUpsert,
+  FinanzasSettingsUpsert,
+  NetWorthSnapshotUpsert,
   TaskCreate,
 } from "./types";
+import { convertViaUsd, CURRENCY, DEFAULT_RATES_PER_USD } from "../money";
 
 interface DbTaskRow {
   id: string;
@@ -220,6 +225,8 @@ async function enqueue(
     | "inventory"
     | "meal_log"
     | "compras_settings"
+    | "finanzas_settings"
+    | "net_worth_snapshots"
     | "events"
     | "expense_line_items"
     | "coffee_beans"
@@ -248,8 +255,6 @@ async function enqueue(
 //   * delete  -> reverse the effect (the money "comes back")
 // Accounts are nullable everywhere, so when no account is linked we simply do
 // nothing — those movements behave exactly as before Phase C.
-
-const DKK_PER_USD_FALLBACK = 6.9; // mirrors DEFAULT_DKK_PER_USD in lib/money.ts
 
 type Db = Awaited<ReturnType<typeof getDb>>;
 
@@ -280,14 +285,22 @@ async function adjustAccountBalance(
   await enqueue(userId, "update", "accounts", accountId, accountToWire(updated, userId));
 }
 
-/** DKK<->USD rate (DKK per 1 USD), from synced compras_settings. */
-async function readDkkPerUsd(db: Db, userId: string): Promise<number> {
-  const rows = await db.select<{ dkk_per_usd: number }[]>(
-    "SELECT dkk_per_usd FROM compras_settings WHERE user_id = ? AND deleted_at IS NULL LIMIT 1",
+/** Units of each currency per 1 USD, from synced finanzas_settings (falls back to
+ *  DEFAULT_RATES_PER_USD if the user never fetched a live rate). */
+async function readRates(db: Db, userId: string): Promise<Record<string, number>> {
+  const rows = await db.select<
+    { rate_dkk_per_usd: number; rate_eur_per_usd: number; rate_ars_per_usd: number }[]
+  >(
+    "SELECT rate_dkk_per_usd, rate_eur_per_usd, rate_ars_per_usd FROM finanzas_settings WHERE user_id = ? AND deleted_at IS NULL LIMIT 1",
     [userId],
   );
-  const v = rows[0]?.dkk_per_usd;
-  return typeof v === "number" && v > 0 ? v : DKK_PER_USD_FALLBACK;
+  const r = rows[0];
+  return {
+    USD: 1,
+    DKK: (r?.rate_dkk_per_usd ?? 0) > 0 ? r.rate_dkk_per_usd : DEFAULT_RATES_PER_USD.DKK,
+    EUR: (r?.rate_eur_per_usd ?? 0) > 0 ? r.rate_eur_per_usd : DEFAULT_RATES_PER_USD.EUR,
+    ARS: (r?.rate_ars_per_usd ?? 0) > 0 ? r.rate_ars_per_usd : DEFAULT_RATES_PER_USD.ARS,
+  };
 }
 
 async function accountCurrency(db: Db, userId: string, id: string | null): Promise<string | null> {
@@ -297,14 +310,6 @@ async function accountCurrency(db: Db, userId: string, id: string | null): Promi
     [id, userId],
   );
   return rows[0]?.currency ?? null;
-}
-
-/** Convert `amount` from one DKK/USD currency to another using the Holdings rate. */
-function convertAmount(amount: number, fromCur: string, toCur: string, dkkPerUsd: number): number {
-  if (fromCur === toCur) return amount;
-  if (fromCur === "USD" && toCur === "DKK") return amount * dkkPerUsd;
-  if (fromCur === "DKK" && toCur === "USD") return dkkPerUsd > 0 ? amount / dkkPerUsd : 0;
-  return amount;
 }
 
 /**
@@ -318,12 +323,75 @@ async function applyTransferEffect(
   t: AccountTransfer,
   sign: 1 | -1,
 ): Promise<void> {
-  const dkkPerUsd = await readDkkPerUsd(db, userId);
+  const rates = await readRates(db, userId);
   const fromCur = (await accountCurrency(db, userId, t.fromAccountId)) ?? t.currency;
   const toCur = (await accountCurrency(db, userId, t.toAccountId)) ?? fromCur;
-  const converted = convertAmount(t.amount, fromCur, toCur, dkkPerUsd);
+  const converted = convertViaUsd(t.amount, fromCur, toCur, rates);
   await adjustAccountBalance(db, userId, t.fromAccountId, sign * -t.amount);
   await adjustAccountBalance(db, userId, t.toAccountId, sign * converted);
+}
+
+/** Convert `amount` (in `fromCur`) into the currency of account `accountId`, if any. */
+async function toAccountCurrency(
+  db: Db,
+  userId: string,
+  accountId: string | null,
+  amount: number,
+  fromCur: string,
+): Promise<number> {
+  const acctCur = await accountCurrency(db, userId, accountId);
+  if (!acctCur || acctCur === fromCur) return amount;
+  const rates = await readRates(db, userId);
+  return convertViaUsd(amount, fromCur, acctCur, rates);
+}
+
+/**
+ * Called after an expense links to a savings goal ("Registrar compra" in Ahorros).
+ * The target amount updates to what was actually paid (the old target was just an
+ * estimate). If already fully saved for (per savings_contributions — a single real
+ * transfer can cover several goals sharing an account, so we track "saved" there
+ * rather than on account_transfers), it closes normally (purchasedAt). If bought
+ * before reaching that amount, it stays open and flips to `priority` ("recover the
+ * fronted money") instead of silently closing — the user confirms recovery manually.
+ */
+async function evaluateGoalPurchase(
+  db: Db,
+  userId: string,
+  goalId: string,
+  expenseAmount: number,
+  expenseCurrency: string,
+): Promise<void> {
+  const rows = await db.select<DbSavingsGoalRow[]>(
+    "SELECT * FROM savings_goals WHERE id = ? AND user_id = ? AND deleted_at IS NULL LIMIT 1",
+    [goalId, userId],
+  );
+  if (!rows[0]) return;
+  const goal = fromDbSavingsGoal(rows[0]);
+  if (goal.purchasedAt) return; // ya cerrado, nada que hacer
+
+  const rates = await readRates(db, userId);
+  const paidAmount = convertViaUsd(expenseAmount, expenseCurrency, CURRENCY, rates);
+  const contribRows = await db.select<{ amount: number }[]>(
+    "SELECT amount FROM savings_contributions WHERE user_id = ? AND goal_id = ? AND deleted_at IS NULL",
+    [userId, goalId],
+  );
+  const saved = contribRows.reduce((s, c) => s + c.amount, 0);
+  const ts = now();
+  const fullyFunded = paidAmount > 0 && saved >= paidAmount;
+  await db.execute(
+    fullyFunded
+      ? "UPDATE savings_goals SET target_amount = ?, purchased_at = ?, updated_at = ?, version = version + 1 WHERE id = ? AND user_id = ?"
+      : "UPDATE savings_goals SET target_amount = ?, priority = 1, updated_at = ?, version = version + 1 WHERE id = ? AND user_id = ?",
+    fullyFunded ? [paidAmount, ts, ts, goalId, userId] : [paidAmount, ts, goalId, userId],
+  );
+  const updatedRows = await db.select<DbSavingsGoalRow[]>(
+    "SELECT * FROM savings_goals WHERE id = ? AND user_id = ?",
+    [goalId, userId],
+  );
+  if (updatedRows[0]) {
+    const updated = fromDbSavingsGoal(updatedRows[0]);
+    await enqueue(userId, "update", "savings_goals", goalId, savingsGoalToWire(updated, userId));
+  }
 }
 
 export const localRepo: Repo = {
@@ -624,6 +692,7 @@ export const localRepo: Repo = {
       hue: input.hue,
       position: input.position ?? 0,
       archived: false,
+      hiddenFromChart: false,
       createdAt: ts,
       updatedAt: ts,
       deletedAt: null,
@@ -631,9 +700,9 @@ export const localRepo: Repo = {
     };
     await db.execute(
       `INSERT INTO expense_categories
-        (id, user_id, name, hue, position, archived, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [cat.id, userId, cat.name, cat.hue, cat.position, 0, cat.createdAt, cat.updatedAt, null, 1],
+        (id, user_id, name, hue, position, archived, hidden_from_chart, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [cat.id, userId, cat.name, cat.hue, cat.position, 0, 0, cat.createdAt, cat.updatedAt, null, 1],
     );
     await enqueue(userId, "insert", "expense_categories", cat.id, expenseCategoryToWire(cat, userId));
     return cat;
@@ -657,10 +726,10 @@ export const localRepo: Repo = {
       version: existing.version + 1,
     };
     await db.execute(
-      `UPDATE expense_categories SET name = ?, hue = ?, position = ?, archived = ?, updated_at = ?, deleted_at = ?, version = ?
+      `UPDATE expense_categories SET name = ?, hue = ?, position = ?, archived = ?, hidden_from_chart = ?, updated_at = ?, deleted_at = ?, version = ?
        WHERE id = ? AND user_id = ?`,
       [
-        updated.name, updated.hue, updated.position, updated.archived ? 1 : 0,
+        updated.name, updated.hue, updated.position, updated.archived ? 1 : 0, updated.hiddenFromChart ? 1 : 0,
         updated.updatedAt, updated.deletedAt, updated.version,
         id, userId,
       ],
@@ -704,6 +773,7 @@ export const localRepo: Repo = {
       spentOn: input.spentOn,
       note: input.note,
       accountId: input.accountId ?? null,
+      goalId: input.goalId ?? null,
       recurrence: input.recurrence,
       recurrenceParentId: input.recurrenceParentId,
       createdAt: ts,
@@ -713,20 +783,23 @@ export const localRepo: Repo = {
     };
     await db.execute(
       `INSERT INTO expenses
-        (id, user_id, name, amount, currency, category_id, spent_on, note, account_id,
+        (id, user_id, name, amount, currency, category_id, spent_on, note, account_id, goal_id,
          recurrence, recurrence_parent_id, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         exp.id, userId, exp.name, exp.amount, exp.currency, exp.categoryId, exp.spentOn,
-        exp.note, exp.accountId,
+        exp.note, exp.accountId, exp.goalId,
         exp.recurrence ? JSON.stringify(exp.recurrence) : null,
         exp.recurrenceParentId,
         exp.createdAt, exp.updatedAt, null, 1,
       ],
     );
     await enqueue(userId, "insert", "expenses", exp.id, expenseToWire(exp, userId));
-    // Auto-calc: an expense leaves the paying account.
-    await adjustAccountBalance(db, userId, exp.accountId, -exp.amount);
+    // Auto-calc: an expense leaves the paying account, converted to the account's currency
+    // when it was entered in a different one (e.g. an EUR purchase against a DKK account).
+    const effect = await toAccountCurrency(db, userId, exp.accountId, exp.amount, exp.currency);
+    await adjustAccountBalance(db, userId, exp.accountId, -effect);
+    if (exp.goalId) await evaluateGoalPurchase(db, userId, exp.goalId, exp.amount, exp.currency);
     return exp;
   },
 
@@ -749,11 +822,11 @@ export const localRepo: Repo = {
     };
     await db.execute(
       `UPDATE expenses SET name = ?, amount = ?, currency = ?, category_id = ?, spent_on = ?,
-         note = ?, account_id = ?, recurrence = ?, recurrence_parent_id = ?, updated_at = ?, deleted_at = ?, version = ?
+         note = ?, account_id = ?, goal_id = ?, recurrence = ?, recurrence_parent_id = ?, updated_at = ?, deleted_at = ?, version = ?
        WHERE id = ? AND user_id = ?`,
       [
         updated.name, updated.amount, updated.currency, updated.categoryId, updated.spentOn,
-        updated.note, updated.accountId,
+        updated.note, updated.accountId, updated.goalId,
         updated.recurrence ? JSON.stringify(updated.recurrence) : null,
         updated.recurrenceParentId,
         updated.updatedAt, updated.deletedAt, updated.version,
@@ -761,10 +834,13 @@ export const localRepo: Repo = {
       ],
     );
     await enqueue(userId, "update", "expenses", id, expenseToWire(updated, userId));
-    // Auto-calc: reverse the old expense's effect, then apply the new one.
-    await adjustAccountBalance(db, userId, existing.accountId, existing.amount);
+    // Auto-calc: reverse the old expense's effect, then apply the new one (each converted
+    // to its own account's currency).
+    const oldEffect = await toAccountCurrency(db, userId, existing.accountId, existing.amount, existing.currency);
+    await adjustAccountBalance(db, userId, existing.accountId, oldEffect);
     if (!updated.deletedAt) {
-      await adjustAccountBalance(db, userId, updated.accountId, -updated.amount);
+      const newEffect = await toAccountCurrency(db, userId, updated.accountId, updated.amount, updated.currency);
+      await adjustAccountBalance(db, userId, updated.accountId, -newEffect);
     }
     return updated;
   },
@@ -785,7 +861,8 @@ export const localRepo: Repo = {
     await enqueue(userId, "delete", "expenses", id, null);
     if (rows[0]) {
       const old = fromDbExpense(rows[0]);
-      await adjustAccountBalance(db, userId, old.accountId, old.amount);
+      const effect = await toAccountCurrency(db, userId, old.accountId, old.amount, old.currency);
+      await adjustAccountBalance(db, userId, old.accountId, effect);
     }
   },
 
@@ -953,8 +1030,11 @@ export const localRepo: Repo = {
       savingsPercent: input.savingsPercent ?? 0,
       isOverflowTarget: input.isOverflowTarget ?? false,
       destinationAccountId: input.destinationAccountId ?? null,
+      purchaseAccountId: null,
       position: input.position ?? 0,
       purchasedAt: null,
+      active: true,
+      priority: false,
       createdAt: ts,
       updatedAt: ts,
       deletedAt: null,
@@ -962,9 +1042,12 @@ export const localRepo: Repo = {
     };
     await db.execute(
       `INSERT INTO savings_goals
-        (id, user_id, name, target_amount, savings_percent, is_overflow_target, destination_account_id, position, purchased_at, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [goal.id, userId, goal.name, goal.targetAmount, goal.savingsPercent, goal.isOverflowTarget ? 1 : 0, goal.destinationAccountId, goal.position, goal.purchasedAt, goal.createdAt, goal.updatedAt, null, 1],
+        (id, user_id, name, target_amount, savings_percent, is_overflow_target, destination_account_id, purchase_account_id, position, purchased_at, active, priority, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        goal.id, userId, goal.name, goal.targetAmount, goal.savingsPercent, goal.isOverflowTarget ? 1 : 0,
+        goal.destinationAccountId, goal.purchaseAccountId, goal.position, goal.purchasedAt, 1, 0, goal.createdAt, goal.updatedAt, null, 1,
+      ],
     );
     await enqueue(userId, "insert", "savings_goals", goal.id, savingsGoalToWire(goal, userId));
     return goal;
@@ -1007,11 +1090,13 @@ export const localRepo: Repo = {
     };
     await db.execute(
       `UPDATE savings_goals SET name = ?, target_amount = ?, savings_percent = ?, is_overflow_target = ?,
-         destination_account_id = ?, position = ?, purchased_at = ?, updated_at = ?, deleted_at = ?, version = ?
+         destination_account_id = ?, purchase_account_id = ?, position = ?, purchased_at = ?, active = ?, priority = ?,
+         updated_at = ?, deleted_at = ?, version = ?
        WHERE id = ? AND user_id = ?`,
       [
         updated.name, updated.targetAmount, updated.savingsPercent, updated.isOverflowTarget ? 1 : 0,
-        updated.destinationAccountId, updated.position, updated.purchasedAt,
+        updated.destinationAccountId, updated.purchaseAccountId, updated.position, updated.purchasedAt,
+        updated.active ? 1 : 0, updated.priority ? 1 : 0,
         updated.updatedAt, updated.deletedAt, updated.version,
         id, userId,
       ],
@@ -1495,6 +1580,7 @@ export const localRepo: Repo = {
       ingredientId: input.ingredientId ?? null,
       presentationId: input.presentationId ?? null,
       unit: input.unit ?? null,
+      weekStart: input.weekStart,
       createdAt: ts,
       updatedAt: ts,
       deletedAt: null,
@@ -1502,11 +1588,11 @@ export const localRepo: Repo = {
     };
     await db.execute(
       `INSERT INTO shopping_items
-        (id, user_id, name, quantity, bought, position, ingredient_id, presentation_id, unit, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, user_id, name, quantity, bought, position, ingredient_id, presentation_id, unit, week_start, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         item.id, userId, item.name, item.quantity, 0, item.position,
-        item.ingredientId, item.presentationId, item.unit,
+        item.ingredientId, item.presentationId, item.unit, item.weekStart,
         item.createdAt, item.updatedAt, null, 1,
       ],
     );
@@ -1532,11 +1618,11 @@ export const localRepo: Repo = {
       version: existing.version + 1,
     };
     await db.execute(
-      `UPDATE shopping_items SET name = ?, quantity = ?, bought = ?, position = ?, ingredient_id = ?, presentation_id = ?, unit = ?, updated_at = ?, deleted_at = ?, version = ?
+      `UPDATE shopping_items SET name = ?, quantity = ?, bought = ?, position = ?, ingredient_id = ?, presentation_id = ?, unit = ?, week_start = ?, updated_at = ?, deleted_at = ?, version = ?
        WHERE id = ? AND user_id = ?`,
       [
         updated.name, updated.quantity, updated.bought ? 1 : 0, updated.position,
-        updated.ingredientId, updated.presentationId, updated.unit,
+        updated.ingredientId, updated.presentationId, updated.unit, updated.weekStart,
         updated.updatedAt, updated.deletedAt, updated.version,
         id, userId,
       ],
@@ -2280,6 +2366,113 @@ export const localRepo: Repo = {
     return merged;
   },
 
+  // ---------- finanzas_settings (one row per user) ----------
+  async getFinanzasSettings() {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const rows = await db.select<DbFinanzasSettingsRow[]>(
+      "SELECT * FROM finanzas_settings WHERE user_id = ? AND deleted_at IS NULL LIMIT 1",
+      [userId],
+    );
+    return rows[0] ? fromDbFinanzasSettings(rows[0]) : null;
+  },
+
+  async upsertFinanzasSettings(input: FinanzasSettingsUpsert) {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const ts = now();
+    const rows = await db.select<DbFinanzasSettingsRow[]>(
+      "SELECT * FROM finanzas_settings WHERE user_id = ? AND deleted_at IS NULL LIMIT 1",
+      [userId],
+    );
+    const prev = rows[0] ? fromDbFinanzasSettings(rows[0]) : null;
+    const merged: FinanzasSettings = {
+      id: prev?.id ?? newId(),
+      baseCurrency: input.baseCurrency ?? prev?.baseCurrency ?? "DKK",
+      ratesPerUsd: {
+        USD: 1,
+        DKK: input.ratesPerUsd?.DKK ?? prev?.ratesPerUsd.DKK ?? DEFAULT_RATES_PER_USD.DKK,
+        EUR: input.ratesPerUsd?.EUR ?? prev?.ratesPerUsd.EUR ?? DEFAULT_RATES_PER_USD.EUR,
+        ARS: input.ratesPerUsd?.ARS ?? prev?.ratesPerUsd.ARS ?? DEFAULT_RATES_PER_USD.ARS,
+      },
+      ratesUpdatedAt: input.ratesUpdatedAt ?? prev?.ratesUpdatedAt ?? null,
+      createdAt: prev?.createdAt ?? ts,
+      updatedAt: ts,
+      deletedAt: null,
+      version: (prev?.version ?? 0) + 1,
+    };
+    if (prev) {
+      await db.execute(
+        `UPDATE finanzas_settings SET base_currency = ?, rate_dkk_per_usd = ?, rate_eur_per_usd = ?, rate_ars_per_usd = ?, rates_updated_at = ?, updated_at = ?, version = ?
+         WHERE id = ? AND user_id = ?`,
+        [
+          merged.baseCurrency, merged.ratesPerUsd.DKK, merged.ratesPerUsd.EUR, merged.ratesPerUsd.ARS,
+          merged.ratesUpdatedAt, merged.updatedAt, merged.version, merged.id, userId,
+        ],
+      );
+      await enqueue(userId, "update", "finanzas_settings", merged.id, finanzasSettingsToWire(merged, userId));
+    } else {
+      await db.execute(
+        `INSERT INTO finanzas_settings
+          (id, user_id, base_currency, rate_dkk_per_usd, rate_eur_per_usd, rate_ars_per_usd, rates_updated_at, created_at, updated_at, deleted_at, version)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          merged.id, userId, merged.baseCurrency, merged.ratesPerUsd.DKK, merged.ratesPerUsd.EUR,
+          merged.ratesPerUsd.ARS, merged.ratesUpdatedAt, merged.createdAt, merged.updatedAt, null, merged.version,
+        ],
+      );
+      await enqueue(userId, "insert", "finanzas_settings", merged.id, finanzasSettingsToWire(merged, userId));
+    }
+    return merged;
+  },
+
+  // ---------- net_worth_snapshots (one row per user per month) ----------
+  async listNetWorthSnapshots() {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const rows = await db.select<DbNetWorthSnapshotRow[]>(
+      "SELECT * FROM net_worth_snapshots WHERE user_id = ? AND deleted_at IS NULL ORDER BY month ASC",
+      [userId],
+    );
+    return rows.map(fromDbNetWorthSnapshot);
+  },
+
+  async upsertNetWorthSnapshot(input: NetWorthSnapshotUpsert) {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const ts = now();
+    const rows = await db.select<DbNetWorthSnapshotRow[]>(
+      "SELECT * FROM net_worth_snapshots WHERE user_id = ? AND month = ? AND deleted_at IS NULL LIMIT 1",
+      [userId, input.month],
+    );
+    const prev = rows[0] ? fromDbNetWorthSnapshot(rows[0]) : null;
+    const merged: NetWorthSnapshot = {
+      id: prev?.id ?? newId(),
+      month: input.month,
+      amount: input.amount,
+      currency: input.currency,
+      createdAt: prev?.createdAt ?? ts,
+      updatedAt: ts,
+      deletedAt: null,
+      version: (prev?.version ?? 0) + 1,
+    };
+    if (prev) {
+      await db.execute(
+        "UPDATE net_worth_snapshots SET amount = ?, currency = ?, updated_at = ?, version = ? WHERE id = ? AND user_id = ?",
+        [merged.amount, merged.currency, merged.updatedAt, merged.version, merged.id, userId],
+      );
+      await enqueue(userId, "update", "net_worth_snapshots", merged.id, netWorthSnapshotToWire(merged, userId));
+    } else {
+      await db.execute(
+        `INSERT INTO net_worth_snapshots (id, user_id, month, amount, currency, created_at, updated_at, deleted_at, version)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [merged.id, userId, merged.month, merged.amount, merged.currency, merged.createdAt, merged.updatedAt, null, merged.version],
+      );
+      await enqueue(userId, "insert", "net_worth_snapshots", merged.id, netWorthSnapshotToWire(merged, userId));
+    }
+    return merged;
+  },
+
   async listEvents() {
     const userId = await requireUserId();
     const db = await getDb();
@@ -2835,6 +3028,7 @@ interface DbExpenseCategoryRow {
   hue: number;
   position: number;
   archived: number;
+  hidden_from_chart: number;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -2851,6 +3045,7 @@ interface DbExpenseRow {
   spent_on: string;
   note: string;
   account_id: string | null;
+  goal_id: string | null;
   recurrence: string | null;
   recurrence_parent_id: string | null;
   created_at: string;
@@ -2959,6 +3154,7 @@ function fromDbExpenseCategory(r: DbExpenseCategoryRow): ExpenseCategory {
     hue: r.hue,
     position: r.position,
     archived: boolFromDb(r.archived),
+    hiddenFromChart: boolFromDb(r.hidden_from_chart ?? 0),
     createdAt: r.created_at,
     updatedAt: r.updated_at,
     deletedAt: r.deleted_at,
@@ -2976,6 +3172,7 @@ function fromDbExpense(r: DbExpenseRow): Expense {
     spentOn: r.spent_on,
     note: r.note,
     accountId: r.account_id ?? null,
+    goalId: r.goal_id ?? null,
     recurrence: parseJson<RecurrenceRule | null>(r.recurrence, null),
     recurrenceParentId: r.recurrence_parent_id,
     createdAt: r.created_at,
@@ -3006,6 +3203,7 @@ function expenseCategoryToWire(c: ExpenseCategory, userId: string) {
     hue: c.hue,
     position: c.position,
     archived: c.archived,
+    hidden_from_chart: c.hiddenFromChart,
     created_at: c.createdAt,
     updated_at: c.updatedAt,
     deleted_at: c.deletedAt,
@@ -3024,6 +3222,7 @@ function expenseToWire(e: Expense, userId: string) {
     spent_on: e.spentOn,
     note: e.note,
     account_id: e.accountId,
+    goal_id: e.goalId,
     recurrence: e.recurrence,
     recurrence_parent_id: e.recurrenceParentId,
     created_at: e.createdAt,
@@ -3055,8 +3254,11 @@ interface DbSavingsGoalRow {
   savings_percent: number;
   is_overflow_target: number;
   destination_account_id: string | null;
+  purchase_account_id: string | null;
   position: number;
   purchased_at: string | null;
+  active: number;
+  priority: number;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -3083,8 +3285,11 @@ function fromDbSavingsGoal(r: DbSavingsGoalRow): SavingsGoal {
     savingsPercent: r.savings_percent ?? 0,
     isOverflowTarget: boolFromDb(r.is_overflow_target ?? 0),
     destinationAccountId: r.destination_account_id ?? null,
+    purchaseAccountId: r.purchase_account_id ?? null,
     position: r.position,
     purchasedAt: r.purchased_at,
+    active: boolFromDb(r.active ?? 1),
+    priority: boolFromDb(r.priority ?? 0),
     createdAt: r.created_at,
     updatedAt: r.updated_at,
     deletedAt: r.deleted_at,
@@ -3114,8 +3319,11 @@ function savingsGoalToWire(g: SavingsGoal, userId: string) {
     savings_percent: g.savingsPercent,
     is_overflow_target: g.isOverflowTarget,
     destination_account_id: g.destinationAccountId,
+    purchase_account_id: g.purchaseAccountId,
     position: g.position,
     purchased_at: g.purchasedAt,
+    active: g.active,
+    priority: g.priority,
     created_at: g.createdAt,
     updated_at: g.updatedAt,
     deleted_at: g.deletedAt,
@@ -3285,6 +3493,7 @@ interface DbShoppingItemRow {
   ingredient_id: string | null;
   presentation_id: string | null;
   unit: string | null;
+  week_start: string;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -3301,6 +3510,7 @@ function fromDbShoppingItem(r: DbShoppingItemRow): ShoppingItem {
     ingredientId: r.ingredient_id ?? null,
     presentationId: r.presentation_id ?? null,
     unit: r.unit ?? null,
+    weekStart: r.week_start,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
     deletedAt: r.deleted_at,
@@ -3319,6 +3529,7 @@ function shoppingItemToWire(s: ShoppingItem, userId: string) {
     ingredient_id: s.ingredientId,
     presentation_id: s.presentationId,
     unit: s.unit,
+    week_start: s.weekStart,
     created_at: s.createdAt,
     updated_at: s.updatedAt,
     deleted_at: s.deletedAt,
@@ -3732,6 +3943,93 @@ function comprasSettingsToWire(s: ComprasSettings, userId: string) {
     expiry_warn_days: s.expiryWarnDays,
     notifications_enabled: s.notificationsEnabled,
     dkk_per_usd: s.dkkPerUsd,
+    created_at: s.createdAt,
+    updated_at: s.updatedAt,
+    deleted_at: s.deletedAt,
+    version: s.version,
+  };
+}
+
+interface DbFinanzasSettingsRow {
+  id: string;
+  user_id: string;
+  base_currency: string;
+  rate_dkk_per_usd: number;
+  rate_eur_per_usd: number;
+  rate_ars_per_usd: number;
+  rates_updated_at: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+  version: number;
+}
+
+function fromDbFinanzasSettings(r: DbFinanzasSettingsRow): FinanzasSettings {
+  return {
+    id: r.id,
+    baseCurrency: (r.base_currency as FinanzasSettings["baseCurrency"]) ?? "DKK",
+    ratesPerUsd: {
+      USD: 1,
+      DKK: r.rate_dkk_per_usd,
+      EUR: r.rate_eur_per_usd,
+      ARS: r.rate_ars_per_usd,
+    },
+    ratesUpdatedAt: r.rates_updated_at,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    deletedAt: r.deleted_at,
+    version: r.version,
+  };
+}
+
+function finanzasSettingsToWire(s: FinanzasSettings, userId: string) {
+  return {
+    id: s.id,
+    user_id: userId,
+    base_currency: s.baseCurrency,
+    rate_dkk_per_usd: s.ratesPerUsd.DKK,
+    rate_eur_per_usd: s.ratesPerUsd.EUR,
+    rate_ars_per_usd: s.ratesPerUsd.ARS,
+    rates_updated_at: s.ratesUpdatedAt,
+    created_at: s.createdAt,
+    updated_at: s.updatedAt,
+    deleted_at: s.deletedAt,
+    version: s.version,
+  };
+}
+
+interface DbNetWorthSnapshotRow {
+  id: string;
+  user_id: string;
+  month: string;
+  amount: number;
+  currency: string;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+  version: number;
+}
+
+function fromDbNetWorthSnapshot(r: DbNetWorthSnapshotRow): NetWorthSnapshot {
+  return {
+    id: r.id,
+    month: r.month,
+    amount: r.amount,
+    currency: r.currency,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    deletedAt: r.deleted_at,
+    version: r.version,
+  };
+}
+
+function netWorthSnapshotToWire(s: NetWorthSnapshot, userId: string) {
+  return {
+    id: s.id,
+    user_id: userId,
+    month: s.month,
+    amount: s.amount,
+    currency: s.currency,
     created_at: s.createdAt,
     updated_at: s.updatedAt,
     deleted_at: s.deletedAt,

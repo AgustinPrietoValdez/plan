@@ -10,6 +10,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { BudgetManager } from "./components/BudgetManager";
 import { BudgetView } from "./components/BudgetView";
+import { AhorrosView } from "./components/finanzas/AhorrosView";
 import { FinanzasPlaceholder } from "./components/finanzas/FinanzasPlaceholder";
 import { HoldingsView } from "./components/finanzas/HoldingsView";
 import { CategoryManager } from "./components/CategoryManager";
@@ -28,7 +29,6 @@ import { MonthView } from "./components/MonthView";
 import { ProjectManager } from "./components/ProjectManager";
 import { ProjectView } from "./components/ProjectView";
 import { RecurringView } from "./components/RecurringView";
-import { SavingsGoalManager } from "./components/SavingsGoalManager";
 import { Sidebar } from "./components/Sidebar";
 import { TaskEditor } from "./components/TaskEditor";
 import { TaskStrip } from "./components/TaskStrip";
@@ -72,8 +72,6 @@ function App() {
     closeExpenseCategoryManager,
     budgetManagerOpen,
     closeBudgetManager,
-    savingsGoalManagerOpen,
-    closeSavingsGoalManager,
     expenseEditor,
     closeExpenseEditor,
     eventEditor,
@@ -182,7 +180,6 @@ function App() {
     projectManagerOpen ||
     expenseCategoryManagerOpen ||
     budgetManagerOpen ||
-    savingsGoalManagerOpen ||
     expenseEditor.mode !== "closed" ||
     eventEditor.mode !== "closed";
 
@@ -310,17 +307,12 @@ function App() {
           )}
           {view === "recurring" && <RecurringView />}
           {view === "budget" && finanzasTab === "presupuesto" && <BudgetView />}
+          {view === "budget" && finanzasTab === "ahorros" && <AhorrosView />}
           {view === "budget" && finanzasTab === "holdings" && <HoldingsView />}
           {view === "budget" && finanzasTab === "inversiones" && (
             <FinanzasPlaceholder
               title="Inversiones"
               note="Por verse: queda para cuando tengan inversiones / un broker."
-            />
-          )}
-          {view === "budget" && finanzasTab === "taxes" && (
-            <FinanzasPlaceholder
-              title="Taxes"
-              note="Por verse: impuestos / declaraciones, a definir mas adelante."
             />
           )}
           {view === "habits" && <HabitsView />}
@@ -353,7 +345,6 @@ function App() {
       {projectManagerOpen && <ProjectManager onClose={closeProjectManager} />}
       {expenseCategoryManagerOpen && <ExpenseCategoryManager onClose={closeExpenseCategoryManager} />}
       {budgetManagerOpen && <BudgetManager onClose={closeBudgetManager} />}
-      {savingsGoalManagerOpen && <SavingsGoalManager onClose={closeSavingsGoalManager} />}
       {expenseEditor.mode === "edit" && (
         <ExpenseEditor mode="edit" expenseId={expenseEditor.expenseId} onClose={closeExpenseEditor} />
       )}

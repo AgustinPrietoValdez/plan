@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type DragEvent, type MouseEvent, type ReactNode } from "react";
 import {
   useAccounts,
   useCreateExpense,
@@ -10,7 +10,6 @@ import {
   useCreateRecipeIngredient,
   useCreateInventory,
   useCreateMealPlanEntry,
-  useCreateSavedList,
   useCreateShoppingItem,
   useComprasSettings,
   useUpsertComprasSettings,
@@ -20,7 +19,6 @@ import {
   useDeleteRecipe,
   useDeleteRecipeIngredient,
   useDeleteInventory,
-  useDeleteSavedList,
   useDeleteShoppingItem,
   useIngredientPresentations,
   useIngredientCategories,
@@ -28,12 +26,12 @@ import {
   useInventory,
   useMealLogs,
   useMealPlanEntries,
+  usePatchInventory,
   usePatchMealPlanEntry,
   usePatchRecipe,
   usePatchShoppingItem,
   useRecipeIngredients,
   useRecipes,
-  useSavedLists,
   useShoppingItems,
 } from "../lib/queries";
 import {
@@ -48,7 +46,7 @@ import { CURRENCY, fmtMoney, fmtUsdFromDkk } from "../lib/money";
 import { useUsdRate } from "../lib/useUsdRate";
 import { defaultSlot, useLogMeal } from "../lib/useLogMeal";
 import { useToggleBought } from "../lib/useToggleBought";
-import { fromYmd, todayYmd, ymd } from "../lib/date";
+import { fromYmd, mondayOfThisWeek, shiftWeek, todayYmd, weekLabel, ymd } from "../lib/date";
 import {
   DIMENSION_LABELS,
   baseUnit,
@@ -62,6 +60,7 @@ import type {
   IngredientCategory,
   IngredientDimension,
   IngredientPresentation,
+  MealPlanEntry,
   MealSlot,
   MealType,
   Recipe,
@@ -116,8 +115,21 @@ function Pill({ tone, children, title }: { tone: string; children: ReactNode; ti
 
 function SectionTitle({ children, right }: { children: ReactNode; right?: ReactNode }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".05em", fontWeight: 600, color: "var(--fg-muted)", flex: 1 }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 8, minHeight: 28 }}>
+      <div
+        style={{
+          fontSize: 11,
+          textTransform: "uppercase",
+          letterSpacing: ".05em",
+          fontWeight: 600,
+          color: "var(--fg-muted)",
+          flex: 1,
+          minWidth: 0,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
         {children}
       </div>
       {right}
@@ -144,32 +156,34 @@ export function ComprasView() {
 
   return (
     <div className="day-view-main" style={{ flex: 1, minHeight: 0 }}>
-      <header
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 14,
-          paddingBottom: 8,
-          borderBottom: "1px solid var(--line)",
-        }}
-      >
-        <div>
-          <div
-            style={{
-              fontSize: 11,
-              textTransform: "uppercase",
-              letterSpacing: ".06em",
-              color: "var(--fg-subtle)",
-              fontWeight: 600,
-            }}
-          >
-            Compras
+      {tab !== "listas" && tab !== "plan" && (
+        <header
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 14,
+            paddingBottom: 8,
+            borderBottom: "1px solid var(--line)",
+          }}
+        >
+          <div>
+            <div
+              style={{
+                fontSize: 11,
+                textTransform: "uppercase",
+                letterSpacing: ".06em",
+                color: "var(--fg-subtle)",
+                fontWeight: 600,
+              }}
+            >
+              Compras
+            </div>
+            <div style={{ fontSize: 24, fontWeight: 600, letterSpacing: "-0.02em", lineHeight: 1.1 }}>
+              {COMPRAS_TABS.find((t) => t.id === tab)?.label}
+            </div>
           </div>
-          <div style={{ fontSize: 24, fontWeight: 600, letterSpacing: "-0.02em", lineHeight: 1.1 }}>
-            {COMPRAS_TABS.find((t) => t.id === tab)?.label}
-          </div>
-        </div>
-      </header>
+        </header>
+      )}
 
       <div
         style={{
@@ -181,16 +195,10 @@ export function ComprasView() {
           overflowY: "auto",
         }}
       >
-        {tab === "ingredientes" ? (
-          <IngredientesPanel />
-        ) : tab === "recetas" ? (
-          <RecetasPanel />
-        ) : tab === "listas" ? (
+        {tab === "listas" ? (
           <ListasPanel />
         ) : tab === "plan" ? (
           <PlanPanel />
-        ) : tab === "inventario" ? (
-          <InventarioPanel />
         ) : (
           <AjustesPanel />
         )}
@@ -224,6 +232,16 @@ function AjustesPanel() {
   });
   const [form, setForm] = useState(() => derive(settingsQ.data));
   useEffect(() => { setForm(derive(settingsQ.data)); }, [settingsQ.data]);
+
+  const [mealTargets, setMealTargetsState] = useState<Record<MealType, number>>({
+    breakfast_snack: getMealTarget("breakfast_snack"),
+    lunch_dinner: getMealTarget("lunch_dinner"),
+  });
+  const updateMealTarget = (bucket: MealType, n: number) => {
+    const v = Math.max(0, n);
+    setMealTargetLS(bucket, v);
+    setMealTargetsState((t) => ({ ...t, [bucket]: v }));
+  };
 
   const save = () => {
     upsert.mutate(form);
@@ -300,618 +318,32 @@ function AjustesPanel() {
         </div>
       </section>
 
+      <section style={sectionStyle}>
+        <SectionTitle>Plan semanal</SectionTitle>
+        <div style={{ fontSize: 12, color: "var(--fg-muted)" }}>Cuántas comidas de cada tipo necesitás por semana.</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          {MEAL_BUCKETS.map((bucket) => (
+            <label key={bucket} style={{ ...labelStyle, padding: "8px 10px", border: "1px solid var(--line)", borderRadius: 8, background: "var(--bg)" }}>
+              <span style={{ flex: 1 }}>{MEAL_TYPE_LABELS[bucket]}</span>
+              <input
+                className="input"
+                type="number"
+                min={0}
+                value={mealTargets[bucket]}
+                onChange={(e) => updateMealTarget(bucket, Number(e.target.value) || 0)}
+                style={{ width: 60 }}
+              />
+            </label>
+          ))}
+        </div>
+      </section>
+
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
         <button className="btn" style={{ background: "var(--accent)", color: "#fff", borderColor: "var(--accent)" }} onClick={save}>
           Guardar ajustes
         </button>
         <span style={{ fontSize: 11, color: "var(--fg-subtle)" }}>Se sincronizan al celular, que es donde suenan las notificaciones.</span>
       </div>
-    </div>
-  );
-}
-
-function IngredientesPanel() {
-  const ingredientsQ = useIngredients();
-  const presentationsQ = useIngredientPresentations();
-  const categoriesQ = useIngredientCategories();
-  const ingredients = useMemo(() => ingredientsQ.data ?? [], [ingredientsQ.data]);
-  const presentations = useMemo(() => presentationsQ.data ?? [], [presentationsQ.data]);
-  const categories = useMemo(() => (categoriesQ.data ?? []).filter((c) => !c.archived), [categoriesQ.data]);
-  const [showCategoryManager, setShowCategoryManager] = useState(false);
-
-  const byIngredient = useMemo(() => {
-    const m = new Map<string, IngredientPresentation[]>();
-    for (const p of presentations) {
-      const arr = m.get(p.ingredientId) ?? [];
-      arr.push(p);
-      m.set(p.ingredientId, arr);
-    }
-    return m;
-  }, [presentations]);
-
-  const categoryById = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
-
-  return (
-    <>
-      {showCategoryManager && <IngredientCategoryManager onClose={() => setShowCategoryManager(false)} />}
-      <div style={{ display: "flex", flexDirection: "column", gap: 12, maxWidth: 720 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <div style={{ flex: 1 }} />
-          <button className="btn ghost" style={{ fontSize: 12 }} onClick={() => setShowCategoryManager(true)}>
-            Categorías
-          </button>
-        </div>
-        <NewIngredientForm categories={categories} />
-        {ingredients.length === 0 ? (
-          <div style={{ fontSize: 12.5, color: "var(--fg-subtle)", padding: "8px 2px" }}>
-            Todavía no cargaste ingredientes.
-          </div>
-        ) : (
-          ingredients.map((ing) => (
-            <IngredientRow
-              key={ing.id}
-              ingredient={ing}
-              presentations={byIngredient.get(ing.id) ?? []}
-              category={ing.categoryId ? categoryById.get(ing.categoryId) : undefined}
-            />
-          ))
-        )}
-      </div>
-    </>
-  );
-}
-
-function NewIngredientForm({ categories }: { categories: IngredientCategory[] }) {
-  const createIngredient = useCreateIngredient();
-  const [name, setName] = useState("");
-  const [categoryId, setCategoryId] = useState("");
-  const [dimension, setDimension] = useState<IngredientDimension>("count");
-  const [shelf, setShelf] = useState("");
-
-  const add = () => {
-    const trimmed = name.trim();
-    if (!trimmed) return;
-    const days = shelf.trim() ? Number(shelf) : null;
-    createIngredient.mutate({
-      name: trimmed,
-      categoryId: categoryId || null,
-      dimension,
-      shelfLifeDays: days != null && Number.isFinite(days) ? days : null,
-    });
-    setName("");
-    setCategoryId("");
-    setShelf("");
-    setDimension("count");
-  };
-
-  return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        add();
-      }}
-      style={{
-        display: "flex",
-        gap: 8,
-        alignItems: "center",
-        padding: 12,
-        background: "var(--bg-elev)",
-        border: "1px solid var(--line)",
-        borderRadius: 10,
-        flexWrap: "wrap",
-      }}
-    >
-      <input
-        className="input"
-        placeholder="Nuevo ingrediente…"
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        style={{ flex: 1, minWidth: 160 }}
-      />
-      <select
-        className="input"
-        value={categoryId}
-        onChange={(e) => setCategoryId(e.target.value)}
-        title="Categoría del ingrediente"
-        style={{ width: 160 }}
-      >
-        <option value="">Sin categoría</option>
-        {categories.map((c) => (
-          <option key={c.id} value={c.id}>{c.name}</option>
-        ))}
-      </select>
-      <select
-        className="input"
-        value={dimension}
-        onChange={(e) => setDimension(e.target.value as IngredientDimension)}
-        title="Tipo de medida"
-      >
-        <option value="count">{DIMENSION_LABELS.count}</option>
-        <option value="weight">{DIMENSION_LABELS.weight}</option>
-        <option value="volume">{DIMENSION_LABELS.volume}</option>
-      </select>
-      <input
-        className="input"
-        type="number"
-        min={0}
-        placeholder="Dura (días)"
-        value={shelf}
-        onChange={(e) => setShelf(e.target.value)}
-        style={{ width: 110 }}
-        title="Vida útil en días (opcional)"
-      />
-      <button className="btn" type="submit" disabled={!name.trim()}>
-        <IPlus size={12} /> Agregar
-      </button>
-    </form>
-  );
-}
-
-function IngredientRow({
-  ingredient,
-  presentations,
-  category,
-}: {
-  ingredient: Ingredient;
-  presentations: IngredientPresentation[];
-  category?: IngredientCategory;
-}) {
-  const deleteIngredient = useDeleteIngredient();
-  const createPresentation = useCreateIngredientPresentation();
-  const deletePresentation = useDeleteIngredientPresentation();
-  const [open, setOpen] = useState(false);
-
-  const units = unitOptions(ingredient.dimension);
-  const [pLabel, setPLabel] = useState("");
-  const [pAmount, setPAmount] = useState("");
-  const [pUnit, setPUnit] = useState(units[0].unit);
-  const [pPrice, setPPrice] = useState("");
-
-  const addPresentation = () => {
-    const amount = parseQuantity(pAmount);
-    if (amount == null || amount <= 0) return;
-    const size = toBase(amount, pUnit);
-    const price = pPrice.trim() ? parseQuantity(pPrice) : null;
-    const label = pLabel.trim() || `${pAmount} ${units.find((u) => u.unit === pUnit)?.label ?? ""}`.trim();
-    createPresentation.mutate({
-      ingredientId: ingredient.id,
-      label,
-      size,
-      price: price != null && Number.isFinite(price) ? price : null,
-    });
-    setPLabel("");
-    setPAmount("");
-    setPPrice("");
-  };
-
-  return (
-    <div style={{ background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: 10 }}>
-      <div
-        style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", cursor: "pointer" }}
-        onClick={() => setOpen((o) => !o)}
-      >
-        <span style={{ display: "inline-flex", color: "var(--fg-subtle)", transition: "transform .15s", transform: open ? "rotate(0)" : "rotate(-90deg)" }}>
-          <IChevD size={14} />
-        </span>
-        <span style={{ fontSize: 14, fontWeight: 600, flex: 1 }}>{ingredient.name}</span>
-        {category && (
-          <Pill tone={colorsForHue(category.hue).bg} title="Categoría">{category.name}</Pill>
-        )}
-        <Pill tone={DIMENSION_TONE[ingredient.dimension]} title="Tipo de medida">
-          {DIMENSION_LABELS[ingredient.dimension]}
-        </Pill>
-        {ingredient.shelfLifeDays != null && (
-          <span style={{ fontSize: 11.5, color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums" }}>
-            dura {ingredient.shelfLifeDays}d
-          </span>
-        )}
-        <span style={{ fontSize: 11.5, color: "var(--fg-muted)" }}>
-          {presentations.length} {presentations.length === 1 ? "presentación" : "presentaciones"}
-        </span>
-        <span onClick={(e) => e.stopPropagation()}>
-          <IconBtn
-            danger
-            title={`Borrar ${ingredient.name}`}
-            onClick={() => { if (window.confirm(`Borrar "${ingredient.name}"?`)) deleteIngredient.mutate(ingredient.id); }}
-          >
-            <ITrash size={13} />
-          </IconBtn>
-        </span>
-      </div>
-
-      {open && (
-        <div style={{ borderTop: "1px solid var(--line)", padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
-          {presentations.length === 0 && (
-            <div style={{ fontSize: 12, color: "var(--fg-subtle)" }}>Sin presentaciones.</div>
-          )}
-          {presentations.map((p) => (
-            <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12.5 }}>
-              <span style={{ flex: 1 }}>{p.label}</span>
-              <span style={{ color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums" }}>
-                {formatQuantity(p.size, ingredient.dimension)}
-                {p.price != null && ` · ${fmtMoney(p.price)}`}
-              </span>
-              <IconBtn title="Quitar presentación" onClick={() => deletePresentation.mutate(p.id)}>
-                <IX size={11} />
-              </IconBtn>
-            </div>
-          ))}
-
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              addPresentation();
-            }}
-            style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 4 }}
-          >
-            <input
-              className="input"
-              placeholder="Etiqueta (ej: Botella 1 L)"
-              value={pLabel}
-              onChange={(e) => setPLabel(e.target.value)}
-              style={{ flex: 1, minWidth: 140 }}
-            />
-            <input
-              className="input"
-              placeholder="Cantidad"
-              value={pAmount}
-              onChange={(e) => setPAmount(e.target.value)}
-              style={{ width: 90 }}
-              title={`Tamaño en que viene (unidad base: ${baseUnit(ingredient.dimension)})`}
-            />
-            {units.length > 1 ? (
-              <select className="input" value={pUnit} onChange={(e) => setPUnit(e.target.value)}>
-                {units.map((u) => (
-                  <option key={u.unit} value={u.unit}>
-                    {u.label}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <span style={{ fontSize: 12, color: "var(--fg-muted)", width: 24 }}>{units[0].label}</span>
-            )}
-            <input
-              className="input"
-              placeholder="Precio"
-              value={pPrice}
-              onChange={(e) => setPPrice(e.target.value)}
-              style={{ width: 90 }}
-              title="Precio (opcional, manual)"
-            />
-            <button className="btn" type="submit" disabled={!pAmount.trim()}>
-              <IPlus size={11} /> Presentación
-            </button>
-          </form>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ---------------- Recetas ----------------
-
-/** Shared: add a recipe's ingredients to the shopping list (least waste +
- *  merge into existing items). Returns how many list items were touched. */
-function useAddRecipeToList() {
-  const ingredientsQ = useIngredients();
-  const categoriesQ = useIngredientCategories();
-  const presentationsQ = useIngredientPresentations();
-  const riQ = useRecipeIngredients();
-  const shoppingItemsQ = useShoppingItems();
-  const createShoppingItem = useCreateShoppingItem();
-  const patchShoppingItem = usePatchShoppingItem();
-
-  return (recipe: Recipe): number => {
-    const ris = (riQ.data ?? []).filter((ri) => ri.recipeId === recipe.id);
-    if (ris.length === 0) return 0;
-    const ingredientById = new Map<string, Ingredient>();
-    for (const i of ingredientsQ.data ?? []) ingredientById.set(i.id, i);
-    const categoryById = new Map<string, IngredientCategory>();
-    for (const c of categoriesQ.data ?? []) categoryById.set(c.id, c);
-    const presentationsByIngredient = new Map<string, IngredientPresentation[]>();
-    for (const p of presentationsQ.data ?? []) {
-      const arr = presentationsByIngredient.get(p.ingredientId) ?? [];
-      arr.push(p);
-      presentationsByIngredient.set(p.ingredientId, arr);
-    }
-    const entries = [{ recipeIngredients: ris, servings: 1, portions: 1 }];
-    const need = aggregateNeed(entries);
-    const needByCategory = aggregateCategoryNeed(entries);
-    const items = [
-      ...neededToShoppingItems(need, ingredientById, presentationsByIngredient),
-      ...categoryNeedToShoppingItems(needByCategory, categoryById),
-    ];
-    const current = shoppingItemsQ.data ?? [];
-    for (const it of items) {
-      const target = findMergeTarget(current, it);
-      if (target) patchShoppingItem.mutate({ id: target.id, patch: { quantity: target.quantity + it.quantity } });
-      else createShoppingItem.mutate(it);
-    }
-    return items.length;
-  };
-}
-
-function RecetasPanel() {
-  const recipesQ = useRecipes();
-  const createRecipe = useCreateRecipe();
-  const deleteRecipe = useDeleteRecipe();
-  const addRecipeToList = useAddRecipeToList();
-  const logMeal = useLogMeal();
-  const recipes = useMemo(() => recipesQ.data ?? [], [recipesQ.data]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-
-  const comi = (r: Recipe) => {
-    const cookedTxt = window.prompt(`¿Cuántas porciones hiciste de "${r.name}"? (descuenta ingredientes del inventario)`, String(r.servings));
-    if (cookedTxt == null) return;
-    const cooked = Math.max(0, Number(cookedTxt.replace(",", ".")) || 0);
-    const eatenTxt = window.prompt("¿Cuántas comiste?", String(cooked));
-    if (eatenTxt == null) return;
-    const eaten = Math.max(0, Number(eatenTxt.replace(",", ".")) || 0);
-    if (cooked <= 0 && eaten <= 0) return;
-    void logMeal(r, cooked, eaten, defaultSlot(r.mealType), todayYmd());
-    window.alert("Registrado.");
-  };
-
-  const selected = recipes.find((r) => r.id === selectedId) ?? null;
-
-  const newRecipe = async () => {
-    const r = await createRecipe.mutateAsync({
-      name: "Nueva receta",
-      servings: 1,
-      mealType: "lunch_dinner",
-      steps: [],
-    });
-    setSelectedId(r.id);
-  };
-
-  if (selected) {
-    return <RecipeEditor recipe={selected} onBack={() => setSelectedId(null)} />;
-  }
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: 720 }}>
-      <div>
-        <button className="btn" onClick={() => void newRecipe()}>
-          <IPlus size={12} /> Nueva receta
-        </button>
-      </div>
-      {recipes.length === 0 ? (
-        <div style={{ fontSize: 12.5, color: "var(--fg-subtle)", padding: "8px 2px" }}>
-          Todavía no cargaste recetas.
-        </div>
-      ) : (
-        recipes.map((r) => (
-          <div
-            key={r.id}
-            onClick={() => setSelectedId(r.id)}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              padding: "10px 12px",
-              background: "var(--bg-elev)",
-              border: "1px solid var(--line)",
-              borderRadius: 10,
-              cursor: "pointer",
-            }}
-          >
-            <span style={{ fontSize: 14, fontWeight: 600, flex: 1 }}>{r.name}</span>
-            <Pill tone={MEAL_TYPE_TONE[r.mealType]}>{MEAL_TYPE_LABELS[r.mealType]}</Pill>
-            <span style={{ fontSize: 11.5, color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums" }}>
-              {r.servings} porc.
-            </span>
-            <button
-              className="btn"
-              style={{ padding: "3px 8px", fontSize: 11 }}
-              title="Agregar ingredientes a la lista"
-              onClick={(e) => {
-                e.stopPropagation();
-                const n = addRecipeToList(r);
-                window.alert(n > 0 ? `Agregué ${n} ítem(s) a la lista.` : "Esta receta no tiene ingredientes.");
-              }}
-            >
-              <IPlus size={11} /> A la lista
-            </button>
-            <button
-              className="btn ghost"
-              style={{ padding: "3px 8px", fontSize: 11 }}
-              title="Registrar que la comiste (descuenta del inventario)"
-              onClick={(e) => {
-                e.stopPropagation();
-                comi(r);
-              }}
-            >
-              Comí
-            </button>
-            <span onClick={(e) => e.stopPropagation()}>
-              <IconBtn
-                danger
-                title={`Borrar receta ${r.name}`}
-                onClick={() => { if (window.confirm(`Borrar receta "${r.name}"?`)) deleteRecipe.mutate(r.id); }}
-              >
-                <ITrash size={13} />
-              </IconBtn>
-            </span>
-          </div>
-        ))
-      )}
-    </div>
-  );
-}
-
-function RecipeEditor({ recipe, onBack }: { recipe: Recipe; onBack: () => void }) {
-  const patchRecipe = usePatchRecipe();
-  const ingredientsQ = useIngredients();
-  const riQ = useRecipeIngredients();
-  const createRI = useCreateRecipeIngredient();
-  const deleteRI = useDeleteRecipeIngredient();
-  const addRecipeToList = useAddRecipeToList();
-
-  const categoriesQ = useIngredientCategories();
-  const ingredients = useMemo(() => ingredientsQ.data ?? [], [ingredientsQ.data]);
-  const categories = useMemo(() => categoriesQ.data ?? [], [categoriesQ.data]);
-  const ingredientById = useMemo(() => {
-    const m = new Map<string, Ingredient>();
-    for (const i of ingredients) m.set(i.id, i);
-    return m;
-  }, [ingredients]);
-  const categoryById = useMemo(() => {
-    const m = new Map<string, IngredientCategory>();
-    for (const c of categories) m.set(c.id, c);
-    return m;
-  }, [categories]);
-  const recipeIngredients = useMemo(
-    () => (riQ.data ?? []).filter((ri) => ri.recipeId === recipe.id),
-    [riQ.data, recipe.id],
-  );
-
-  const [name, setName] = useState(recipe.name);
-  const [stepDraft, setStepDraft] = useState("");
-
-  const addToList = () => {
-    const n = addRecipeToList(recipe);
-    window.alert(n > 0 ? `Agregué ${n} ítem(s) a la lista (pestaña Listas).` : "Esta receta no tiene ingredientes.");
-  };
-
-  const saveAndExit = () => {
-    const t = name.trim() || "Sin nombre";
-    if (t !== recipe.name) patchRecipe.mutate({ id: recipe.id, patch: { name: t } });
-    onBack();
-  };
-
-  const updateSteps = (steps: string[]) => patchRecipe.mutate({ id: recipe.id, patch: { steps } });
-  const moveStep = (idx: number, dir: -1 | 1) => {
-    const next = [...recipe.steps];
-    const j = idx + dir;
-    if (j < 0 || j >= next.length) return;
-    [next[idx], next[j]] = [next[j], next[idx]];
-    updateSteps(next);
-  };
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 14, maxWidth: 720 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <button className="btn ghost" onClick={saveAndExit}>← Volver</button>
-        <span style={{ flex: 1 }} />
-        <button className="btn ghost" onClick={addToList} disabled={recipeIngredients.length === 0} title="Agregar ingredientes a la lista de compra">
-          <IPlus size={12} /> Agregar a la lista
-        </button>
-        <button className="btn" onClick={saveAndExit} style={{ background: "var(--accent)", color: "#fff", borderColor: "var(--accent)" }}>
-          Guardar
-        </button>
-      </div>
-
-      {/* meta */}
-      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        <input
-          className="input"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          onBlur={() => {
-            const t = name.trim() || "Sin nombre";
-            if (t !== recipe.name) patchRecipe.mutate({ id: recipe.id, patch: { name: t } });
-          }}
-          style={{ flex: 1, minWidth: 180, fontSize: 15, fontWeight: 600 }}
-        />
-        <select
-          className="input"
-          value={recipe.mealType}
-          onChange={(e) => patchRecipe.mutate({ id: recipe.id, patch: { mealType: e.target.value as MealType } })}
-        >
-          <option value="lunch_dinner">{MEAL_TYPE_LABELS.lunch_dinner}</option>
-          <option value="breakfast_snack">{MEAL_TYPE_LABELS.breakfast_snack}</option>
-        </select>
-        <label style={{ fontSize: 12, color: "var(--fg-muted)", display: "inline-flex", alignItems: "center", gap: 6 }}>
-          Porciones
-          <input
-            className="input"
-            type="number"
-            min={1}
-            value={recipe.servings}
-            onChange={(e) => patchRecipe.mutate({ id: recipe.id, patch: { servings: Math.max(1, Number(e.target.value) || 1) } })}
-            style={{ width: 64 }}
-          />
-        </label>
-      </div>
-
-      {/* ingredients */}
-      <section style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <SectionTitle>Ingredientes (para {recipe.servings} porc.)</SectionTitle>
-        {recipeIngredients.length === 0 && (
-          <div style={{ fontSize: 12, color: "var(--fg-subtle)" }}>Sin ingredientes.</div>
-        )}
-        {recipeIngredients.map((ri) => {
-          const ing = ri.ingredientId ? ingredientById.get(ri.ingredientId) : undefined;
-          const cat = ri.categoryId ? categoryById.get(ri.categoryId) : undefined;
-          return (
-            <div key={ri.id} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13 }}>
-              {ing && <Pill tone={DIMENSION_TONE[ing.dimension]}>{DIMENSION_LABELS[ing.dimension]}</Pill>}
-              {cat && <Pill tone="neutral">generico</Pill>}
-              <span style={{ flex: 1 }}>{ing?.name ?? (cat ? `[${cat.name}]` : "—")}</span>
-              <span style={{ color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums" }}>
-                {ing ? formatQuantity(ri.quantity, ing.dimension) : ri.quantity}
-              </span>
-              <IconBtn title="Quitar ingrediente" onClick={() => deleteRI.mutate(ri.id)}>
-                <IX size={11} />
-              </IconBtn>
-            </div>
-          );
-        })}
-        <RecipeIngredientAdder
-          ingredients={ingredients}
-          categories={categories}
-          onAdd={(sel) => createRI.mutate({ recipeId: recipe.id, ...sel })}
-        />
-      </section>
-
-      {/* steps */}
-      <section style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <SectionTitle>Pasos</SectionTitle>
-        {recipe.steps.map((s, idx) => (
-          <div key={`${idx}|${s}`} style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
-            <span style={{ width: 22, height: 22, display: "inline-flex", alignItems: "center", justifyContent: "center", borderRadius: "50%", background: "var(--accent-soft)", color: "var(--accent)", fontSize: 11, fontWeight: 700, marginTop: 6, fontVariantNumeric: "tabular-nums" }}>{idx + 1}</span>
-            <textarea
-              className="input"
-              defaultValue={s}
-              rows={2}
-              onBlur={(e) => {
-                const v = e.target.value.trim();
-                if (v === s) return;
-                const next = [...recipe.steps];
-                if (v) next[idx] = v;
-                else next.splice(idx, 1);
-                updateSteps(next);
-              }}
-              style={{ flex: 1, resize: "vertical" }}
-            />
-            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-              <button className="btn ghost" style={{ padding: "1px 6px", fontSize: 11 }} onClick={() => moveStep(idx, -1)} disabled={idx === 0}>↑</button>
-              <button className="btn ghost" style={{ padding: "1px 6px", fontSize: 11 }} onClick={() => moveStep(idx, 1)} disabled={idx === recipe.steps.length - 1}>↓</button>
-            </div>
-          </div>
-        ))}
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            const v = stepDraft.trim();
-            if (!v) return;
-            updateSteps([...recipe.steps, v]);
-            setStepDraft("");
-          }}
-          style={{ display: "flex", gap: 6 }}
-        >
-          <input
-            className="input"
-            placeholder="Agregar paso…"
-            value={stepDraft}
-            onChange={(e) => setStepDraft(e.target.value)}
-            style={{ flex: 1 }}
-          />
-          <button className="btn" type="submit" disabled={!stepDraft.trim()}>
-            <IPlus size={11} /> Paso
-          </button>
-        </form>
-      </section>
     </div>
   );
 }
@@ -1039,25 +471,48 @@ function RecipeIngredientAdder({
 // ---------------- Listas ----------------
 
 function ListasPanel() {
+  const { comprasWeek: weekStart, setComprasWeek: setWeekStart } = useApp();
+
   const itemsQ = useShoppingItems();
+  const ingredientsQ = useIngredients();
   const presentationsQ = useIngredientPresentations();
+  const categoriesQ = useIngredientCategories();
   const createItem = useCreateShoppingItem();
   const patchItem = usePatchShoppingItem();
   const deleteItem = useDeleteShoppingItem();
-  const savedQ = useSavedLists();
-  const createSaved = useCreateSavedList();
-  const deleteSaved = useDeleteSavedList();
+  const deleteIngredient = useDeleteIngredient();
   const toggleBought = useToggleBought();
-
   const usdRate = useUsdRate();
+
   const [showClose, setShowClose] = useState(false);
-  const items = useMemo(() => itemsQ.data ?? [], [itemsQ.data]);
-  const saved = useMemo(() => savedQ.data ?? [], [savedQ.data]);
+  const [showCategoryManager, setShowCategoryManager] = useState(false);
+  const [showAddIngredient, setShowAddIngredient] = useState(false);
+
+  const allItems = useMemo(() => itemsQ.data ?? [], [itemsQ.data]);
+  const items = useMemo(() => allItems.filter((i) => i.weekStart === weekStart), [allItems, weekStart]);
+  const ingredients = useMemo(() => ingredientsQ.data ?? [], [ingredientsQ.data]);
+  const presentations = useMemo(() => presentationsQ.data ?? [], [presentationsQ.data]);
+  const categories = useMemo(() => (categoriesQ.data ?? []).filter((c) => !c.archived), [categoriesQ.data]);
+
+  const ingredientById = useMemo(() => new Map(ingredients.map((i) => [i.id, i])), [ingredients]);
+  const presentationById = useMemo(() => new Map(presentations.map((p) => [p.id, p])), [presentations]);
+  const categoryById = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
+  const presByIngredient = useMemo(() => {
+    const m = new Map<string, IngredientPresentation[]>();
+    for (const p of presentations) {
+      const arr = m.get(p.ingredientId) ?? [];
+      arr.push(p);
+      m.set(p.ingredientId, arr);
+    }
+    return m;
+  }, [presentations]);
+
   const priceById = useMemo(() => {
     const m = new Map<string, number | null>();
-    for (const p of presentationsQ.data ?? []) m.set(p.id, p.price);
+    for (const p of presentations) m.set(p.id, p.price);
     return m;
-  }, [presentationsQ.data]);
+  }, [presentations]);
+
   const pending = items.filter((i) => !i.bought);
   const bought = items.filter((i) => i.bought);
 
@@ -1068,10 +523,24 @@ function ListasPanel() {
   };
   const total = items.reduce((s, it) => s + (itemPrice(it) ?? 0), 0);
 
-  const addProduct = (it: ShoppingItemCreate) => {
+  const addToList = (it: ShoppingItemCreate) => {
     const target = findMergeTarget(items, it);
     if (target) patchItem.mutate({ id: target.id, patch: { quantity: target.quantity + it.quantity } });
     else createItem.mutate(it);
+  };
+
+  const addPresentationToList = (ingredientId: string, presentationId: string) => {
+    const ing = ingredientById.get(ingredientId);
+    const p = presentationById.get(presentationId);
+    if (!ing || !p) return;
+    addToList({
+      name: `${ing.name} (${p.label})`,
+      quantity: 1,
+      ingredientId: ing.id,
+      presentationId: p.id,
+      unit: null,
+      weekStart,
+    });
   };
 
   const setQtyAbs = (it: ShoppingItem, n: number) => {
@@ -1083,135 +552,250 @@ function ListasPanel() {
     for (const it of bought) deleteItem.mutate(it.id);
   };
 
-  const clearBought = () => {
-    if (bought.length === 0) return;
-    if (!window.confirm(`Vaciar ${bought.length} comprado(s)?`)) return;
-    deleteBought();
+  const [dragOver, setDragOver] = useState(false);
+  const onListDrop = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setDragOver(false);
+    const raw = e.dataTransfer.getData("text/plain");
+    if (!raw) return;
+    try {
+      const { ingredientId, presentationId } = JSON.parse(raw);
+      if (ingredientId && presentationId) addPresentationToList(ingredientId, presentationId);
+    } catch {
+      // ignora payloads que no vengan de un chip de presentacion
+    }
   };
 
-  const saveCurrent = () => {
-    if (items.length === 0) return;
-    const listName = window.prompt("Nombre de la lista guardada:");
-    if (!listName?.trim()) return;
-    createSaved.mutate({
-      name: listName.trim(),
-      items: items.map((i) => ({
-        name: i.name,
-        quantity: i.quantity,
-        ingredientId: i.ingredientId,
-        presentationId: i.presentationId,
-        unit: i.unit,
-      })),
-    });
-  };
+  // Inventario compacto debajo de la lista: arrastrar una variante acá suma
+  // stock directamente (en vez de agregarla a la lista de compra).
+  const inventoryQ = useInventory();
+  const createInventory = useCreateInventory();
+  const deleteInventory = useDeleteInventory();
+  const inventory = useMemo(() => inventoryQ.data ?? [], [inventoryQ.data]);
+  const inventoryGroups = useMemo(() => {
+    const m = new Map<string, typeof inventory>();
+    for (const lot of inventory) {
+      const arr = m.get(lot.ingredientId) ?? [];
+      arr.push(lot);
+      m.set(lot.ingredientId, arr);
+    }
+    for (const arr of m.values()) arr.sort((a, b) => (a.expiresOn ?? "9999").localeCompare(b.expiresOn ?? "9999"));
+    return m;
+  }, [inventory]);
+  const today = todayYmd();
+  const warnLimit = ymd((() => { const d = fromYmd(today); d.setDate(d.getDate() + 3); return d; })());
 
-  const loadSaved = (listId: string) => {
-    const list = saved.find((l) => l.id === listId);
-    if (!list) return;
-    for (const it of list.items) {
-      const add = {
-        name: it.name,
-        quantity: it.quantity,
-        ingredientId: it.ingredientId ?? null,
-        presentationId: it.presentationId ?? null,
-        unit: it.unit ?? null,
-      };
-      const target = findMergeTarget(items, add);
-      if (target) patchItem.mutate({ id: target.id, patch: { quantity: target.quantity + add.quantity } });
-      else createItem.mutate(add);
+  const [dragOverInv, setDragOverInv] = useState(false);
+  const onInventoryDrop = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setDragOverInv(false);
+    const raw = e.dataTransfer.getData("text/plain");
+    if (!raw) return;
+    try {
+      const { ingredientId, presentationId } = JSON.parse(raw);
+      const p = presentationById.get(presentationId);
+      if (ingredientId && p) {
+        createInventory.mutate({ ingredientId, presentationId: p.id, quantity: p.size, expiresOn: null });
+      }
+    } catch {
+      // ignora payloads que no vengan de un chip de presentacion
     }
   };
 
   return (
     <>
-    {showClose && (
-      <CloseListModal
-        bought={bought}
-        priceById={priceById}
-        onClose={() => setShowClose(false)}
-        onClearBought={deleteBought}
-      />
-    )}
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 280px", gap: 24, maxWidth: 900 }}>
-      {/* active list */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <SectionTitle
-          right={
-            <>
-              <button className="btn ghost" style={{ fontSize: 11, padding: "3px 8px" }} onClick={saveCurrent} disabled={items.length === 0}>
-                Guardar como lista
-              </button>
-              <button className="btn ghost" style={{ fontSize: 11, padding: "3px 8px" }} onClick={() => setShowClose(true)} disabled={bought.length === 0} title="Registrar lo comprado como gasto en Finanzas">
-                Cerrar lista / registrar gasto
-              </button>
-              <button className="btn ghost" style={{ fontSize: 11, padding: "3px 8px" }} onClick={clearBought} disabled={bought.length === 0}>
-                Vaciar comprados
-              </button>
-            </>
-          }
-        >
-          Lista de la semana · {items.length}
-          {total > 0 && (
-            <span style={{ marginLeft: 8, color: "var(--fg)", fontWeight: 700, textTransform: "none" }}>
-              {fmtMoney(total)} <span style={{ color: "var(--fg-muted)", fontWeight: 500 }}>≈ {fmtUsdFromDkk(total, usdRate)}</span>
-            </span>
-          )}
-        </SectionTitle>
+      {showClose && (
+        <CloseListModal
+          bought={bought}
+          priceById={priceById}
+          onClose={() => setShowClose(false)}
+          onClearBought={deleteBought}
+        />
+      )}
+      {showCategoryManager && <IngredientCategoryManager onClose={() => setShowCategoryManager(false)} />}
+      {showAddIngredient && <AddIngredientModal categories={categories} onClose={() => setShowAddIngredient(false)} />}
 
-        <ListProductAdder onAdd={addProduct} />
-
-        {items.length === 0 && (
-          <div style={{ fontSize: 12.5, color: "var(--fg-subtle)", padding: "8px 2px" }}>La lista está vacía.</div>
-        )}
-        {pending.map((it) => (
-          <ListItemRow
-            key={it.id}
-            item={it}
-            price={itemPrice(it)}
-            usdRate={usdRate}
-            onToggle={() => toggleBought(it, true)}
-            onSetQty={(n) => setQtyAbs(it, n)}
-            onDelete={() => deleteItem.mutate(it.id)}
-          />
-        ))}
-        {bought.length > 0 && (
-          <div style={{ fontSize: 11, color: "var(--fg-subtle)", textTransform: "uppercase", letterSpacing: ".04em", marginTop: 6 }}>
-            Comprados · {bought.length}
+      {/* Header estilo Finanzas: titulo grande a la izquierda, semana + acciones a la derecha */}
+      <header
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 14,
+          paddingBottom: 8,
+          marginBottom: 12,
+          borderBottom: "1px solid var(--line)",
+        }}
+      >
+        <div>
+          <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", color: "var(--fg-subtle)", fontWeight: 600 }}>
+            Listas
           </div>
+          <div style={{ fontSize: 24, fontWeight: 600, letterSpacing: "-0.02em", lineHeight: 1.1, fontVariantNumeric: "tabular-nums" }}>
+            {weekLabel(weekStart)}
+          </div>
+        </div>
+        <div style={{ flex: 1 }} />
+        <button className="icon-btn" title="Semana anterior" onClick={() => setWeekStart(shiftWeek(weekStart, -1))}>
+          <IChevL size={15} />
+        </button>
+        <button className="icon-btn" title="Semana siguiente" onClick={() => setWeekStart(shiftWeek(weekStart, 1))}>
+          <IChevR size={15} />
+        </button>
+        {weekStart !== mondayOfThisWeek() && (
+          <button className="btn ghost" style={{ fontSize: 11, padding: "3px 8px" }} onClick={() => setWeekStart(mondayOfThisWeek())}>
+            Hoy
+          </button>
         )}
-        {bought.map((it) => (
-          <ListItemRow
-            key={it.id}
-            item={it}
-            price={itemPrice(it)}
-            usdRate={usdRate}
-            onToggle={() => toggleBought(it, false)}
-            onSetQty={(n) => setQtyAbs(it, n)}
-            onDelete={() => deleteItem.mutate(it.id)}
-          />
-        ))}
-      </div>
+        <button className="btn ghost" onClick={() => setShowAddIngredient(true)}>
+          <IPlus size={12} /> Agregar ingrediente
+        </button>
+        <button className="btn ghost" onClick={() => setShowCategoryManager(true)}>
+          Categorías
+        </button>
+      </header>
 
-      {/* saved lists */}
-      <aside style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <SectionTitle>Listas guardadas</SectionTitle>
-        {saved.length === 0 && (
-          <div style={{ fontSize: 12, color: "var(--fg-subtle)" }}>Ninguna todavía.</div>
-        )}
-        {saved.map((l) => (
-          <div key={l.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: 8 }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.name}</div>
-              <div style={{ fontSize: 11, color: "var(--fg-subtle)" }}>{l.items.length} ítems</div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24, flex: 1, minHeight: 0, overflowY: "auto" }}>
+        {/* IZQUIERDA — arriba la lista de esta semana, abajo el inventario (50/50) */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0, minHeight: 0 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1, minHeight: 0 }}>
+            <SectionTitle
+              right={
+                <button className="btn ghost" style={{ fontSize: 11, padding: "3px 8px" }} onClick={() => setShowClose(true)} disabled={bought.length === 0} title="Registrar lo comprado como gasto en Finanzas">
+                  Cerrar lista / registrar gasto
+                </button>
+              }
+            >
+              Lista · {items.length}
+              {total > 0 && (
+                <span style={{ marginLeft: 8, color: "var(--fg)", fontWeight: 700, textTransform: "none" }}>
+                  {fmtMoney(total)} <span style={{ color: "var(--fg-muted)", fontWeight: 500 }}>≈ {fmtUsdFromDkk(total, usdRate)}</span>
+                </span>
+              )}
+            </SectionTitle>
+
+            <div
+              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={onListDrop}
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+                flex: 1,
+                minHeight: 0,
+                padding: 6,
+                boxSizing: "border-box",
+                borderRadius: 10,
+                overflowY: "auto",
+                border: dragOver ? "2px dashed var(--accent)" : "2px dashed transparent",
+                transition: "border-color .1s",
+              }}
+            >
+              {items.length === 0 && (
+                <div style={{ fontSize: 12.5, color: "var(--fg-subtle)", padding: "8px 2px" }}>
+                  La lista de esta semana esta vacia. Arrastra una variante desde Ingredientes.
+                </div>
+              )}
+              {pending.map((it) => (
+                <ListCard
+                  key={it.id}
+                  item={it}
+                  ingredient={it.ingredientId ? ingredientById.get(it.ingredientId) ?? null : null}
+                  presentation={it.presentationId ? presentationById.get(it.presentationId) ?? null : null}
+                  price={itemPrice(it)}
+                  onToggle={() => toggleBought(it, true)}
+                  onSetQty={(n) => setQtyAbs(it, n)}
+                  onDelete={() => deleteItem.mutate(it.id)}
+                />
+              ))}
+              {bought.length > 0 && (
+                <div style={{ fontSize: 11, color: "var(--fg-subtle)", textTransform: "uppercase", letterSpacing: ".04em", marginTop: 6 }}>
+                  Comprados · {bought.length}
+                </div>
+              )}
+              {bought.map((it) => (
+                <ListCard
+                  key={it.id}
+                  item={it}
+                  ingredient={it.ingredientId ? ingredientById.get(it.ingredientId) ?? null : null}
+                  presentation={it.presentationId ? presentationById.get(it.presentationId) ?? null : null}
+                  price={itemPrice(it)}
+                  onToggle={() => toggleBought(it, false)}
+                  onSetQty={(n) => setQtyAbs(it, n)}
+                  onDelete={() => deleteItem.mutate(it.id)}
+                />
+              ))}
             </div>
-            <button className="btn ghost" style={{ fontSize: 11, padding: "3px 7px" }} onClick={() => loadSaved(l.id)} title="Agregar sus ítems a la lista actual">Cargar</button>
-            <IconBtn danger title={`Borrar lista ${l.name}`} onClick={() => { if (window.confirm(`Borrar lista "${l.name}"?`)) deleteSaved.mutate(l.id); }}>
-              <ITrash size={12} />
-            </IconBtn>
           </div>
-        ))}
-      </aside>
-    </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1, minHeight: 0 }}>
+            <SectionTitle>Inventario · {inventory.length}</SectionTitle>
+            <div
+              onDragOver={(e) => { e.preventDefault(); setDragOverInv(true); }}
+              onDragLeave={() => setDragOverInv(false)}
+              onDrop={onInventoryDrop}
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+                flex: 1,
+                minHeight: 0,
+                padding: 6,
+                boxSizing: "border-box",
+                borderRadius: 10,
+                overflowY: "auto",
+                border: dragOverInv ? "2px dashed var(--accent)" : "2px dashed transparent",
+                transition: "border-color .1s",
+              }}
+            >
+              {inventory.length === 0 && (
+                <div style={{ fontSize: 12.5, color: "var(--fg-subtle)", padding: "8px 2px" }}>
+                  Sin stock cargado. Arrastra una variante desde Ingredientes para sumarla.
+                </div>
+              )}
+              {[...inventoryGroups.entries()].map(([ingId, lots]) => {
+                const ing = ingredientById.get(ingId);
+                const totalQty = lots.reduce((s, l) => s + l.quantity, 0);
+                return (
+                  <InventoryGroup
+                    key={ingId}
+                    name={ing?.name ?? "—"}
+                    totalLabel={ing ? formatQuantity(totalQty, ing.dimension) : String(totalQty)}
+                    count={lots.length}
+                    lots={lots}
+                    presentationById={presentationById}
+                    ingredient={ing}
+                    today={today}
+                    warnLimit={warnLimit}
+                    onDelete={(id) => deleteInventory.mutate(id)}
+                  />
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* DERECHA — catalogo de ingredientes (arrastrar una variante a la izquierda para agregarla) */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
+          <SectionTitle>Ingredientes</SectionTitle>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1, minHeight: 120, padding: 6, boxSizing: "border-box", overflowY: "auto" }}>
+            {ingredients.length === 0 && (
+              <div style={{ fontSize: 12.5, color: "var(--fg-subtle)", padding: "8px 2px" }}>
+                Todavia no cargaste ingredientes. Usa "Agregar ingrediente" arriba.
+              </div>
+            )}
+            {ingredients.map((ing) => (
+              <IngredientCard
+                key={ing.id}
+                ingredient={ing}
+                presentations={presByIngredient.get(ing.id) ?? []}
+                category={ing.categoryId ? categoryById.get(ing.categoryId) : undefined}
+                onDelete={() => { if (window.confirm(`Borrar "${ing.name}"?`)) deleteIngredient.mutate(ing.id); }}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
     </>
   );
 }
@@ -1414,143 +998,6 @@ function CloseListModal({
   );
 }
 
-// ---------------- Inventario ----------------
-
-function InventarioPanel() {
-  const inventoryQ = useInventory();
-  const ingredientsQ = useIngredients();
-  const presentationsQ = useIngredientPresentations();
-  const createInventory = useCreateInventory();
-  const deleteInventory = useDeleteInventory();
-
-  const inventory = useMemo(() => inventoryQ.data ?? [], [inventoryQ.data]);
-  const ingredients = useMemo(() => ingredientsQ.data ?? [], [ingredientsQ.data]);
-  const ingredientById = useMemo(() => {
-    const m = new Map<string, Ingredient>();
-    for (const i of ingredients) m.set(i.id, i);
-    return m;
-  }, [ingredients]);
-  const presentationById = useMemo(() => {
-    const m = new Map<string, IngredientPresentation>();
-    for (const p of presentationsQ.data ?? []) m.set(p.id, p);
-    return m;
-  }, [presentationsQ.data]);
-  const presByIngredient = useMemo(() => {
-    const m = new Map<string, IngredientPresentation[]>();
-    for (const p of presentationsQ.data ?? []) {
-      const arr = m.get(p.ingredientId) ?? [];
-      arr.push(p);
-      m.set(p.ingredientId, arr);
-    }
-    return m;
-  }, [presentationsQ.data]);
-
-  // group lots by ingredient
-  const groups = useMemo(() => {
-    const m = new Map<string, typeof inventory>();
-    for (const lot of inventory) {
-      const arr = m.get(lot.ingredientId) ?? [];
-      arr.push(lot);
-      m.set(lot.ingredientId, arr);
-    }
-    for (const arr of m.values()) {
-      arr.sort((a, b) => (a.expiresOn ?? "9999").localeCompare(b.expiresOn ?? "9999"));
-    }
-    return m;
-  }, [inventory]);
-
-  const today = todayYmd();
-  const warnLimit = ymd((() => { const d = fromYmd(today); d.setDate(d.getDate() + 3); return d; })());
-
-  // add form
-  const [ingredientId, setIngredientId] = useState("");
-  const [presentationId, setPresentationId] = useState("");
-  const [count, setCount] = useState(1);
-  const [expires, setExpires] = useState("");
-
-  const selectedIng = ingredients.find((i) => i.id === ingredientId) ?? null;
-  const presForSelected = selectedIng ? presByIngredient.get(selectedIng.id) ?? [] : [];
-
-  const add = () => {
-    if (!selectedIng) return;
-    const pres = presForSelected.find((p) => p.id === presentationId);
-    if (!pres) return;
-    const n = Math.max(1, Math.round(count));
-    for (let k = 0; k < n; k++) {
-      createInventory.mutate({
-        ingredientId: selectedIng.id,
-        presentationId: pres.id,
-        quantity: pres.size,
-        expiresOn: expires || null,
-      });
-    }
-    setIngredientId("");
-    setPresentationId("");
-    setCount(1);
-    setExpires("");
-  };
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12, maxWidth: 720 }}>
-      <div style={{ fontSize: 11, color: "var(--fg-subtle)" }}>
-        Lo que tenés en casa, por presentación (cada botella/caja es un lote con su vencimiento). Se descuenta cuando registrás que comiste una receta ("Comí") o cuando lo cargás desde la lista.
-      </div>
-
-      {ingredients.length === 0 ? (
-        <div style={{ fontSize: 12.5, color: "var(--fg-subtle)" }}>
-          Cargá ingredientes (con presentaciones) en la pestaña Ingredientes para poder cargar stock.
-        </div>
-      ) : (
-        <form
-          onSubmit={(e) => { e.preventDefault(); add(); }}
-          style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", padding: 12, background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: 10 }}
-        >
-          <select className="input" value={ingredientId} onChange={(e) => { setIngredientId(e.target.value); setPresentationId(""); }} style={{ flex: 1, minWidth: 150 }}>
-            <option value="">Ingrediente…</option>
-            {ingredients.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
-          </select>
-          <select className="input" value={presentationId} onChange={(e) => setPresentationId(e.target.value)} disabled={!selectedIng} style={{ minWidth: 130 }}>
-            <option value="">Presentación…</option>
-            {presForSelected.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-          </select>
-          <label style={{ fontSize: 11, color: "var(--fg-muted)", display: "inline-flex", alignItems: "center", gap: 4 }}>
-            Cantidad
-            <input className="input" type="number" min={1} value={count} onChange={(e) => setCount(Number(e.target.value) || 1)} style={{ width: 56 }} />
-          </label>
-          <label style={{ fontSize: 11, color: "var(--fg-muted)", display: "inline-flex", alignItems: "center", gap: 4 }}>
-            Vence
-            <input className="input" type="date" value={expires} onChange={(e) => setExpires(e.target.value)} style={{ padding: "3px 6px" }} />
-          </label>
-          <button className="btn" type="submit" disabled={!presentationId}><IPlus size={11} /> Cargar</button>
-        </form>
-      )}
-
-      {inventory.length === 0 ? (
-        <div style={{ fontSize: 12.5, color: "var(--fg-subtle)", padding: "8px 2px" }}>Sin stock cargado.</div>
-      ) : (
-        [...groups.entries()].map(([ingId, lots]) => {
-          const ing = ingredientById.get(ingId);
-          const total = lots.reduce((s, l) => s + l.quantity, 0);
-          return (
-            <InventoryGroup
-              key={ingId}
-              name={ing?.name ?? "—"}
-              totalLabel={ing ? formatQuantity(total, ing.dimension) : String(total)}
-              count={lots.length}
-              lots={lots}
-              presentationById={presentationById}
-              ingredient={ing}
-              today={today}
-              warnLimit={warnLimit}
-              onDelete={(id) => deleteInventory.mutate(id)}
-            />
-          );
-        })
-      )}
-    </div>
-  );
-}
-
 function InventoryGroup({
   name,
   totalLabel,
@@ -1573,82 +1020,121 @@ function InventoryGroup({
   onDelete: (id: string) => void;
 }) {
   const [open, setOpen] = useState(true);
+  const [amount, setAmount] = useState("");
+  const patchInventory = usePatchInventory();
   const soonest = lots.find((l) => l.expiresOn)?.expiresOn ?? null;
   const groupWarn = soonest != null && soonest <= warnLimit;
 
+  // Resta del total del ingrediente, no de un lote puntual: consume el lote que
+  // vence antes primero y si no alcanza sigue con el siguiente (asumimos que si
+  // usaste mas de lo que quedaba en uno, abriste otro). `lots` ya viene ordenado
+  // por vencimiento mas proximo primero.
+  const subtract = () => {
+    let need = parseQuantity(amount);
+    if (need == null || need <= 0) return;
+    for (const lot of lots) {
+      if (need <= 0) break;
+      const take = Math.min(lot.quantity, need);
+      need -= take;
+      const remaining = lot.quantity - take;
+      if (remaining <= 0.0001) onDelete(lot.id);
+      else patchInventory.mutate({ id: lot.id, patch: { quantity: remaining } });
+    }
+    setAmount("");
+  };
+
   return (
     <div style={{ background: "var(--bg-elev)", border: `1px solid ${groupWarn ? "var(--warn)" : "var(--line)"}`, borderRadius: 10 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", cursor: "pointer" }} onClick={() => setOpen((o) => !o)}>
-        <span style={{ display: "inline-flex", transform: open ? "rotate(0deg)" : "rotate(-90deg)", transition: "transform .15s" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px" }}>
+        <span style={{ display: "inline-flex", cursor: "pointer", transform: open ? "rotate(0deg)" : "rotate(-90deg)", transition: "transform .15s" }} onClick={() => setOpen((o) => !o)}>
           <IChevD size={14} />
         </span>
-        <span style={{ fontSize: 14, fontWeight: 600, flex: 1 }}>{name}</span>
+        <span style={{ fontSize: 14, fontWeight: 600, flex: 1, cursor: "pointer" }} onClick={() => setOpen((o) => !o)}>{name}</span>
         <span style={{ fontSize: 11.5, color: "var(--fg-muted)" }}>{count} {count === 1 ? "lote" : "lotes"}</span>
         <span style={{ fontSize: 13, color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums" }}>{totalLabel}</span>
+        <form onSubmit={(e) => { e.preventDefault(); subtract(); }} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <input
+            className="input"
+            placeholder={ingredient ? `cant. (${baseUnit(ingredient.dimension)})` : "cant."}
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            style={{ width: 88, fontSize: 12, padding: "3px 6px" }}
+          />
+          <button className="btn ghost" type="submit" style={{ padding: "3px 8px", fontSize: 12 }} disabled={!amount.trim()} title="Restar del stock total (consume primero el lote que vence antes)">
+            − restar
+          </button>
+        </form>
       </div>
       {open && (
         <div style={{ borderTop: "1px solid var(--line)", padding: "6px 12px 10px" }}>
-          {lots.map((lot) => {
-            const pres = lot.presentationId ? presentationById.get(lot.presentationId) : null;
-            const expSoon = lot.expiresOn != null && lot.expiresOn <= today;
-            const expWarn = lot.expiresOn != null && !expSoon && lot.expiresOn <= warnLimit;
-            return (
-              <div key={lot.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0", borderBottom: "1px solid var(--line)" }}>
-                <span style={{ flex: 1, fontSize: 13 }}>{pres?.label ?? "Suelto"}</span>
-                <span style={{ fontSize: 12.5, color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums" }}>
-                  {ingredient ? formatQuantity(lot.quantity, ingredient.dimension) : lot.quantity}
-                </span>
-                {lot.expiresOn && (
-                  <span style={{ fontSize: 11, color: expSoon ? "var(--danger)" : expWarn ? "var(--warn)" : "var(--fg-subtle)" }}>
-                    {expSoon ? "vencido" : `vence ${lot.expiresOn}`}
-                  </span>
-                )}
-                <IconBtn title="Quitar lote" onClick={() => onDelete(lot.id)}>
-                  <IX size={11} />
-                </IconBtn>
-              </div>
-            );
-          })}
+          {lots.map((lot) => (
+            <LotRow
+              key={lot.id}
+              lot={lot}
+              pres={lot.presentationId ? presentationById.get(lot.presentationId) : null}
+              ingredient={ingredient}
+              today={today}
+              warnLimit={warnLimit}
+              onDelete={onDelete}
+            />
+          ))}
         </div>
       )}
     </div>
   );
 }
 
+function LotRow({
+  lot,
+  pres,
+  ingredient,
+  today,
+  warnLimit,
+  onDelete,
+}: {
+  lot: { id: string; presentationId: string | null; quantity: number; expiresOn: string | null };
+  pres: IngredientPresentation | null | undefined;
+  ingredient: Ingredient | undefined;
+  today: string;
+  warnLimit: string;
+  onDelete: (id: string) => void;
+}) {
+  const expSoon = lot.expiresOn != null && lot.expiresOn <= today;
+  const expWarn = lot.expiresOn != null && !expSoon && lot.expiresOn <= warnLimit;
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0", borderBottom: "1px solid var(--line)" }}>
+      <span style={{ flex: 1, fontSize: 13 }}>{pres?.label ?? "Suelto"}</span>
+      <span style={{ fontSize: 12.5, color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums" }}>
+        {ingredient ? formatQuantity(lot.quantity, ingredient.dimension) : lot.quantity}
+      </span>
+      {lot.expiresOn && (
+        <span style={{ fontSize: 11, color: expSoon ? "var(--danger)" : expWarn ? "var(--warn)" : "var(--fg-subtle)" }}>
+          {expSoon ? "vencido" : `vence ${lot.expiresOn}`}
+        </span>
+      )}
+      <IconBtn title="Quitar lote" onClick={() => onDelete(lot.id)}>
+        <IX size={11} />
+      </IconBtn>
+    </div>
+  );
+}
+
 // ---------------- Plan semanal ----------------
-
-function mondayOfThisWeek(): string {
-  const d = fromYmd(todayYmd());
-  const dow = (d.getDay() + 6) % 7; // 0 = Monday
-  d.setDate(d.getDate() - dow);
-  return ymd(d);
-}
-
-function shiftWeek(weekStart: string, deltaWeeks: number): string {
-  const d = fromYmd(weekStart);
-  d.setDate(d.getDate() + deltaWeeks * 7);
-  return ymd(d);
-}
-
-function weekLabel(weekStart: string): string {
-  const [, m, d] = weekStart.split("-");
-  const end = shiftWeek(weekStart, 1);
-  const [, em, ed] = end.split("-");
-  const endD = String(Number(ed) - 1).padStart(2, "0"); // Sunday
-  return `${d}/${m} – ${endD}/${em}`;
-}
 
 const MEAL_BUCKETS: MealType[] = ["breakfast_snack", "lunch_dinner"];
 
-function mealTargetKey(weekStart: string, bucket: MealType): string {
-  return `compras:mealTarget:${weekStart}:${bucket}`;
+// Cuantas comidas de cada tipo se necesitan por semana — configuracion global
+// (vive en Ajustes), no por semana especifica.
+function mealTargetKey(bucket: MealType): string {
+  return `compras:mealTarget:${bucket}`;
 }
-function getMealTarget(weekStart: string, bucket: MealType): number {
-  const v = Number(localStorage.getItem(mealTargetKey(weekStart, bucket)));
+function getMealTarget(bucket: MealType): number {
+  const v = Number(localStorage.getItem(mealTargetKey(bucket)));
   return Number.isFinite(v) && v >= 0 ? v : 0;
 }
-function setMealTargetLS(weekStart: string, bucket: MealType, n: number): void {
-  localStorage.setItem(mealTargetKey(weekStart, bucket), String(Math.max(0, n)));
+function setMealTargetLS(bucket: MealType, n: number): void {
+  localStorage.setItem(mealTargetKey(bucket), String(Math.max(0, n)));
 }
 
 function PlanPanel() {
@@ -1665,8 +1151,14 @@ function PlanPanel() {
   const createEntry = useCreateMealPlanEntry();
   const patchEntry = usePatchMealPlanEntry();
   const deleteEntry = useDeleteMealPlanEntry();
+  const createRecipe = useCreateRecipe();
+  const deleteRecipe = useDeleteRecipe();
   const createShoppingItem = useCreateShoppingItem();
   const patchShoppingItem = usePatchShoppingItem();
+  const logMeal = useLogMeal();
+
+  const [editingRecipeId, setEditingRecipeId] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState(false);
 
   const recipes = useMemo(() => recipesQ.data ?? [], [recipesQ.data]);
   const recipeById = useMemo(() => {
@@ -1674,6 +1166,18 @@ function PlanPanel() {
     for (const r of recipes) m.set(r.id, r);
     return m;
   }, [recipes]);
+  const editingRecipe = recipes.find((r) => r.id === editingRecipeId) ?? null;
+
+  const riByRecipe = useMemo(() => {
+    const m = new Map<string, RecipeIngredient[]>();
+    for (const ri of riQ.data ?? []) {
+      const arr = m.get(ri.recipeId) ?? [];
+      arr.push(ri);
+      m.set(ri.recipeId, arr);
+    }
+    return m;
+  }, [riQ.data]);
+
   const entries = useMemo(
     () => (entriesQ.data ?? []).filter((e) => e.weekStart === weekStart),
     [entriesQ.data, weekStart],
@@ -1683,10 +1187,15 @@ function PlanPanel() {
     const m: Record<MealType, number> = { breakfast_snack: 0, lunch_dinner: 0 };
     for (const e of entries) {
       const r = recipeById.get(e.recipeId);
-      if (r) m[r.mealType] += e.targetServings;
+      if (r) m[r.mealType] += e.targetServings * r.servings;
     }
     return m;
   }, [entries, recipeById]);
+
+  const targets: Record<MealType, number> = {
+    breakfast_snack: getMealTarget("breakfast_snack"),
+    lunch_dinner: getMealTarget("lunch_dinner"),
+  };
 
   const eatenByRecipe = useMemo(() => {
     const weekEnd = shiftWeek(weekStart, 1);
@@ -1699,49 +1208,41 @@ function PlanPanel() {
     return m;
   }, [mealLogsQ.data, weekStart]);
 
-  const [targets, setTargets] = useState<Record<MealType, number>>({
-    breakfast_snack: getMealTarget(weekStart, "breakfast_snack"),
-    lunch_dinner: getMealTarget(weekStart, "lunch_dinner"),
-  });
-  useEffect(() => {
-    setTargets({
-      breakfast_snack: getMealTarget(weekStart, "breakfast_snack"),
-      lunch_dinner: getMealTarget(weekStart, "lunch_dinner"),
-    });
-  }, [weekStart]);
-  const updateTarget = (bucket: MealType, n: number) => {
-    const v = Math.max(0, n);
-    setMealTargetLS(weekStart, bucket, v);
-    setTargets((t) => ({ ...t, [bucket]: v }));
+  const addRecipe = async () => {
+    const r = await createRecipe.mutateAsync({ name: "Nueva receta", servings: 2, mealType: "lunch_dinner", steps: [] });
+    setEditingRecipeId(r.id);
   };
 
-  const [recipeId, setRecipeId] = useState("");
-  const [servings, setServings] = useState(2);
-
-  const addEntry = () => {
-    if (!recipeId) return;
-    const add = Math.max(1, servings);
+  const addToPlan = (recipeId: string) => {
     const existing = entries.find((e) => e.recipeId === recipeId);
-    if (existing) patchEntry.mutate({ id: existing.id, patch: { targetServings: existing.targetServings + add } });
-    else createEntry.mutate({ weekStart, recipeId, targetServings: add });
-    setRecipeId("");
-    setServings(2);
+    if (existing) patchEntry.mutate({ id: existing.id, patch: { targetServings: existing.targetServings + 1 } });
+    else createEntry.mutate({ weekStart, recipeId, targetServings: 1 });
+  };
+
+  const setTimesAbs = (entry: MealPlanEntry, n: number) => {
+    const next = Math.max(1, n);
+    if (next !== entry.targetServings) patchEntry.mutate({ id: entry.id, patch: { targetServings: next } });
+  };
+
+  const comi = (r: Recipe) => {
+    const cookedTxt = window.prompt(`¿Cuántas porciones hiciste de "${r.name}"? (descuenta ingredientes del inventario)`, String(r.servings));
+    if (cookedTxt == null) return;
+    const cooked = Math.max(0, Number(cookedTxt.replace(",", ".")) || 0);
+    const eatenTxt = window.prompt("¿Cuántas comiste?", String(cooked));
+    if (eatenTxt == null) return;
+    const eaten = Math.max(0, Number(eatenTxt.replace(",", ".")) || 0);
+    if (cooked <= 0 && eaten <= 0) return;
+    void logMeal(r, cooked, eaten, defaultSlot(r.mealType), todayYmd());
+    window.alert("Registrado.");
   };
 
   const generateList = () => {
-    const ris = riQ.data ?? [];
-    const byRecipe = new Map<string, RecipeIngredient[]>();
-    for (const ri of ris) {
-      const arr = byRecipe.get(ri.recipeId) ?? [];
-      arr.push(ri);
-      byRecipe.set(ri.recipeId, arr);
-    }
     const planEntries = entries.map((e) => {
       const r = recipeById.get(e.recipeId);
       return {
-        recipeIngredients: byRecipe.get(e.recipeId) ?? [],
+        recipeIngredients: riByRecipe.get(e.recipeId) ?? [],
         servings: r?.servings ?? 1,
-        portions: e.targetServings,
+        portions: e.targetServings * (r?.servings ?? 1),
       };
     });
     const need = aggregateNeed(planEntries);
@@ -1763,8 +1264,8 @@ function PlanPanel() {
       presentationsByIngredient.set(p.ingredientId, arr);
     }
     const items = [
-      ...neededToShoppingItems(need, ingredientById, presentationsByIngredient),
-      ...categoryNeedToShoppingItems(needByCategory, categoryById),
+      ...neededToShoppingItems(need, ingredientById, presentationsByIngredient, weekStart),
+      ...categoryNeedToShoppingItems(needByCategory, categoryById, weekStart),
     ];
     const current = shoppingItemsQ.data ?? [];
     for (const it of items) {
@@ -1775,15 +1276,52 @@ function PlanPanel() {
     window.alert(items.length > 0 ? `Generé ${items.length} ítem(s) en la lista (pestaña Listas).` : "El plan no tiene ingredientes para comprar.");
   };
 
+  const onPlanDrop = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setDragOver(false);
+    const raw = e.dataTransfer.getData("text/plain");
+    if (!raw) return;
+    try {
+      const { recipeId } = JSON.parse(raw);
+      if (recipeId) addToPlan(recipeId);
+    } catch {
+      // ignora payloads que no vengan de una card de receta
+    }
+  };
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12, maxWidth: 720 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+    <>
+      {editingRecipe && (
+        <RecipeModal
+          recipe={editingRecipe}
+          onClose={() => setEditingRecipeId(null)}
+          onDelete={() => { deleteRecipe.mutate(editingRecipe.id); setEditingRecipeId(null); }}
+        />
+      )}
+
+      {/* Header estilo Listas: titulo grande a la izquierda, semana + acciones a la derecha */}
+      <header
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 14,
+          paddingBottom: 8,
+          marginBottom: 12,
+          borderBottom: "1px solid var(--line)",
+        }}
+      >
+        <div>
+          <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", color: "var(--fg-subtle)", fontWeight: 600 }}>
+            Plan semanal
+          </div>
+          <div style={{ fontSize: 24, fontWeight: 600, letterSpacing: "-0.02em", lineHeight: 1.1, fontVariantNumeric: "tabular-nums" }}>
+            {weekLabel(weekStart)}
+          </div>
+        </div>
+        <div style={{ flex: 1 }} />
         <button className="icon-btn" title="Semana anterior" onClick={() => setWeekStart(shiftWeek(weekStart, -1))}>
           <IChevL size={15} />
         </button>
-        <div style={{ fontWeight: 600, fontSize: 15, fontVariantNumeric: "tabular-nums" }}>
-          Semana {weekLabel(weekStart)}
-        </div>
         <button className="icon-btn" title="Semana siguiente" onClick={() => setWeekStart(shiftWeek(weekStart, 1))}>
           <IChevR size={15} />
         </button>
@@ -1792,14 +1330,13 @@ function PlanPanel() {
             Hoy
           </button>
         )}
-        <span style={{ flex: 1 }} />
-        <button className="btn" onClick={generateList} disabled={entries.length === 0}>
-          <IPlus size={12} /> Generar lista de compra
+        <button className="btn ghost" onClick={() => void addRecipe()}>
+          <IPlus size={12} /> Agregar receta
         </button>
-      </div>
+      </header>
 
-      {/* needs by meal type: planned vs target */}
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+      {/* needs by meal type: planned vs target (el target se configura en Ajustes) */}
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
         {MEAL_BUCKETS.map((bucket) => {
           const planned = plannedByBucket[bucket];
           const target = targets[bucket];
@@ -1809,234 +1346,646 @@ function PlanPanel() {
               key={bucket}
               style={{
                 flex: 1,
-                minWidth: 240,
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-                padding: "10px 12px",
+                minWidth: 200,
+                padding: "8px 12px",
                 background: "var(--bg-elev)",
                 border: `1px solid ${enough ? "var(--ok)" : "var(--line)"}`,
                 borderRadius: 10,
               }}
             >
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 12.5, fontWeight: 600 }}>{MEAL_TYPE_LABELS[bucket]}</div>
-                <div style={{ fontSize: 11.5, color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums" }}>
-                  Planeado <strong style={{ color: "var(--fg)" }}>{planned}</strong>
-                  {target > 0 && ` de ${target} porciones`}
-                </div>
+              <div style={{ fontSize: 12.5, fontWeight: 600 }}>{MEAL_TYPE_LABELS[bucket]}</div>
+              <div style={{ fontSize: 11.5, color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums" }}>
+                Planeado <strong style={{ color: "var(--fg)" }}>{planned}</strong>
+                {target > 0 && ` de ${target} porciones`}
               </div>
-              <label style={{ fontSize: 11, color: "var(--fg-muted)", display: "inline-flex", alignItems: "center", gap: 6 }}>
-                Necesito
-                <input
-                  className="input"
-                  type="number"
-                  min={0}
-                  value={target}
-                  onChange={(e) => updateTarget(bucket, Number(e.target.value) || 0)}
-                  style={{ width: 56 }}
-                />
-              </label>
             </div>
           );
         })}
       </div>
 
-      <form
-        onSubmit={(e) => { e.preventDefault(); addEntry(); }}
-        style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", padding: 12, background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: 10 }}
-      >
-        <select className="input" value={recipeId} onChange={(e) => setRecipeId(e.target.value)} style={{ flex: 1, minWidth: 180 }}>
-          <option value="">Elegí una receta…</option>
-          {recipes.map((r) => (
-            <option key={r.id} value={r.id}>{r.name} ({MEAL_TYPE_LABELS[r.mealType]})</option>
-          ))}
-        </select>
-        <label style={{ fontSize: 12, color: "var(--fg-muted)", display: "inline-flex", alignItems: "center", gap: 6 }}>
-          Porciones
-          <input className="input" type="number" min={1} value={servings} onChange={(e) => setServings(Number(e.target.value) || 1)} style={{ width: 64 }} />
-        </label>
-        <button className="btn" type="submit" disabled={!recipeId}><IPlus size={11} /> Agregar al plan</button>
-      </form>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24, flex: 1, minHeight: 0, overflowY: "auto" }}>
+        {/* IZQUIERDA — el plan de esta semana */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
+          <SectionTitle
+            right={
+              <button className="btn ghost" style={{ fontSize: 11, padding: "3px 8px" }} onClick={generateList} disabled={entries.length === 0}>
+                <IPlus size={11} /> Generar lista de compra
+              </button>
+            }
+          >
+            Plan semanal · {entries.length}
+          </SectionTitle>
 
-      {entries.length === 0 ? (
-        <div style={{ fontSize: 12.5, color: "var(--fg-subtle)", padding: "8px 2px" }}>
-          Todavía no elegiste recetas para esta semana.
-        </div>
-      ) : (
-        entries.map((e) => {
-          const r = recipeById.get(e.recipeId);
-          const eaten = eatenByRecipe.get(e.recipeId) ?? 0;
-          const remaining = Math.max(0, e.targetServings - eaten);
-          return (
-            <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: 10 }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 14, fontWeight: 600 }}>{r?.name ?? "—"}</div>
-                <div style={{ fontSize: 11.5, color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums" }}>
-                  Comí <strong style={{ color: "var(--fg)" }}>{eaten}</strong> · quedan{" "}
-                  <strong style={{ color: remaining === 0 ? "var(--ok)" : "var(--fg)" }}>{remaining}</strong> porc.
-                </div>
+          <div
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={onPlanDrop}
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 8,
+              flex: 1,
+              minHeight: 120,
+              padding: 6,
+              boxSizing: "border-box",
+              borderRadius: 10,
+              border: dragOver ? "2px dashed var(--accent)" : "2px dashed transparent",
+              transition: "border-color .1s",
+            }}
+          >
+            {entries.length === 0 && (
+              <div style={{ fontSize: 12.5, color: "var(--fg-subtle)", padding: "8px 2px" }}>
+                Todavía no elegiste recetas para esta semana. Arrastra una receta desde Recetas.
               </div>
-              {r && <Pill tone={MEAL_TYPE_TONE[r.mealType]}>{MEAL_TYPE_LABELS[r.mealType]}</Pill>}
-              <label style={{ fontSize: 12, color: "var(--fg-muted)", display: "inline-flex", alignItems: "center", gap: 6 }}>
-                Plan
-                <input
-                  className="input"
-                  type="number"
-                  min={1}
-                  value={e.targetServings}
-                  onChange={(ev) => patchEntry.mutate({ id: e.id, patch: { targetServings: Math.max(1, Number(ev.target.value) || 1) } })}
-                  style={{ width: 60 }}
-                />
-              </label>
-              <IconBtn title="Quitar del plan" onClick={() => deleteEntry.mutate(e.id)}>
-                <IX size={11} />
-              </IconBtn>
-            </div>
-          );
-        })
-      )}
+            )}
+            {entries.map((e) => (
+              <PlanEntryCard
+                key={e.id}
+                entry={e}
+                recipe={recipeById.get(e.recipeId)}
+                eaten={eatenByRecipe.get(e.recipeId) ?? 0}
+                onSetTimes={(n) => setTimesAbs(e, n)}
+                onComi={() => { const r = recipeById.get(e.recipeId); if (r) comi(r); }}
+                onDelete={() => deleteEntry.mutate(e.id)}
+              />
+            ))}
+          </div>
 
-      <div style={{ fontSize: 11, color: "var(--fg-subtle)" }}>
-        Al generar la lista se restan los ingredientes que ya tenés en el Inventario y se eligen las presentaciones de menor desperdicio.
+          <div style={{ fontSize: 11, color: "var(--fg-subtle)" }}>
+            Al generar la lista se restan los ingredientes que ya tenés en el Inventario y se eligen las presentaciones de menor desperdicio.
+          </div>
+        </div>
+
+        {/* DERECHA — catalogo de recetas (arrastrar una receta a la izquierda para agregarla al plan) */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
+          <SectionTitle>Recetas · {recipes.length}</SectionTitle>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1, minHeight: 120, padding: 6, boxSizing: "border-box", overflowY: "auto" }}>
+            {recipes.length === 0 && (
+              <div style={{ fontSize: 12.5, color: "var(--fg-subtle)", padding: "8px 2px" }}>
+                Todavía no cargaste recetas. Usa "Agregar receta" arriba.
+              </div>
+            )}
+            {recipes.map((r) => (
+              <RecipeCard
+                key={r.id}
+                recipe={r}
+                ingredientCount={(riByRecipe.get(r.id) ?? []).length}
+                onOpen={() => setEditingRecipeId(r.id)}
+                onDelete={() => { if (window.confirm(`Borrar receta "${r.name}"?`)) deleteRecipe.mutate(r.id); }}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function RecipeCard({
+  recipe,
+  ingredientCount,
+  onOpen,
+  onDelete,
+}: {
+  recipe: Recipe;
+  ingredientCount: number;
+  onOpen: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.effectAllowed = "copy";
+        e.dataTransfer.setData("text/plain", JSON.stringify({ recipeId: recipe.id }));
+      }}
+      onClick={onOpen}
+      title="Arrastrar al plan para agregarla. Click para editar."
+      style={{
+        background: "var(--bg-elev)",
+        border: "1px solid var(--line)",
+        borderRadius: 10,
+        padding: "10px 12px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+        cursor: "grab",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 14, fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {recipe.name}
+        </span>
+        <Pill tone={MEAL_TYPE_TONE[recipe.mealType]}>{MEAL_TYPE_LABELS[recipe.mealType]}</Pill>
+        <span onClick={(e) => e.stopPropagation()}>
+          <IconBtn danger title={`Borrar ${recipe.name}`} onClick={onDelete}>
+            <ITrash size={13} />
+          </IconBtn>
+        </span>
+      </div>
+      <div style={{ fontSize: 11.5, color: "var(--fg-muted)" }}>
+        {recipe.servings} porc. · {ingredientCount} ingrediente{ingredientCount === 1 ? "" : "s"}
       </div>
     </div>
   );
 }
 
-function ListProductAdder({ onAdd }: { onAdd: (it: ShoppingItemCreate) => void }) {
+function PlanEntryCard({
+  entry,
+  recipe,
+  eaten,
+  onSetTimes,
+  onComi,
+  onDelete,
+}: {
+  entry: MealPlanEntry;
+  recipe: Recipe | undefined;
+  eaten: number;
+  onSetTimes: (n: number) => void;
+  onComi: () => void;
+  onDelete: () => void;
+}) {
+  const totalServings = entry.targetServings * (recipe?.servings ?? 1);
+  const remaining = Math.max(0, totalServings - eaten);
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "minmax(0,1fr) auto",
+        gap: 10,
+        alignItems: "center",
+        padding: "10px 12px",
+        background: "var(--bg-elev)",
+        border: "1px solid var(--line)",
+        borderRadius: 10,
+      }}
+    >
+      <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 6 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 14, fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {recipe?.name ?? "—"}
+          </span>
+          {recipe && <Pill tone={MEAL_TYPE_TONE[recipe.mealType]}>{MEAL_TYPE_LABELS[recipe.mealType]}</Pill>}
+        </div>
+        <div style={{ fontSize: 11.5, color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums" }}>
+          × {entry.targetServings} {entry.targetServings === 1 ? "vez" : "veces"} · {totalServings} porc. total
+          {eaten > 0 && (
+            <>
+              {" "}· comiste {eaten} · quedan <strong style={{ color: remaining === 0 ? "var(--ok)" : "var(--fg)" }}>{remaining}</strong>
+            </>
+          )}
+        </div>
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+          <button className="btn ghost" style={{ padding: "2px 7px", fontSize: 13 }} onClick={() => onSetTimes(entry.targetServings - 1)} title="Menos">−</button>
+          <span style={{ width: 22, textAlign: "center", fontVariantNumeric: "tabular-nums", fontWeight: 600, fontSize: 13 }}>{entry.targetServings}</span>
+          <button className="btn ghost" style={{ padding: "2px 7px", fontSize: 13 }} onClick={() => onSetTimes(entry.targetServings + 1)} title="Más">+</button>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <button className="btn ghost" style={{ fontSize: 10.5, padding: "3px 7px" }} onClick={onComi} title="Registrar que la comiste (descuenta del inventario)">
+            Comí
+          </button>
+          <IconBtn title="Quitar del plan" onClick={onDelete}>
+            <IX size={11} />
+          </IconBtn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RecipeModal({
+  recipe,
+  onClose,
+  onDelete,
+}: {
+  recipe: Recipe;
+  onClose: () => void;
+  onDelete: () => void;
+}) {
+  const patchRecipe = usePatchRecipe();
   const ingredientsQ = useIngredients();
-  const presentationsQ = useIngredientPresentations();
-  const createIngredient = useCreateIngredient();
-  const createPresentation = useCreateIngredientPresentation();
+  const riQ = useRecipeIngredients();
+  const createRI = useCreateRecipeIngredient();
+  const deleteRI = useDeleteRecipeIngredient();
+  const categoriesQ = useIngredientCategories();
 
   const ingredients = useMemo(() => ingredientsQ.data ?? [], [ingredientsQ.data]);
-  const presByIngredient = useMemo(() => {
-    const m = new Map<string, IngredientPresentation[]>();
-    for (const p of presentationsQ.data ?? []) {
-      const arr = m.get(p.ingredientId) ?? [];
-      arr.push(p);
-      m.set(p.ingredientId, arr);
-    }
-    return m;
-  }, [presentationsQ.data]);
+  const categories = useMemo(() => categoriesQ.data ?? [], [categoriesQ.data]);
+  const ingredientById = useMemo(() => new Map(ingredients.map((i) => [i.id, i])), [ingredients]);
+  const categoryById = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
+  const recipeIngredients = useMemo(
+    () => (riQ.data ?? []).filter((ri) => ri.recipeId === recipe.id),
+    [riQ.data, recipe.id],
+  );
 
-  const [mode, setMode] = useState<"pick" | "new">("pick");
-  const [ingredientId, setIngredientId] = useState("");
-  const [presentationId, setPresentationId] = useState("");
-  const [qty, setQty] = useState(1);
+  const [name, setName] = useState(recipe.name);
+  const [stepDraft, setStepDraft] = useState("");
 
-  const selectedIng = ingredients.find((i) => i.id === ingredientId) ?? null;
-  const pres = selectedIng ? presByIngredient.get(selectedIng.id) ?? [] : [];
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
 
-  const addPicked = () => {
-    if (!selectedIng) return;
-    const p = pres.find((x) => x.id === presentationId);
-    if (!p) return;
-    onAdd({
-      name: `${selectedIng.name} (${p.label})`,
-      quantity: Math.max(1, qty),
-      ingredientId: selectedIng.id,
-      presentationId: p.id,
-    });
-    setPresentationId("");
-    setQty(1);
+  const commitName = () => {
+    const t = name.trim() || "Sin nombre";
+    if (t !== recipe.name) patchRecipe.mutate({ id: recipe.id, patch: { name: t } });
   };
 
-  // new ingredient form
-  const [nName, setNName] = useState("");
-  const [nDim, setNDim] = useState<IngredientDimension>("count");
-  const [nShelf, setNShelf] = useState("");
-  const [nLabel, setNLabel] = useState("");
-  const [nAmount, setNAmount] = useState("");
-  const [nUnit, setNUnit] = useState("u");
-  const [nPrice, setNPrice] = useState("");
-  const nUnits = unitOptions(nDim);
+  const close = () => { commitName(); onClose(); };
 
-  const createAndAdd = async () => {
-    const name = nName.trim();
-    const amt = parseQuantity(nAmount);
-    if (!name || amt == null || amt <= 0) return;
-    const ing = await createIngredient.mutateAsync({
-      name,
-      categoryId: null,
-      dimension: nDim,
-      shelfLifeDays: nShelf.trim() ? Number(nShelf) || null : null,
-    });
-    const unitForDim = nUnits.find((u) => u.unit === nUnit) ? nUnit : nUnits[0].unit;
-    const label = nLabel.trim() || `${nAmount} ${nUnits.find((u) => u.unit === unitForDim)?.label ?? ""}`.trim();
-    const p = await createPresentation.mutateAsync({
-      ingredientId: ing.id,
-      label,
-      size: toBase(amt, unitForDim),
-      price: nPrice.trim() ? parseQuantity(nPrice) : null,
-    });
-    onAdd({ name: `${ing.name} (${p.label})`, quantity: Math.max(1, qty), ingredientId: ing.id, presentationId: p.id });
-    setNName(""); setNShelf(""); setNLabel(""); setNAmount(""); setNPrice(""); setNDim("count"); setNUnit("u");
-    setMode("pick");
+  const updateSteps = (steps: string[]) => patchRecipe.mutate({ id: recipe.id, patch: { steps } });
+  const moveStep = (idx: number, dir: -1 | 1) => {
+    const next = [...recipe.steps];
+    const j = idx + dir;
+    if (j < 0 || j >= next.length) return;
+    [next[idx], next[j]] = [next[j], next[idx]];
+    updateSteps(next);
   };
 
-  if (mode === "new") {
-    return (
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: 12, background: "var(--bg-sunken)", border: "1px solid var(--line)", borderRadius: 10 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <strong style={{ fontSize: 12.5, flex: 1 }}>Nuevo ingrediente</strong>
-          <button className="btn ghost" style={{ fontSize: 11, padding: "3px 8px" }} onClick={() => setMode("pick")}>Cancelar</button>
-        </div>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          <input className="input" placeholder="Nombre" value={nName} onChange={(e) => setNName(e.target.value)} style={{ flex: 1, minWidth: 140 }} />
-          <select className="input" value={nDim} onChange={(e) => { setNDim(e.target.value as IngredientDimension); setNUnit(unitOptions(e.target.value as IngredientDimension)[0].unit); }}>
-            <option value="count">{DIMENSION_LABELS.count}</option>
-            <option value="weight">{DIMENSION_LABELS.weight}</option>
-            <option value="volume">{DIMENSION_LABELS.volume}</option>
-          </select>
-          <input className="input" type="number" min={0} placeholder="Dura (días)" value={nShelf} onChange={(e) => setNShelf(e.target.value)} style={{ width: 100 }} />
-        </div>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-          <input className="input" placeholder="Presentación (ej: Botella 1 L)" value={nLabel} onChange={(e) => setNLabel(e.target.value)} style={{ flex: 1, minWidth: 140 }} />
-          <input className="input" placeholder="Tamaño" value={nAmount} onChange={(e) => setNAmount(e.target.value)} style={{ width: 80 }} />
-          {nUnits.length > 1 ? (
-            <select className="input" value={nUnit} onChange={(e) => setNUnit(e.target.value)}>
-              {nUnits.map((u) => <option key={u.unit} value={u.unit}>{u.label}</option>)}
-            </select>
-          ) : <span style={{ fontSize: 12, color: "var(--fg-muted)", width: 20 }}>{nUnits[0].label}</span>}
-          <input className="input" placeholder="Precio (kr)" value={nPrice} onChange={(e) => setNPrice(e.target.value)} style={{ width: 90 }} />
-          <button className="btn" onClick={() => void createAndAdd()} disabled={!nName.trim() || !nAmount.trim()}>
-            <IPlus size={11} /> Crear y agregar
-          </button>
-        </div>
-      </div>
-    );
-  }
+  const onBackdropMouseDown = (e: MouseEvent<HTMLDivElement>) => {
+    if (e.target === e.currentTarget) close();
+  };
 
   return (
-    <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-      <select className="input" value={ingredientId} onChange={(e) => { setIngredientId(e.target.value); setPresentationId(""); }} style={{ flex: 1, minWidth: 150 }}>
-        <option value="">Ingrediente…</option>
-        {ingredients.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
-      </select>
-      <select className="input" value={presentationId} onChange={(e) => setPresentationId(e.target.value)} disabled={!selectedIng} style={{ minWidth: 120 }}>
-        <option value="">Presentación…</option>
-        {pres.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-      </select>
-      <input className="input" type="number" min={1} value={qty} onChange={(e) => setQty(Number(e.target.value) || 1)} style={{ width: 60 }} title="Cantidad" />
-      <button className="btn" onClick={addPicked} disabled={!presentationId}><IPlus size={11} /> Agregar</button>
-      <button className="btn ghost" onClick={() => setMode("new")} title="Crear un ingrediente nuevo">Nuevo</button>
+    <div className="modal-backdrop" onMouseDown={onBackdropMouseDown}>
+      <div className="modal" style={{ width: 640, maxWidth: "90vw", maxHeight: "85vh", display: "flex", flexDirection: "column" }} onMouseDown={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <span style={{ flex: 1, fontSize: 15, fontWeight: 600, letterSpacing: "-0.01em" }}>Receta</span>
+          <button className="icon-btn" onClick={close} title="Cerrar">
+            <IX size={14} />
+          </button>
+        </div>
+        <div className="modal-body" style={{ overflowY: "auto", display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <input
+              className="input"
+              value={name}
+              autoFocus
+              onChange={(e) => setName(e.target.value)}
+              onBlur={commitName}
+              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+              style={{ flex: 1, minWidth: 180, fontSize: 15, fontWeight: 600 }}
+            />
+            <select
+              className="input"
+              value={recipe.mealType}
+              onChange={(e) => patchRecipe.mutate({ id: recipe.id, patch: { mealType: e.target.value as MealType } })}
+            >
+              <option value="lunch_dinner">{MEAL_TYPE_LABELS.lunch_dinner}</option>
+              <option value="breakfast_snack">{MEAL_TYPE_LABELS.breakfast_snack}</option>
+            </select>
+            <label style={{ fontSize: 12, color: "var(--fg-muted)", display: "inline-flex", alignItems: "center", gap: 6 }}>
+              Porciones
+              <input
+                className="input"
+                type="number"
+                min={1}
+                value={recipe.servings}
+                onChange={(e) => patchRecipe.mutate({ id: recipe.id, patch: { servings: Math.max(1, Number(e.target.value) || 1) } })}
+                style={{ width: 64 }}
+              />
+            </label>
+          </div>
+
+          {/* ingredients */}
+          <section style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <SectionTitle>Ingredientes (para {recipe.servings} porc.)</SectionTitle>
+            {recipeIngredients.length === 0 && (
+              <div style={{ fontSize: 12, color: "var(--fg-subtle)" }}>Sin ingredientes.</div>
+            )}
+            {recipeIngredients.map((ri) => {
+              const ing = ri.ingredientId ? ingredientById.get(ri.ingredientId) : undefined;
+              const cat = ri.categoryId ? categoryById.get(ri.categoryId) : undefined;
+              return (
+                <div key={ri.id} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13 }}>
+                  {ing && <Pill tone={DIMENSION_TONE[ing.dimension]}>{DIMENSION_LABELS[ing.dimension]}</Pill>}
+                  {cat && <Pill tone="neutral">generico</Pill>}
+                  <span style={{ flex: 1 }}>{ing?.name ?? (cat ? `[${cat.name}]` : "—")}</span>
+                  <span style={{ color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums" }}>
+                    {ing ? formatQuantity(ri.quantity, ing.dimension) : ri.quantity}
+                  </span>
+                  <IconBtn title="Quitar ingrediente" onClick={() => deleteRI.mutate(ri.id)}>
+                    <IX size={11} />
+                  </IconBtn>
+                </div>
+              );
+            })}
+            <RecipeIngredientAdder
+              ingredients={ingredients}
+              categories={categories}
+              onAdd={(sel) => createRI.mutate({ recipeId: recipe.id, ...sel })}
+            />
+          </section>
+
+          {/* steps */}
+          <section style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <SectionTitle>Pasos</SectionTitle>
+            {recipe.steps.map((s, idx) => (
+              <div key={`${idx}|${s}`} style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                <span style={{ width: 22, height: 22, display: "inline-flex", alignItems: "center", justifyContent: "center", borderRadius: "50%", background: "var(--accent-soft)", color: "var(--accent)", fontSize: 11, fontWeight: 700, marginTop: 6, fontVariantNumeric: "tabular-nums" }}>{idx + 1}</span>
+                <textarea
+                  className="input"
+                  defaultValue={s}
+                  rows={2}
+                  onBlur={(e) => {
+                    const v = e.target.value.trim();
+                    if (v === s) return;
+                    const next = [...recipe.steps];
+                    if (v) next[idx] = v;
+                    else next.splice(idx, 1);
+                    updateSteps(next);
+                  }}
+                  style={{ flex: 1, resize: "vertical" }}
+                />
+                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                  <button className="btn ghost" style={{ padding: "1px 6px", fontSize: 11 }} onClick={() => moveStep(idx, -1)} disabled={idx === 0}>↑</button>
+                  <button className="btn ghost" style={{ padding: "1px 6px", fontSize: 11 }} onClick={() => moveStep(idx, 1)} disabled={idx === recipe.steps.length - 1}>↓</button>
+                </div>
+              </div>
+            ))}
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                const v = stepDraft.trim();
+                if (!v) return;
+                updateSteps([...recipe.steps, v]);
+                setStepDraft("");
+              }}
+              style={{ display: "flex", gap: 6 }}
+            >
+              <input
+                className="input"
+                placeholder="Agregar paso…"
+                value={stepDraft}
+                onChange={(e) => setStepDraft(e.target.value)}
+                style={{ flex: 1 }}
+              />
+              <button className="btn" type="submit" disabled={!stepDraft.trim()}>
+                <IPlus size={11} /> Paso
+              </button>
+            </form>
+          </section>
+        </div>
+        <div className="modal-foot">
+          <button
+            className="btn ghost"
+            style={{ color: "var(--danger)" }}
+            onClick={() => { if (window.confirm(`Borrar receta "${recipe.name}"?`)) onDelete(); }}
+          >
+            Eliminar receta
+          </button>
+          <div className="actions">
+            <button className="btn primary" onClick={close}>Listo</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+function AddIngredientModal({ categories, onClose }: { categories: IngredientCategory[]; onClose: () => void }) {
+  const createIngredient = useCreateIngredient();
+  const [name, setName] = useState("");
+  const [categoryId, setCategoryId] = useState("");
+  const [dimension, setDimension] = useState<IngredientDimension>("count");
+  const [shelf, setShelf] = useState("");
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const save = () => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const days = shelf.trim() ? Number(shelf) : null;
+    createIngredient.mutate({
+      name: trimmed,
+      categoryId: categoryId || null,
+      dimension,
+      shelfLifeDays: days != null && Number.isFinite(days) ? days : null,
+    });
+    onClose();
+  };
+
+  const onBackdropMouseDown = (e: MouseEvent<HTMLDivElement>) => {
+    if (e.target === e.currentTarget) onClose();
+  };
+
+  return (
+    <div className="modal-backdrop" onMouseDown={onBackdropMouseDown}>
+      <div className="modal" style={{ width: 420 }} onMouseDown={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <span style={{ flex: 1, fontSize: 15, fontWeight: 600, letterSpacing: "-0.01em" }}>Nuevo ingrediente</span>
+          <button className="icon-btn" onClick={onClose} title="Cerrar">
+            <IX size={14} />
+          </button>
+        </div>
+        <div className="modal-body">
+          <div className="field">
+            <label>Nombre</label>
+            <input
+              type="text"
+              className="input"
+              placeholder="ej. Arroz, Leche…"
+              autoFocus
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") save(); }}
+            />
+          </div>
+          <div className="field">
+            <label>Categoría</label>
+            <div className="control">
+              <select className="input" style={{ width: "auto" }} value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
+                <option value="">Sin categoría</option>
+                {categories.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className="field">
+            <label>Tipo de medida</label>
+            <div className="control">
+              <select className="input" style={{ width: "auto" }} value={dimension} onChange={(e) => setDimension(e.target.value as IngredientDimension)}>
+                <option value="count">{DIMENSION_LABELS.count}</option>
+                <option value="weight">{DIMENSION_LABELS.weight}</option>
+                <option value="volume">{DIMENSION_LABELS.volume}</option>
+              </select>
+            </div>
+          </div>
+          <div className="field">
+            <label>Dura (días)</label>
+            <input
+              type="number"
+              min={0}
+              className="input"
+              placeholder="Opcional"
+              value={shelf}
+              onChange={(e) => setShelf(e.target.value)}
+              style={{ width: 120 }}
+            />
+          </div>
+        </div>
+        <div className="modal-foot">
+          <span />
+          <div className="actions">
+            <button className="btn ghost" onClick={onClose}>Cancelar</button>
+            <button
+              className="btn primary"
+              onClick={save}
+              disabled={name.trim().length === 0}
+              style={name.trim().length === 0 ? { opacity: 0.5, cursor: "not-allowed" } : undefined}
+            >
+              <ICheck size={12} stroke={2.4} /> Crear
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
 
-function ListItemRow({
+function IngredientCard({
+  ingredient,
+  presentations,
+  category,
+  onDelete,
+}: {
+  ingredient: Ingredient;
+  presentations: IngredientPresentation[];
+  category?: IngredientCategory;
+  onDelete: () => void;
+}) {
+  const createPresentation = useCreateIngredientPresentation();
+  const deletePresentation = useDeleteIngredientPresentation();
+  const [showAddPresentation, setShowAddPresentation] = useState(false);
+
+  const units = unitOptions(ingredient.dimension);
+  const [pLabel, setPLabel] = useState("");
+  const [pAmount, setPAmount] = useState("");
+  const [pUnit, setPUnit] = useState(units[0].unit);
+  const [pPrice, setPPrice] = useState("");
+
+  const addPresentation = () => {
+    const amount = parseQuantity(pAmount);
+    if (amount == null || amount <= 0) return;
+    const size = toBase(amount, pUnit);
+    const price = pPrice.trim() ? parseQuantity(pPrice) : null;
+    const label = pLabel.trim() || `${pAmount} ${units.find((u) => u.unit === pUnit)?.label ?? ""}`.trim();
+    createPresentation.mutate({
+      ingredientId: ingredient.id,
+      label,
+      size,
+      price: price != null && Number.isFinite(price) ? price : null,
+    });
+    setPLabel("");
+    setPAmount("");
+    setPPrice("");
+    setShowAddPresentation(false);
+  };
+
+  return (
+    <div style={{ background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: 10, padding: "10px 12px", boxSizing: "border-box", display: "flex", flexDirection: "column", gap: 6 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 14, fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {ingredient.name}
+        </span>
+        {category && <Pill tone={colorsForHue(category.hue).bg} title="Categoría">{category.name}</Pill>}
+        <Pill tone={DIMENSION_TONE[ingredient.dimension]} title="Tipo de medida">
+          {DIMENSION_LABELS[ingredient.dimension]}
+        </Pill>
+        <IconBtn danger title={`Borrar ${ingredient.name}`} onClick={onDelete}>
+          <ITrash size={13} />
+        </IconBtn>
+      </div>
+
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 2 }}>
+        {presentations.map((p) => (
+          <span
+            key={p.id}
+            draggable
+            onDragStart={(e) => {
+              e.dataTransfer.effectAllowed = "copy";
+              e.dataTransfer.setData("text/plain", JSON.stringify({ ingredientId: ingredient.id, presentationId: p.id }));
+            }}
+            title="Arrastrar a la lista para agregarlo"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              fontSize: 11.5,
+              padding: "4px 9px",
+              background: "var(--bg-sunken)",
+              border: "1px solid var(--line)",
+              borderRadius: 999,
+              cursor: "grab",
+            }}
+          >
+            {p.label}
+            <span style={{ color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums" }}>· {formatQuantity(p.size, ingredient.dimension)}</span>
+            <button
+              onClick={(e) => { e.stopPropagation(); deletePresentation.mutate(p.id); }}
+              title="Quitar presentación"
+              style={{ background: "none", border: 0, padding: 0, marginLeft: 2, cursor: "pointer", color: "var(--fg-subtle)", display: "flex" }}
+            >
+              <IX size={10} />
+            </button>
+          </span>
+        ))}
+        <button
+          className="btn ghost"
+          style={{ fontSize: 10.5, padding: "3px 8px", borderRadius: 999 }}
+          onClick={() => setShowAddPresentation((v) => !v)}
+        >
+          <IPlus size={10} /> Variante
+        </button>
+      </div>
+
+      {showAddPresentation && (
+        <form
+          onSubmit={(e) => { e.preventDefault(); addPresentation(); }}
+          style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 2 }}
+        >
+          <input className="input" placeholder="Etiqueta" value={pLabel} onChange={(e) => setPLabel(e.target.value)} style={{ flex: 1, minWidth: 100, fontSize: 12 }} />
+          <input className="input" placeholder="Cantidad" value={pAmount} onChange={(e) => setPAmount(e.target.value)} style={{ width: 75, fontSize: 12 }} />
+          {units.length > 1 ? (
+            <select className="input" value={pUnit} onChange={(e) => setPUnit(e.target.value)} style={{ fontSize: 12 }}>
+              {units.map((u) => (
+                <option key={u.unit} value={u.unit}>{u.label}</option>
+              ))}
+            </select>
+          ) : (
+            <span style={{ fontSize: 11, color: "var(--fg-muted)" }}>{units[0].label}</span>
+          )}
+          <input className="input" placeholder="Precio" value={pPrice} onChange={(e) => setPPrice(e.target.value)} style={{ width: 75, fontSize: 12 }} />
+          <button className="btn" type="submit" disabled={!pAmount.trim()} style={{ fontSize: 11 }}>
+            <ICheck size={10} /> Guardar
+          </button>
+        </form>
+      )}
+    </div>
+  );
+}
+
+function ListCard({
   item,
+  ingredient,
+  presentation,
   price,
-  usdRate,
   onToggle,
   onSetQty,
   onDelete,
 }: {
   item: ShoppingItem;
+  ingredient: Ingredient | null;
+  presentation: IngredientPresentation | null;
   price: number | null;
-  usdRate: number;
   onToggle: () => void;
   onSetQty: (n: number) => void;
   onDelete: () => void;
@@ -2049,34 +1998,74 @@ function ListItemRow({
     setText(String(n));
   };
 
+  const title = ingredient && presentation ? `${ingredient.name} - ${presentation.label}` : ingredient?.name ?? item.name;
+  const detailParts: string[] = [];
+  if (ingredient && presentation) detailParts.push(formatQuantity(presentation.size, ingredient.dimension));
+  if (price != null) detailParts.push(fmtMoney(price));
+
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 2px", borderBottom: "1px solid var(--line)" }}>
-      <input type="checkbox" checked={item.bought} onChange={onToggle} style={{ width: 16, height: 16 }} />
-      <span style={{ flex: 1, fontSize: 13, textDecoration: item.bought ? "line-through" : "none", color: item.bought ? "var(--fg-subtle)" : "var(--fg)" }}>
-        {item.name}
-      </span>
-      {price != null && (
-        <span style={{ fontSize: 12, color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums", textAlign: "right" }}>
-          {fmtMoney(price)}<br />
-          <span style={{ fontSize: 10.5 }}>≈ {fmtUsdFromDkk(price, usdRate)}</span>
-        </span>
-      )}
-      <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
-        <button className="btn ghost" style={{ padding: "2px 7px", fontSize: 13 }} onClick={() => onSetQty(item.quantity - 1)} title="Menos">−</button>
-        <input
-          className="input"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onBlur={commit}
-          onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-          inputMode="numeric"
-          style={{ width: 44, textAlign: "center", padding: "3px 4px", fontVariantNumeric: "tabular-nums" }}
-        />
-        <button className="btn ghost" style={{ padding: "2px 7px", fontSize: 13 }} onClick={() => onSetQty(item.quantity + 1)} title="Más">+</button>
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "auto minmax(0,1fr) auto",
+        gap: 10,
+        alignItems: "center",
+        padding: "10px 12px",
+        boxSizing: "border-box",
+        background: item.bought ? "rgba(34,197,94,0.10)" : "var(--bg-elev)",
+        border: item.bought ? "1px solid var(--ok)" : "1px solid var(--line)",
+        borderRadius: 10,
+      }}
+    >
+      <button
+        onClick={onToggle}
+        title={item.bought ? "Marcar como no comprado" : "Marcar como comprado"}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: 26,
+          height: 26,
+          borderRadius: "50%",
+          border: item.bought ? "1px solid var(--ok)" : "1px solid var(--line-strong)",
+          background: item.bought ? "var(--ok)" : "none",
+          color: item.bought ? "#fff" : "var(--fg-subtle)",
+          cursor: "pointer",
+        }}
+      >
+        <ICheck size={13} stroke={2.6} />
+      </button>
+
+      <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 6 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: item.bought ? "var(--fg-muted)" : "var(--fg)" }}>
+          {title}
+        </div>
+
+        {detailParts.length > 0 && (
+          <div style={{ fontSize: 11.5, color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums" }}>
+            {detailParts.join(" · ")}
+          </div>
+        )}
       </div>
-      <IconBtn title="Eliminar" onClick={onDelete}>
-        <IX size={11} />
-      </IconBtn>
+
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+          <button className="btn ghost" style={{ padding: "2px 7px", fontSize: 13 }} onClick={() => onSetQty(item.quantity - 1)} title="Menos">−</button>
+          <input
+            className="input"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+            inputMode="numeric"
+            style={{ width: 40, textAlign: "center", padding: "3px 4px", fontVariantNumeric: "tabular-nums" }}
+          />
+          <button className="btn ghost" style={{ padding: "2px 7px", fontSize: 13 }} onClick={() => onSetQty(item.quantity + 1)} title="Más">+</button>
+        </div>
+        <IconBtn title="Eliminar" onClick={onDelete}>
+          <ITrash size={12} />
+        </IconBtn>
+      </div>
     </div>
   );
 }

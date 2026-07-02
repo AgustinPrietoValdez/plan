@@ -15,9 +15,11 @@ import {
   useRecipeIngredients,
   useIngredients,
   useCoffeeBeans,
+  useFinanzasSettings,
 } from "../lib/queries";
 import { colorsForHue } from "../lib/categoryColor";
 import { suggestRecipesForExpiringLots } from "../lib/compras";
+import { CURRENCY, DEFAULT_RATES_PER_USD, convertViaUsd } from "../lib/money";
 import { SpendingPie } from "./SpendingPie";
 import { ICal, ICart } from "./icons";
 import type { CalendarEvent, Task } from "../types";
@@ -88,8 +90,26 @@ export function HomeView() {
     .sort((a, b) => a.day < b.day ? -1 : a.day > b.day ? 1 : (a.startTime ?? "") < (b.startTime ?? "") ? -1 : 1);
 
   // ---- Presupuesto ----
+  const finSettingsQ = useFinanzasSettings();
+  // Expenses can be entered in any currency (EUR/ARS/USD) — convert each to nominal
+  // DKK before charting, same as BudgetView, or the pie treats every amount as DKK.
+  const ratesPerUsd: Record<string, number> = {
+    USD: 1,
+    DKK: finSettingsQ.data?.ratesPerUsd.DKK ?? DEFAULT_RATES_PER_USD.DKK,
+    EUR: finSettingsQ.data?.ratesPerUsd.EUR ?? DEFAULT_RATES_PER_USD.EUR,
+    ARS: finSettingsQ.data?.ratesPerUsd.ARS ?? DEFAULT_RATES_PER_USD.ARS,
+  };
   const monthExpenses = expenses.filter((e) => !e.deletedAt && (e.spentOn ?? "").slice(0, 7) === budgetMonth);
-  const totalBudget = budgets.reduce((s, b) => s + b.monthlyAmount, 0);
+  const monthExpensesForPie = monthExpenses.map((e) => ({
+    ...e,
+    amount: convertViaUsd(e.amount, e.currency, CURRENCY, ratesPerUsd),
+    currency: CURRENCY,
+  }));
+  // Piechart limit excludes hidden categories' own budget cap too, so hiding one
+  // actually shrinks the denominator and the remaining %s recalculate (not just the arcs).
+  const chartBudgetLimit = budgets
+    .filter((b) => !expenseCategories.find((c) => c.id === b.categoryId)?.hiddenFromChart)
+    .reduce((s, b) => s + b.monthlyAmount, 0);
 
   // ---- Compras ----
   const pending = shopping.filter((i) => !i.deletedAt && !i.bought);
@@ -175,11 +195,11 @@ export function HomeView() {
           ) : (
             <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
               <SpendingPie
-                expenses={monthExpenses}
+                expenses={monthExpensesForPie}
                 categories={expenseCategories}
                 layout="row"
                 size={160}
-                limit={totalBudget > 0 ? totalBudget : undefined}
+                limit={chartBudgetLimit > 0 ? chartBudgetLimit : undefined}
               />
             </div>
           )}

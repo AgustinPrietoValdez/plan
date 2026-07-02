@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { Task } from "../types";
-import { todayYmd } from "./date";
+import { mondayOfThisWeek, todayYmd } from "./date";
 
 export type View =
   | "home"
@@ -53,14 +53,15 @@ export const CALENDARIO_TABS: { view: View; label: string }[] = [
 ];
 
 /** Sub-tabs shown inside the Compras area. */
-export type ComprasTab = "ingredientes" | "recetas" | "listas" | "plan" | "inventario" | "ajustes";
+// "ingredientes" se fusiono adentro de "listas" (columna derecha), "recetas"
+// se fusiono adentro de "plan" (columna derecha), e "inventario" se fusiono
+// adentro de "listas" (mitad inferior de la columna izquierda) — no quedan
+// como tabs propios.
+export type ComprasTab = "listas" | "plan" | "ajustes";
 
 export const COMPRAS_TABS: { id: ComprasTab; label: string; ready: boolean }[] = [
-  { id: "ingredientes", label: "Ingredientes", ready: true },
-  { id: "recetas", label: "Recetas", ready: true },
   { id: "listas", label: "Listas", ready: true },
   { id: "plan", label: "Plan semanal", ready: true },
-  { id: "inventario", label: "Inventario", ready: true },
   { id: "ajustes", label: "Ajustes", ready: true },
 ];
 
@@ -74,13 +75,13 @@ export const CAFE_TABS: { id: CafeTab; label: string }[] = [
 ];
 
 /** Sub-tabs shown inside the Finanzas (ex-Presupuesto) area. */
-export type FinanzasTab = "presupuesto" | "holdings" | "inversiones" | "taxes";
+export type FinanzasTab = "presupuesto" | "ahorros" | "holdings" | "inversiones";
 
 export const FINANZAS_TABS: { id: FinanzasTab; label: string }[] = [
   { id: "presupuesto", label: "Presupuesto" },
+  { id: "ahorros", label: "Ahorros" },
   { id: "holdings", label: "Holdings" },
   { id: "inversiones", label: "Inversiones" },
-  { id: "taxes", label: "Taxes" },
 ];
 
 export type EditorState =
@@ -101,13 +102,13 @@ interface AppState {
   projectManagerOpen: boolean;
   expenseCategoryManagerOpen: boolean;
   budgetManagerOpen: boolean;
-  savingsGoalManagerOpen: boolean;
-  expenseEditor: { mode: "closed" } | { mode: "edit"; expenseId: string } | { mode: "create"; prefill: Partial<{ amount: number; categoryId: string | null; spentOn: string; note: string }> };
+  expenseEditor: { mode: "closed" } | { mode: "edit"; expenseId: string } | { mode: "create"; prefill: Partial<{ amount: number; categoryId: string | null; spentOn: string; note: string; accountId: string | null; goalId: string | null }> };
   eventEditor: { mode: "closed" } | { mode: "edit"; eventId: string } | { mode: "create"; prefill: { day?: string } };
   budgetMonth: string;
   filterCategoryId: string | null;
   sidebarOpen: boolean;
   comprasTab: ComprasTab;
+  comprasWeek: string; // lunes de la semana que se ve en Listas (YYYY-MM-DD)
   cafeTab: CafeTab;
   finanzasTab: FinanzasTab;
 
@@ -131,10 +132,8 @@ interface AppState {
   closeExpenseCategoryManager: () => void;
   openBudgetManager: () => void;
   closeBudgetManager: () => void;
-  openSavingsGoalManager: () => void;
-  closeSavingsGoalManager: () => void;
   openExpenseEdit: (expenseId: string) => void;
-  openExpenseCreate: (prefill?: { amount?: number; categoryId?: string | null; spentOn?: string; note?: string }) => void;
+  openExpenseCreate: (prefill?: { amount?: number; categoryId?: string | null; spentOn?: string; note?: string; accountId?: string | null; goalId?: string | null }) => void;
   closeExpenseEditor: () => void;
   openEventEdit: (eventId: string) => void;
   openEventCreate: (prefill?: { day?: string }) => void;
@@ -143,6 +142,7 @@ interface AppState {
   setFilterCategory: (id: string | null) => void;
   toggleSidebar: () => void;
   setComprasTab: (t: ComprasTab) => void;
+  setComprasWeek: (weekStart: string) => void;
   setCafeTab: (t: CafeTab) => void;
   setFinanzasTab: (t: FinanzasTab) => void;
 }
@@ -160,13 +160,13 @@ export const useApp = create<AppState>((set) => ({
   projectManagerOpen: false,
   expenseCategoryManagerOpen: false,
   budgetManagerOpen: false,
-  savingsGoalManagerOpen: false,
   expenseEditor: { mode: "closed" },
   eventEditor: { mode: "closed" },
   budgetMonth: todayYmd().slice(0, 7),
   filterCategoryId: null,
   sidebarOpen: false,
   comprasTab: "listas",
+  comprasWeek: mondayOfThisWeek(),
   cafeTab: "granos",
   finanzasTab: "presupuesto",
 
@@ -190,8 +190,6 @@ export const useApp = create<AppState>((set) => ({
   closeExpenseCategoryManager: () => set({ expenseCategoryManagerOpen: false }),
   openBudgetManager: () => set({ budgetManagerOpen: true }),
   closeBudgetManager: () => set({ budgetManagerOpen: false }),
-  openSavingsGoalManager: () => set({ savingsGoalManagerOpen: true }),
-  closeSavingsGoalManager: () => set({ savingsGoalManagerOpen: false }),
   openExpenseEdit: (expenseId) => set({ expenseEditor: { mode: "edit", expenseId } }),
   openExpenseCreate: (prefill = {}) => set({ expenseEditor: { mode: "create", prefill } }),
   closeExpenseEditor: () => set({ expenseEditor: { mode: "closed" } }),
@@ -202,6 +200,7 @@ export const useApp = create<AppState>((set) => ({
   setFilterCategory: (filterCategoryId) => set({ filterCategoryId }),
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
   setComprasTab: (comprasTab) => set({ comprasTab }),
+  setComprasWeek: (comprasWeek) => set({ comprasWeek }),
   setCafeTab: (cafeTab) => set({ cafeTab }),
   setFinanzasTab: (finanzasTab) => set({ finanzasTab }),
 }));

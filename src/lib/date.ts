@@ -56,3 +56,37 @@ export function todayYmd(): string {
   t.setHours(0, 0, 0, 0);
   return ymd(t);
 }
+
+/** Shift a "YYYY-MM" month string by `delta` months (can be negative). */
+export function shiftMonth(yyyymm: string, delta: number): string {
+  const [y, m] = yyyymm.split("-").map(Number);
+  let year = y;
+  let month = m + delta;
+  while (month > 12) { month -= 12; year += 1; }
+  while (month < 1) { month += 12; year -= 1; }
+  return `${year}-${String(month).padStart(2, "0")}`;
+}
+
+/** Monday ("YYYY-MM-DD") of the current real-world week. */
+export function mondayOfThisWeek(): string {
+  const d = fromYmd(todayYmd());
+  const dow = (d.getDay() + 6) % 7; // 0 = Monday
+  d.setDate(d.getDate() - dow);
+  return ymd(d);
+}
+
+/** Shift a "YYYY-MM-DD" (Monday) week start by `deltaWeeks` weeks. */
+export function shiftWeek(weekStart: string, deltaWeeks: number): string {
+  const d = fromYmd(weekStart);
+  d.setDate(d.getDate() + deltaWeeks * 7);
+  return ymd(d);
+}
+
+/** "dd/mm – dd/mm" label for the week starting at `weekStart` (Monday..Sunday). */
+export function weekLabel(weekStart: string): string {
+  const [, m, d] = weekStart.split("-");
+  const end = shiftWeek(weekStart, 1);
+  const [, em, ed] = end.split("-");
+  const endD = String(Number(ed) - 1).padStart(2, "0"); // Sunday
+  return `${d}/${m} – ${endD}/${em}`;
+}

@@ -93,6 +93,7 @@ export interface ExpenseCategory {
   hue: number;
   position: number;
   archived: boolean;
+  hiddenFromChart: boolean; // excluida del piechart/leyenda de Presupuesto, pero sigue activa
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
@@ -120,6 +121,7 @@ export interface Expense {
   spentOn: string;
   note: string;
   accountId: string | null; // cuenta que pago el gasto (null = sin cuenta)
+  goalId: string | null; // objetivo de ahorro que compra este gasto (Ahorros > Registrar compra)
   recurrence: RecurrenceRule | null;
   recurrenceParentId: string | null;
   createdAt: string;
@@ -157,9 +159,12 @@ export interface SavingsGoal {
   targetAmount: number | null;
   savingsPercent: number;
   isOverflowTarget: boolean;
-  destinationAccountId: string | null; // cuenta donde se acumula este ahorro
+  destinationAccountId: string | null; // cuenta de ahorro/recuperacion (a donde entra la plata)
+  purchaseAccountId: string | null; // cuenta desde la que sale la plata al comprar el goal
   position: number;
   purchasedAt: string | null;
+  active: boolean; // false = excluido del reparto de % en Presupuesto, pero editable en Ahorros
+  priority: boolean; // true = se compro sin llegar al objetivo, hay que recuperar la plata adelantada
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
@@ -199,6 +204,7 @@ export interface ShoppingItem {
   ingredientId: string | null;
   presentationId: string | null;
   unit: string | null;
+  weekStart: string; // lunes de la semana a la que pertenece esta lista (YYYY-MM-DD)
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
@@ -433,7 +439,7 @@ export interface Automation {
 
 export type AccountOwner = "agus" | "sofi" | "shared";
 export type AccountType = "checking" | "savings" | "investment" | "broker" | "cash";
-export type AccountCurrency = "DKK" | "USD";
+export type AccountCurrency = "DKK" | "USD" | "EUR" | "ARS";
 
 export interface Account {
   id: string;
@@ -472,6 +478,31 @@ export interface AccountTransfer {
   kind: TransferKind;
   goalId: string | null; // meta de ahorro asociada (opcional)
   note: string;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+  version: number;
+}
+
+/** Finanzas: multi-currency FX settings, one row per user (mirrors ComprasSettings).
+ *  ratesPerUsd = units of each currency per 1 USD; ARS uses the "oficial" rate. */
+export interface FinanzasSettings {
+  id: string;
+  baseCurrency: AccountCurrency;
+  ratesPerUsd: Record<AccountCurrency, number>;
+  ratesUpdatedAt: string | null; // ISO timestamp of the last successful fetch
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+  version: number;
+}
+
+/** Holdings: one net-worth snapshot per user per calendar month (not daily). */
+export interface NetWorthSnapshot {
+  id: string;
+  month: string; // "YYYY-MM"
+  amount: number;
+  currency: string;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;

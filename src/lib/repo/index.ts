@@ -52,6 +52,8 @@ export type {
   InventoryPatch,
   MealLogCreate,
   ComprasSettingsUpsert,
+  FinanzasSettingsUpsert,
+  NetWorthSnapshotUpsert,
   TaskCreate,
   TaskPatch,
   BrewSessionCreate,

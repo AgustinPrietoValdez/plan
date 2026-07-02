@@ -8,6 +8,7 @@ import {
   useShoppingItems,
 } from "../../lib/queries";
 import { findMergeTarget } from "../../lib/compras";
+import { mondayOfThisWeek } from "../../lib/date";
 import { fmtMoney, fmtUsdFromDkk } from "../../lib/money";
 import { useUsdRate } from "../../lib/useUsdRate";
 import { useToggleBought } from "../../lib/useToggleBought";
@@ -22,7 +23,8 @@ export function ShoppingListView() {
   const usdRate = useUsdRate();
   const [sheetOpen, setSheetOpen] = useState(false);
 
-  const items = itemsQ.data ?? [];
+  const weekStart = mondayOfThisWeek();
+  const items = useMemo(() => (itemsQ.data ?? []).filter((i) => i.weekStart === weekStart), [itemsQ.data, weekStart]);
   const priceById = useMemo(() => {
     const m = new Map<string, number | null>();
     for (const p of presentationsQ.data ?? []) m.set(p.id, p.price);
@@ -133,11 +135,13 @@ function AddSheet({ onClose }: { onClose: () => void }) {
     ? ingredients.filter((i) => i.name.toLowerCase().includes(search.trim().toLowerCase()))
     : ingredients;
 
+  const weekStart = mondayOfThisWeek();
   const addMerged = (add: { name: string; quantity: number; ingredientId?: string | null; presentationId?: string | null }) => {
-    const current = itemsQ.data ?? [];
-    const target = findMergeTarget(current, add);
+    const item = { ...add, weekStart };
+    const current = (itemsQ.data ?? []).filter((i) => i.weekStart === weekStart);
+    const target = findMergeTarget(current, item);
     if (target) patchItem.mutate({ id: target.id, patch: { quantity: target.quantity + add.quantity } });
-    else createItem.mutate(add);
+    else createItem.mutate(item);
   };
 
   return (

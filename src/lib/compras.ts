@@ -36,6 +36,7 @@ export function neededToShoppingItems(
   needByIngredient: Map<string, number>,
   ingredientById: Map<string, Ingredient>,
   presentationsByIngredient: Map<string, IngredientPresentation[]>,
+  weekStart: string,
 ): ShoppingItemCreate[] {
   const out: ShoppingItemCreate[] = [];
   for (const [ingredientId, needed] of needByIngredient) {
@@ -54,6 +55,7 @@ export function neededToShoppingItems(
             ingredientId: ing.id,
             presentationId: p.id,
             unit: null,
+            weekStart,
           });
         }
       }
@@ -64,6 +66,7 @@ export function neededToShoppingItems(
         ingredientId: ing.id,
         presentationId: null,
         unit: null,
+        weekStart,
       });
     }
   }
@@ -176,6 +179,7 @@ export function aggregateCategoryNeed(
 export function categoryNeedToShoppingItems(
   needByCategory: Map<string, number>,
   categoryById: Map<string, IngredientCategory>,
+  weekStart: string,
 ): ShoppingItemCreate[] {
   const out: ShoppingItemCreate[] = [];
   for (const [categoryId, needed] of needByCategory) {
@@ -189,6 +193,7 @@ export function categoryNeedToShoppingItems(
       ingredientId: null,
       presentationId: null,
       unit: null,
+      weekStart,
     });
   }
   return out;

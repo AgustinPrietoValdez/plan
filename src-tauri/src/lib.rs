@@ -675,6 +675,48 @@ pub fn run() {
             sql: include_str!("../migrations/0032_finanzas_links.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 33,
+            description: "finanzas_settings: base currency + DKK/EUR/ARS per USD, fetched daily",
+            sql: include_str!("../migrations/0033_finanzas_settings.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 34,
+            description: "savings_goals: active status + priority (bought before reaching target)",
+            sql: include_str!("../migrations/0034_savings_goal_status.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 35,
+            description: "net_worth_snapshots: one row per user per month (Holdings chart)",
+            sql: include_str!("../migrations/0035_net_worth_snapshots.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 36,
+            description: "expenses: add goal_id (Registrar compra links an expense to a savings goal)",
+            sql: include_str!("../migrations/0036_expenses_goal_id.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 37,
+            description: "savings_goals: add purchase_account_id (separate from destination_account_id)",
+            sql: include_str!("../migrations/0037_savings_goal_purchase_account.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 38,
+            description: "expense_categories: add hidden_from_chart (toggle in Presupuesto's pie legend)",
+            sql: include_str!("../migrations/0038_expense_category_hidden_from_chart.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 39,
+            description: "shopping_items: add week_start (Listas pasa a ser por semana)",
+            sql: include_str!("../migrations/0039_shopping_items_week.sql"),
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()

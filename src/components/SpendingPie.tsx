@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { colorsForHue } from "../lib/categoryColor";
 import { fmtMoney } from "../lib/money";
 import type { Expense, ExpenseCategory } from "../types";
+import { IEye, IEyeOff } from "./icons";
 
 interface CategoryBudget {
   categoryId: string | null;
@@ -25,6 +26,14 @@ interface Props {
   /** Pinned-pie only: target pie size (px) = 40% of the column height. Keeps the
    *  pie at a fixed share of the height and leaves room for the expenses below. */
   sizePx?: number;
+  /** When set, shows an eye icon per legend row to toggle `hiddenFromChart` for that
+   *  category — hidden categories stay in the legend (dimmed) but drop out of the pie/total. */
+  onToggleHidden?: (categoryId: string) => void;
+  /** When set, clicking a legend row (or its pie slice) selects that category —
+   *  used to filter the expenses list down to just that category. */
+  onSelectCategory?: (categoryId: string) => void;
+  /** Currently selected category (highlights its row/slice). */
+  selectedCategoryId?: string | null;
 }
 
 interface Slice {
@@ -63,7 +72,7 @@ function arcPath(start: number, end: number, ro: number, ri: number): string {
   ].join(" ");
 }
 
-export function SpendingPie({ expenses, categories, layout = "column", size = SIZE, limit, budgets, fill = true, sizePx }: Props) {
+export function SpendingPie({ expenses, categories, layout = "column", size = SIZE, limit, budgets, fill = true, sizePx, onToggleHidden, onSelectCategory, selectedCategoryId }: Props) {
   const [hoverId, setHoverId] = useState<string | null>(null);
   const row = layout === "row";
 
@@ -94,7 +103,6 @@ export function SpendingPie({ expenses, categories, layout = "column", size = SI
     buckets.set(key, (buckets.get(key) ?? 0) + e.amount);
   }
 
-  const total = [...buckets.values()].reduce((s, n) => s + n, 0);
   const uncatAmount = buckets.get("_uncat") ?? 0;
 
   const ordered = [...categories]
@@ -107,11 +115,17 @@ export function SpendingPie({ expenses, categories, layout = "column", size = SI
     ...(uncatAmount > 0 ? [{ id: "_uncat", cat: null, amount: uncatAmount }] : []),
   ];
 
-  // Pie slices: only categories with spending (for drawing arcs)
+  // Chart total excludes categories hidden from the chart — they stay in the legend
+  // (dimmed, toggleable) but drop out of the pie/percentages/center total.
+  const total = legendItems
+    .filter((item) => !item.cat?.hiddenFromChart)
+    .reduce((s, item) => s + item.amount, 0);
+
+  // Pie slices: only visible categories with spending (for drawing arcs)
   const pieSlices: Slice[] = [];
   let acc = 0;
   for (const item of legendItems) {
-    if (item.amount <= 0) continue;
+    if (item.amount <= 0 || item.cat?.hiddenFromChart) continue;
     const start = total > 0 ? (acc / total) * Math.PI * 2 : 0;
     acc += item.amount;
     const end = total > 0 ? (acc / total) * Math.PI * 2 : 0;
@@ -185,6 +199,7 @@ export function SpendingPie({ expenses, categories, layout = "column", size = SI
                   strokeWidth={R_OUT - R_IN}
                   onMouseEnter={() => setHoverId(s.id)}
                   onMouseLeave={() => setHoverId(null)}
+                  onClick={() => { if (s.cat && onSelectCategory) onSelectCategory(s.cat.id); }}
                   style={{ cursor: "pointer", opacity: dimmed ? 0.4 : 1, transition: "opacity .15s" }}
                 />
               );
@@ -198,6 +213,7 @@ export function SpendingPie({ expenses, categories, layout = "column", size = SI
                 strokeWidth={1.5}
                 onMouseEnter={() => setHoverId(s.id)}
                 onMouseLeave={() => setHoverId(null)}
+                onClick={() => { if (s.cat && onSelectCategory) onSelectCategory(s.cat.id); }}
                 style={{ cursor: "pointer", opacity: dimmed ? 0.4 : 1, transition: "opacity .15s" }}
               />
             );
@@ -218,11 +234,13 @@ export function SpendingPie({ expenses, categories, layout = "column", size = SI
       <div style={{ display: "flex", flexDirection: "column", gap: "clamp(2px, 0.3vw, 4px)", flex: row ? (fill ? 1 : "0 1 auto") : undefined, minWidth: 0, overflowY: row ? "auto" : undefined, ...(row && fill ? { alignSelf: "stretch", justifyContent: "center" } : (row ? { maxHeight: pieSize != null ? pieSize : undefined } : {})) }}>
         {legendItems.map((item) => {
           const colors = item.cat ? colorsForHue(item.cat.hue) : { bg: "var(--line-strong)", fg: "var(--fg-muted)" };
+          const hiddenFromChart = item.cat?.hiddenFromChart ?? false;
           const pct = limit && limit > 0
             ? Math.round((item.amount / limit) * 100)
             : total > 0 ? Math.round((item.amount / total) * 100) : 0;
           const isHover = hoverId === item.id;
-          const dimmed = item.amount === 0;
+          const isSelected = item.cat != null && selectedCategoryId === item.cat.id;
+          const dimmed = item.amount === 0 || hiddenFromChart;
           const catBudget = budgets?.find((b) => b.categoryId === item.id);
           const isOver = catBudget != null && item.amount > catBudget.monthlyAmount;
           return (
@@ -230,15 +248,19 @@ export function SpendingPie({ expenses, categories, layout = "column", size = SI
               key={item.id}
               onMouseEnter={() => setHoverId(item.id)}
               onMouseLeave={() => setHoverId(null)}
+              onClick={() => { if (item.cat && onSelectCategory) onSelectCategory(item.cat.id); }}
               style={{
                 display: "grid",
-                gridTemplateColumns: "clamp(8px,0.6vw,14px) clamp(70px,7vw,200px) auto auto",
+                gridTemplateColumns: onToggleHidden
+                  ? "clamp(8px,0.6vw,14px) clamp(70px,7vw,200px) auto auto clamp(16px,1.4vw,22px)"
+                  : "clamp(8px,0.6vw,14px) clamp(70px,7vw,200px) auto auto",
                 gap: "clamp(6px,0.6vw,12px)",
                 alignItems: "center",
                 fontSize: "clamp(11px, 1.1vw, 18px)",
                 padding: "clamp(2px,0.3vw,5px) clamp(3px,0.4vw,7px)",
                 borderRadius: 5,
-                background: isHover ? colors.bg : "transparent",
+                background: isHover ? colors.bg : isSelected ? "var(--bg-sunken)" : "transparent",
+                boxShadow: isSelected ? `inset 0 0 0 1.5px ${colors.bg}` : undefined,
                 color: isHover ? colors.fg : dimmed ? "var(--fg-subtle)" : "var(--fg)",
                 cursor: "pointer",
                 opacity: dimmed ? 0.5 : 1,
@@ -258,8 +280,17 @@ export function SpendingPie({ expenses, categories, layout = "column", size = SI
                 )}
               </span>
               <span style={{ fontVariantNumeric: "tabular-nums", fontSize: "clamp(9px,0.9vw,15px)", color: isHover ? "inherit" : "var(--fg-subtle)", minWidth: "clamp(24px,1.8vw,42px)", textAlign: "right" }}>
-                {item.amount > 0 ? `${pct}%` : "—"}
+                {hiddenFromChart ? "oculta" : item.amount > 0 ? `${pct}%` : "—"}
               </span>
+              {onToggleHidden && item.cat && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onToggleHidden(item.cat!.id); }}
+                  title={hiddenFromChart ? "Mostrar en el piechart" : "Ocultar del piechart"}
+                  style={{ background: "none", border: 0, padding: 0, cursor: "pointer", color: "inherit", opacity: hiddenFromChart ? 1 : 0.5, display: "flex", alignItems: "center" }}
+                >
+                  {hiddenFromChart ? <IEyeOff size={13} /> : <IEye size={13} />}
+                </button>
+              )}
             </div>
           );
         })}
