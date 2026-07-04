@@ -111,7 +111,7 @@ export async function drainOutbox(userId: string): Promise<void> {
         await applyToServer(row);
         await db.execute("DELETE FROM outbox WHERE id = ?", [row.id]);
       } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
+        const msg = errorMessage(e);
         await db.execute(
           "UPDATE outbox SET attempts = attempts + 1, last_error = ? WHERE id = ?",
           [msg, row.id],
@@ -159,6 +159,20 @@ async function applyToServer(row: OutboxRow): Promise<void> {
       .eq("id", row.entity_id);
     if (error) throw error;
   }
+}
+
+/** Postgrest/Supabase errors are plain objects (not Error instances), so
+ *  `e instanceof Error ? e.message : String(e)` always fell through to the
+ *  useless "[object Object]" for them — surface their real message/code. */
+function errorMessage(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  if (e && typeof e === "object" && "message" in e) {
+    const { message, code, details, hint } = e as { message: unknown; code?: unknown; details?: unknown; hint?: unknown };
+    return [String(message), code && `code=${code}`, details && `details=${details}`, hint && `hint=${hint}`]
+      .filter(Boolean)
+      .join(" | ");
+  }
+  return String(e);
 }
 
 function isNetworkError(e: unknown): boolean {

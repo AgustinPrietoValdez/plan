@@ -26,6 +26,8 @@ import {
   useInventory,
   useMealLogs,
   useMealPlanEntries,
+  usePatchIngredient,
+  usePatchIngredientPresentation,
   usePatchInventory,
   usePatchMealPlanEntry,
   usePatchRecipe,
@@ -71,7 +73,7 @@ import type {
 import { colorsForHue } from "../lib/categoryColor";
 import { useApp, COMPRAS_TABS } from "../lib/store";
 import { IngredientCategoryManager } from "./IngredientCategoryManager";
-import { ICheck, IChevD, IChevL, IChevR, IPlus, ITrash, IX } from "./icons";
+import { ICheck, IChevD, IChevL, IChevR, IEdit, IPlus, ITrash, IX } from "./icons";
 
 const MEAL_TYPE_LABELS: Record<MealType, string> = {
   breakfast_snack: "Desayuno / Merienda",
@@ -488,6 +490,7 @@ function ListasPanel() {
   const [showClose, setShowClose] = useState(false);
   const [showCategoryManager, setShowCategoryManager] = useState(false);
   const [showAddIngredient, setShowAddIngredient] = useState(false);
+  const [editingIngredientId, setEditingIngredientId] = useState<string | null>(null);
 
   const allItems = useMemo(() => itemsQ.data ?? [], [itemsQ.data]);
   const items = useMemo(() => allItems.filter((i) => i.weekStart === weekStart), [allItems, weekStart]);
@@ -513,6 +516,8 @@ function ListasPanel() {
     for (const p of presentations) m.set(p.id, p.price);
     return m;
   }, [presentations]);
+
+  const editingIngredient = editingIngredientId ? ingredientById.get(editingIngredientId) ?? null : null;
 
   const pending = items.filter((i) => !i.bought);
   const bought = items.filter((i) => i.bought);
@@ -615,6 +620,15 @@ function ListasPanel() {
       )}
       {showCategoryManager && <IngredientCategoryManager onClose={() => setShowCategoryManager(false)} />}
       {showAddIngredient && <AddIngredientModal categories={categories} onClose={() => setShowAddIngredient(false)} />}
+      {editingIngredient && (
+        <EditIngredientModal
+          ingredient={editingIngredient}
+          presentations={presByIngredient.get(editingIngredient.id) ?? []}
+          categories={categories}
+          onClose={() => setEditingIngredientId(null)}
+          onDelete={() => { deleteIngredient.mutate(editingIngredient.id); setEditingIngredientId(null); }}
+        />
+      )}
 
       {/* Header estilo Finanzas: titulo grande a la izquierda, semana + acciones a la derecha */}
       <header
@@ -777,9 +791,9 @@ function ListasPanel() {
         </div>
 
         {/* DERECHA — catalogo de ingredientes (arrastrar una variante a la izquierda para agregarla) */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0, minHeight: 0 }}>
           <SectionTitle>Ingredientes</SectionTitle>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1, minHeight: 120, padding: 6, boxSizing: "border-box", overflowY: "auto" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1, minHeight: 0, padding: 6, boxSizing: "border-box", overflowY: "auto" }}>
             {ingredients.length === 0 && (
               <div style={{ fontSize: 12.5, color: "var(--fg-subtle)", padding: "8px 2px" }}>
                 Todavia no cargaste ingredientes. Usa "Agregar ingrediente" arriba.
@@ -791,6 +805,7 @@ function ListasPanel() {
                 ingredient={ing}
                 presentations={presByIngredient.get(ing.id) ?? []}
                 category={ing.categoryId ? categoryById.get(ing.categoryId) : undefined}
+                onEdit={() => setEditingIngredientId(ing.id)}
                 onDelete={() => { if (window.confirm(`Borrar "${ing.name}"?`)) deleteIngredient.mutate(ing.id); }}
               />
             ))}
@@ -1872,15 +1887,240 @@ function AddIngredientModal({ categories, onClose }: { categories: IngredientCat
   );
 }
 
+function rawNumber(n: number): string {
+  const rounded = Math.round(n * 1000) / 1000;
+  return rounded.toString().replace(".", ",");
+}
+
+function EditIngredientModal({
+  ingredient,
+  presentations,
+  categories,
+  onClose,
+  onDelete,
+}: {
+  ingredient: Ingredient;
+  presentations: IngredientPresentation[];
+  categories: IngredientCategory[];
+  onClose: () => void;
+  onDelete: () => void;
+}) {
+  const patchIngredient = usePatchIngredient();
+  const createPresentation = useCreateIngredientPresentation();
+  const deletePresentation = useDeleteIngredientPresentation();
+
+  const [name, setName] = useState(ingredient.name);
+  const [shelf, setShelf] = useState(ingredient.shelfLifeDays != null ? String(ingredient.shelfLifeDays) : "");
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const commitName = () => {
+    const t = name.trim();
+    if (t && t !== ingredient.name) patchIngredient.mutate({ id: ingredient.id, patch: { name: t } });
+    else setName(ingredient.name);
+  };
+  const commitShelf = () => {
+    const days = shelf.trim() ? Number(shelf) : null;
+    const next = days != null && Number.isFinite(days) ? days : null;
+    if (next !== ingredient.shelfLifeDays) patchIngredient.mutate({ id: ingredient.id, patch: { shelfLifeDays: next } });
+  };
+
+  const close = () => { commitName(); commitShelf(); onClose(); };
+
+  const onBackdropMouseDown = (e: MouseEvent<HTMLDivElement>) => {
+    if (e.target === e.currentTarget) close();
+  };
+
+  const [newLabel, setNewLabel] = useState("");
+  const [newAmount, setNewAmount] = useState("");
+  const [newPrice, setNewPrice] = useState("");
+
+  const addVariant = () => {
+    const size = parseQuantity(newAmount);
+    if (size == null || size <= 0) return;
+    const price = newPrice.trim() ? parseQuantity(newPrice) : null;
+    const label = newLabel.trim() || `${newAmount} ${baseUnit(ingredient.dimension)}`;
+    createPresentation.mutate({
+      ingredientId: ingredient.id,
+      label,
+      size,
+      price: price != null && Number.isFinite(price) ? price : null,
+    });
+    setNewLabel("");
+    setNewAmount("");
+    setNewPrice("");
+  };
+
+  return (
+    <div className="modal-backdrop" onMouseDown={onBackdropMouseDown}>
+      <div className="modal" style={{ width: 480, maxHeight: "85vh", display: "flex", flexDirection: "column" }} onMouseDown={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <span style={{ flex: 1, fontSize: 15, fontWeight: 600, letterSpacing: "-0.01em" }}>Editar ingrediente</span>
+          <button className="icon-btn" onClick={close} title="Cerrar">
+            <IX size={14} />
+          </button>
+        </div>
+        <div className="modal-body" style={{ overflowY: "auto", display: "flex", flexDirection: "column", gap: 14 }}>
+          <div className="field">
+            <label>Nombre</label>
+            <input
+              className="input"
+              autoFocus
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onBlur={commitName}
+              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+            />
+          </div>
+          <div className="field">
+            <label>Categoría</label>
+            <div className="control">
+              <select
+                className="input"
+                style={{ width: "auto" }}
+                value={ingredient.categoryId ?? ""}
+                onChange={(e) => patchIngredient.mutate({ id: ingredient.id, patch: { categoryId: e.target.value || null } })}
+              >
+                <option value="">Sin categoría</option>
+                {categories.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className="field">
+            <label>Tipo de medida</label>
+            <div className="control">
+              <select
+                className="input"
+                style={{ width: "auto" }}
+                value={ingredient.dimension}
+                disabled={presentations.length > 0}
+                title={presentations.length > 0 ? "No se puede cambiar con variantes cargadas" : undefined}
+                onChange={(e) => patchIngredient.mutate({ id: ingredient.id, patch: { dimension: e.target.value as IngredientDimension } })}
+              >
+                <option value="count">{DIMENSION_LABELS.count}</option>
+                <option value="weight">{DIMENSION_LABELS.weight}</option>
+                <option value="volume">{DIMENSION_LABELS.volume}</option>
+              </select>
+            </div>
+          </div>
+          <div className="field">
+            <label>Dura (días)</label>
+            <input
+              className="input"
+              type="number"
+              min={0}
+              placeholder="Opcional"
+              value={shelf}
+              onChange={(e) => setShelf(e.target.value)}
+              onBlur={commitShelf}
+              style={{ width: 120 }}
+            />
+          </div>
+
+          <section style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <SectionTitle>Variantes</SectionTitle>
+            {presentations.length === 0 && (
+              <div style={{ fontSize: 12, color: "var(--fg-subtle)" }}>Sin variantes todavía.</div>
+            )}
+            {presentations.map((p) => (
+              <VariantRow
+                key={p.id}
+                presentation={p}
+                dimension={ingredient.dimension}
+                onDelete={() => deletePresentation.mutate(p.id)}
+              />
+            ))}
+            <form
+              onSubmit={(e) => { e.preventDefault(); addVariant(); }}
+              style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}
+            >
+              <input className="input" placeholder="Etiqueta (ej. 1L)" value={newLabel} onChange={(e) => setNewLabel(e.target.value)} style={{ flex: 1, minWidth: 100, fontSize: 12.5 }} />
+              <input className="input" placeholder={`Cant. (${baseUnit(ingredient.dimension)})`} value={newAmount} onChange={(e) => setNewAmount(e.target.value)} style={{ width: 90, fontSize: 12.5 }} />
+              <input className="input" placeholder="Precio" value={newPrice} onChange={(e) => setNewPrice(e.target.value)} style={{ width: 80, fontSize: 12.5 }} />
+              <button className="btn" type="submit" disabled={!newAmount.trim()} style={{ fontSize: 11.5 }}>
+                <IPlus size={10} /> Variante
+              </button>
+            </form>
+          </section>
+        </div>
+        <div className="modal-foot">
+          <button
+            className="btn ghost"
+            style={{ color: "var(--danger)" }}
+            onClick={() => { if (window.confirm(`Borrar "${ingredient.name}"?`)) onDelete(); }}
+          >
+            Eliminar ingrediente
+          </button>
+          <div className="actions">
+            <button className="btn primary" onClick={close}>Listo</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function VariantRow({
+  presentation,
+  dimension,
+  onDelete,
+}: {
+  presentation: IngredientPresentation;
+  dimension: IngredientDimension;
+  onDelete: () => void;
+}) {
+  const patchPresentation = usePatchIngredientPresentation();
+  const [label, setLabel] = useState(presentation.label);
+  const [amount, setAmount] = useState(rawNumber(presentation.size));
+  const [price, setPrice] = useState(presentation.price != null ? rawNumber(presentation.price) : "");
+
+  const commitLabel = () => {
+    const t = label.trim();
+    if (t && t !== presentation.label) patchPresentation.mutate({ id: presentation.id, patch: { label: t } });
+    else setLabel(presentation.label);
+  };
+  const commitAmount = () => {
+    const n = parseQuantity(amount);
+    if (n != null && n > 0 && n !== presentation.size) patchPresentation.mutate({ id: presentation.id, patch: { size: n } });
+    else setAmount(rawNumber(presentation.size));
+  };
+  const commitPrice = () => {
+    const trimmed = price.trim();
+    const n = trimmed ? parseQuantity(trimmed) : null;
+    const next = n != null && Number.isFinite(n) ? n : null;
+    if (next !== presentation.price) patchPresentation.mutate({ id: presentation.id, patch: { price: next } });
+  };
+
+  return (
+    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+      <input className="input" value={label} onChange={(e) => setLabel(e.target.value)} onBlur={commitLabel} style={{ flex: 1, minWidth: 90, fontSize: 12.5 }} />
+      <input className="input" value={amount} onChange={(e) => setAmount(e.target.value)} onBlur={commitAmount} style={{ width: 75, fontSize: 12.5 }} />
+      <span style={{ fontSize: 11, color: "var(--fg-muted)", width: 22 }}>{baseUnit(dimension)}</span>
+      <input className="input" placeholder="Precio" value={price} onChange={(e) => setPrice(e.target.value)} onBlur={commitPrice} style={{ width: 70, fontSize: 12.5 }} />
+      <IconBtn danger title="Quitar variante" onClick={onDelete}>
+        <IX size={11} />
+      </IconBtn>
+    </div>
+  );
+}
+
 function IngredientCard({
   ingredient,
   presentations,
   category,
+  onEdit,
   onDelete,
 }: {
   ingredient: Ingredient;
   presentations: IngredientPresentation[];
   category?: IngredientCategory;
+  onEdit: () => void;
   onDelete: () => void;
 }) {
   const createPresentation = useCreateIngredientPresentation();
@@ -1921,6 +2161,9 @@ function IngredientCard({
         <Pill tone={DIMENSION_TONE[ingredient.dimension]} title="Tipo de medida">
           {DIMENSION_LABELS[ingredient.dimension]}
         </Pill>
+        <IconBtn title={`Editar ${ingredient.name}`} onClick={onEdit}>
+          <IEdit size={13} />
+        </IconBtn>
         <IconBtn danger title={`Borrar ${ingredient.name}`} onClick={onDelete}>
           <ITrash size={13} />
         </IconBtn>

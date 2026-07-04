@@ -189,10 +189,14 @@ const fromDbCategory = (r: DbCategoryRow): Category => ({
 });
 
 async function requireUserId(): Promise<string> {
-  const { data, error } = await supabase.auth.getUser();
+  // getSession() resuelve de la sesion cacheada localmente (sin red); getUser()
+  // revalida el JWT contra el servidor en cada llamada, lo que en el celular con
+  // wifi intermitente puede colgarse o pelear por el lock de auth y hacer que la
+  // escritura local ni siquiera llegue a ejecutarse (issue #20).
+  const { data, error } = await supabase.auth.getSession();
   if (error) throw error;
-  if (!data.user) throw new Error("Not authenticated");
-  return data.user.id;
+  if (!data.session?.user) throw new Error("Not authenticated");
+  return data.session.user.id;
 }
 
 const newId = () => crypto.randomUUID();
@@ -3571,7 +3575,7 @@ function ingredientCategoryToWire(c: IngredientCategory, userId: string) {
     name: c.name,
     hue: c.hue,
     position: c.position,
-    archived: c.archived ? 1 : 0,
+    archived: c.archived,
     created_at: c.createdAt,
     updated_at: c.updatedAt,
     deleted_at: c.deletedAt,
