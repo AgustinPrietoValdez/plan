@@ -866,6 +866,7 @@ function CloseListModal({
   const [note, setNote] = useState(defaultNote);
   const [clearAfter, setClearAfter] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -878,31 +879,41 @@ function CloseListModal({
   const confirm = async () => {
     if (busy) return;
     setBusy(true);
+    setError(null);
+    const timeout = new Promise<never>((_, rej) =>
+      setTimeout(() => rej(new Error("Timeout — reintentá si sigue pasando")), 10_000)
+    );
     try {
-      const account = accountId ? accounts.find((a) => a.id === accountId) ?? null : null;
-      const currency = account ? account.currency : CURRENCY;
-      const expense = await createExpense.mutateAsync({
-        name: note.trim() || defaultNote,
-        amount: total,
-        currency,
-        categoryId: categoryId || null,
-        accountId: accountId || null,
-        spentOn,
-        note: note.trim() || defaultNote,
-        recurrence: null,
-        recurrenceParentId: null,
-      });
-      for (const it of priced) {
-        await createLineItem.mutateAsync({
-          expenseId: expense.id,
-          name: it.name,
-          quantity: it.quantity,
-          unitPrice: unitPriceOf(it) ?? 0,
-        });
-      }
+      await Promise.race([
+        (async () => {
+          const account = accountId ? accounts.find((a) => a.id === accountId) ?? null : null;
+          const currency = account ? account.currency : CURRENCY;
+          const expense = await createExpense.mutateAsync({
+            name: note.trim() || defaultNote,
+            amount: total,
+            currency,
+            categoryId: categoryId || null,
+            accountId: accountId || null,
+            spentOn,
+            note: note.trim() || defaultNote,
+            recurrence: null,
+            recurrenceParentId: null,
+          });
+          for (const it of priced) {
+            await createLineItem.mutateAsync({
+              expenseId: expense.id,
+              name: it.name,
+              quantity: it.quantity,
+              unitPrice: unitPriceOf(it) ?? 0,
+            });
+          }
+        })(),
+        timeout,
+      ]);
       if (clearAfter) onClearBought();
       onClose();
-    } finally {
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo registrar el gasto");
       setBusy(false);
     }
   };
@@ -998,12 +1009,15 @@ function CloseListModal({
               Vaciar los comprados de la lista
             </label>
           </div>
+          {error && (
+            <div style={{ fontSize: 12, color: "var(--danger)" }}>{error}</div>
+          )}
         </div>
 
         <div className="modal-foot">
           <span />
           <div className="actions">
-            <button className="btn ghost" onClick={onClose}>Cancelar</button>
+            <button className="btn ghost" onClick={onClose} disabled={busy}>Cancelar</button>
             <button className="btn primary" onClick={() => void confirm()} disabled={busy}>
               <ICheck size={12} stroke={2.4} /> Registrar gasto
             </button>
@@ -1225,8 +1239,12 @@ function PlanPanel() {
   }, [mealLogsQ.data, weekStart]);
 
   const addRecipe = async () => {
-    const r = await createRecipe.mutateAsync({ name: "Nueva receta", servings: 2, mealType: "lunch_dinner", steps: [] });
-    setEditingRecipeId(r.id);
+    try {
+      const r = await createRecipe.mutateAsync({ name: "Nueva receta", servings: 2, mealType: "lunch_dinner", steps: [] });
+      setEditingRecipeId(r.id);
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "No se pudo crear la receta");
+    }
   };
 
   const addToPlan = (recipeId: string) => {

@@ -480,6 +480,52 @@ fn launch_coffee_analysis(
     Ok(())
 }
 
+/// Lanza una terminal con Claude Code para responder una duda puntual sobre un
+/// brew (Fase 7c, desktop/Windows). Mismo patron que launch_coffee_analysis,
+/// pero el prompt parte de la queja del usuario en vez de armar una receta inicial.
+#[tauri::command]
+fn launch_coffee_question(
+    repo_path: String,
+    context: String,
+    question: String,
+) -> Result<(), String> {
+    let tmp = std::env::temp_dir();
+
+    // 1) contexto del grano (+ ultimo brew) -> archivo temporal
+    let ctx_path = tmp.join("plan-coffee-question.md");
+    std::fs::write(&ctx_path, context.as_bytes()).map_err(|e| e.to_string())?;
+
+    // 2) prompt para Claude
+    let prompt = format!(
+        "Ajuste de cafe (app Plan).\n\
+         El usuario preparo este cafe y no le gusto como salio: \"{question}\"\n\
+         1) Lee COFFEE_GUIDE.md y CATA_GUIDE.md de este repo, y el contexto del grano + ultimo brew en: {ctx}\n\
+         2) Proponer 1-3 cambios concretos de parametro (molienda / ratio / temperatura / perfil de vertido), con el porque.\n\
+         3) Si corresponde, persisti el ajuste con tools/coffee_cli.py set-tweak (patron outbox):\n\
+            python tools/coffee_cli.py set-tweak \"<grano>\" --grind <clicks> --temp <c> --dose <g> --water <g> --notes \"...\"\n\
+         Responde en espanol.",
+        ctx = ctx_path.to_string_lossy(),
+    );
+
+    // 3) launcher .ps1 con here-string single-quoted (literal, sin interpolacion)
+    let ps1_path = tmp.join("plan-coffee-question-launch.ps1");
+    let script = format!("claude @'\n{}\n'@\n", prompt);
+    std::fs::write(&ps1_path, script).map_err(|e| e.to_string())?;
+
+    // 4) abrir PowerShell visible, en el dir del repo.
+    let mut cmd = std::process::Command::new("powershell");
+    cmd.args(["-ExecutionPolicy", "Bypass", "-File"])
+        .arg(&ps1_path)
+        .current_dir(&repo_path);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x00000010); // CREATE_NEW_CONSOLE -> ventana propia visible
+    }
+    cmd.spawn().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let migrations = vec![
@@ -741,6 +787,7 @@ pub fn run() {
             kettle_disconnect,
             scaffold_project_guide,
             launch_coffee_analysis,
+            launch_coffee_question,
             schedule_event_notification,
             cancel_event_notification,
         ])

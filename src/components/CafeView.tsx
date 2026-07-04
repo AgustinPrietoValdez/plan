@@ -17,7 +17,7 @@ import { addDays, fromYmd, todayYmd, ymd } from "../lib/date";
 import type { CoffeeBean, CoffeeRecipe, CoffeeRecipeStep, CoffeeStepType, WaterMode, BrewSession, BrewDatapoint } from "../types";
 import type { CoffeeBeanCreate, CoffeeRecipeCreate } from "../lib/repo";
 import { IPlus, ITrash, IChevD, IChevU, IX } from "./icons";
-import { analyzeCoffee } from "../lib/coffeeAnalysis";
+import { analyzeCoffee, askAboutBrew } from "../lib/coffeeAnalysis";
 import { useApp } from "../lib/store";
 
 // El boton "Analizar" lanza una terminal con Claude: desktop-only (en mobile no hay terminal).
@@ -175,9 +175,12 @@ export function CafeView() {
   const [deleteBean, setDeleteBean] = useState<string | null>(null);
   const [deleteRecipe, setDeleteRecipe] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [askBrewBean, setAskBrewBean] = useState<CoffeeBean | null>(null);
+  const [askBrewText, setAskBrewText] = useState("");
 
   const beansQ = useCoffeeBeans();
   const recipesQ = useCoffeeRecipes();
+  const sessionsQ = useBrewSessions();
   const createBean = useCreateCoffeeBean();
   const patchBean = usePatchCoffeeBean();
   const consumeBean = useConsumeCoffeeBean();
@@ -189,6 +192,13 @@ export function CafeView() {
 
   const beans = beansQ.data ?? [];
   const recipes = recipesQ.data ?? [];
+  const sessions = sessionsQ.data ?? [];
+
+  function lastBrewFor(beanId: string): BrewSession | null {
+    const bs = sessions.filter((s) => s.beanId === beanId);
+    if (bs.length === 0) return null;
+    return bs.reduce((a, s) => (s.createdAt > a.createdAt ? s : a));
+  }
 
   // ---- bean actions ----
   function openCreateBean() { setBeanForm(defaultBeanForm()); setBeanEditor({ open: true, bean: null }); }
@@ -319,6 +329,7 @@ export function CafeView() {
               patchBean.mutate({ id: b.id, patch: { finishedAt: null, weightGrams: Number.isFinite(g) && g > 0 ? g : b.weightGrams } });
             }}
             onAnalizar={(b) => void analyzeCoffee(b)}
+            onAskAboutBrew={(b) => { setAskBrewText(""); setAskBrewBean(b); }}
           />
         )}
         {tab === "recetas" && (
@@ -356,6 +367,35 @@ export function CafeView() {
           onSave={() => void saveRecipe()}
           onClose={() => { setRecipeEditor({ open: false }); setSaveError(null); }}
         />
+      )}
+
+      {/* Fase 7c: preguntarle a Claude sobre un brew que no salio bien */}
+      {askBrewBean && (
+        <Modal title={`Preguntar sobre "${askBrewBean.name}"`} onClose={() => setAskBrewBean(null)}>
+          <Field label="¿Qué salió mal? (amargo, plano, muy ácido...)">
+            <textarea
+              className="input"
+              rows={4}
+              autoFocus
+              value={askBrewText}
+              onChange={(e) => setAskBrewText(e.target.value)}
+              placeholder="Ej: salió muy amargo y con poco cuerpo"
+            />
+          </Field>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <button className="btn" onClick={() => setAskBrewBean(null)}>Cancelar</button>
+            <button
+              className="btn primary"
+              disabled={!askBrewText.trim()}
+              onClick={() => {
+                void askAboutBrew(askBrewBean, lastBrewFor(askBrewBean.id), askBrewText.trim());
+                setAskBrewBean(null);
+              }}
+            >
+              Preguntarle a Claude
+            </button>
+          </div>
+        </Modal>
       )}
 
       {/* Delete confirms */}
@@ -639,7 +679,7 @@ function BrewHistorialTab() {
 // ---------- Granos tab ----------
 
 function GranosTab({
-  beans, onEdit, onDeleteRequest, onCreateTask, onMarkFinished, onConsume, onReactivate, onAnalizar,
+  beans, onEdit, onDeleteRequest, onCreateTask, onMarkFinished, onConsume, onReactivate, onAnalizar, onAskAboutBrew,
 }: {
   beans: CoffeeBean[];
   onEdit: (b: CoffeeBean) => void;
@@ -649,6 +689,7 @@ function GranosTab({
   onConsume: (b: CoffeeBean) => void;
   onReactivate: (b: CoffeeBean) => void;
   onAnalizar: (b: CoffeeBean) => void;
+  onAskAboutBrew: (b: CoffeeBean) => void;
 }) {
   const active = beans.filter((b) => !b.finishedAt);
   const finished = beans.filter((b) => b.finishedAt);
@@ -672,7 +713,7 @@ function GranosTab({
       )}
       {active.map((b) => (
         <BeanCard key={b.id} bean={b} onEdit={onEdit} onDelete={onDeleteRequest} onCreateTask={onCreateTask}
-          needsOrder={needsOrder} onMarkFinished={onMarkFinished} onConsume={onConsume} onReactivate={onReactivate} onAnalizar={onAnalizar} />
+          needsOrder={needsOrder} onMarkFinished={onMarkFinished} onConsume={onConsume} onReactivate={onReactivate} onAnalizar={onAnalizar} onAskAboutBrew={onAskAboutBrew} />
       ))}
       {active.length === 0 && (
         <div style={{ fontSize: 13, color: "var(--fg-muted)", padding: "8px 4px" }}>No tenés cafés activos.</div>
@@ -686,7 +727,7 @@ function GranosTab({
           </button>
           {showFinished && finished.map((b) => (
             <BeanCard key={b.id} bean={b} onEdit={onEdit} onDelete={onDeleteRequest} onCreateTask={onCreateTask}
-              needsOrder={false} onMarkFinished={onMarkFinished} onConsume={onConsume} onReactivate={onReactivate} onAnalizar={onAnalizar} />
+              needsOrder={false} onMarkFinished={onMarkFinished} onConsume={onConsume} onReactivate={onReactivate} onAnalizar={onAnalizar} onAskAboutBrew={onAskAboutBrew} />
           ))}
         </>
       )}
@@ -695,7 +736,7 @@ function GranosTab({
 }
 
 function BeanCard({
-  bean: b, onEdit, onDelete, onCreateTask, needsOrder, onMarkFinished, onConsume, onReactivate, onAnalizar,
+  bean: b, onEdit, onDelete, onCreateTask, needsOrder, onMarkFinished, onConsume, onReactivate, onAnalizar, onAskAboutBrew,
 }: {
   bean: CoffeeBean;
   onEdit: (b: CoffeeBean) => void;
@@ -706,6 +747,7 @@ function BeanCard({
   onConsume: (b: CoffeeBean) => void;
   onReactivate: (b: CoffeeBean) => void;
   onAnalizar: (b: CoffeeBean) => void;
+  onAskAboutBrew: (b: CoffeeBean) => void;
 }) {
   const status = freshnessStatus(b.roastedOn);
   const days = daysOld(b.roastedOn);
@@ -779,6 +821,13 @@ function BeanCard({
                 style={{ fontSize: 11, padding: "2px 8px", color: "var(--accent)", fontWeight: 600 }}
                 onClick={() => onAnalizar(b)}>
                 ☕ Analizar
+              </button>
+            )}
+            {!isFinished && !isMobile && (
+              <button className="btn ghost" title="Preguntarle a Claude sobre un brew que no salio bien"
+                style={{ fontSize: 11, padding: "2px 8px", color: "var(--accent)", fontWeight: 600 }}
+                onClick={() => onAskAboutBrew(b)}>
+                💬 Preguntar
               </button>
             )}
             {isFinished && (
