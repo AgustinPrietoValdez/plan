@@ -763,6 +763,12 @@ pub fn run() {
             sql: include_str!("../migrations/0039_shopping_items_week.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 40,
+            description: "coffee_beans: add rating (1-10) + flavor_tags (issue #10)",
+            sql: include_str!("../migrations/0040_coffee_bean_rating.sql"),
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()

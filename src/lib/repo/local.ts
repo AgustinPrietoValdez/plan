@@ -2676,6 +2676,8 @@ export const localRepo: Repo = {
       notaFinal: input.notaFinal ?? "",
       lastTweak: input.lastTweak ?? null,
       finishedAt: input.finishedAt ?? null,
+      rating: null,
+      flavorTags: [],
       createdAt: ts,
       updatedAt: ts,
       deletedAt: null,
@@ -2684,12 +2686,12 @@ export const localRepo: Repo = {
     await db.execute(
       `INSERT INTO coffee_beans
         (id, user_id, name, roaster, varietal, country, process, producer, roasted_on,
-         weight_grams, notes, cata_inicial, nota_final, last_tweak, finished_at, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         weight_grams, notes, cata_inicial, nota_final, last_tweak, finished_at, rating, flavor_tags, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [bean.id, userId, bean.name, bean.roaster, bean.varietal, bean.country, bean.process,
        bean.producer, bean.roastedOn, bean.weightGrams, bean.notes,
        bean.cataInicial, bean.notaFinal, bean.lastTweak ? JSON.stringify(bean.lastTweak) : "",
-       bean.finishedAt,
+       bean.finishedAt, bean.rating, JSON.stringify(bean.flavorTags),
        bean.createdAt, bean.updatedAt, null, 1],
     );
     await enqueue(userId, "insert", "coffee_beans", bean.id, coffeeBeanToWire(bean, userId));
@@ -2713,13 +2715,14 @@ export const localRepo: Repo = {
       `UPDATE coffee_beans SET name = ?, roaster = ?, varietal = ?, country = ?, process = ?,
          producer = ?, roasted_on = ?, weight_grams = ?, notes = ?,
          cata_inicial = ?, nota_final = ?, last_tweak = ?, finished_at = ?,
+         rating = ?, flavor_tags = ?,
          updated_at = ?, deleted_at = ?, version = ?
        WHERE id = ? AND user_id = ?`,
       [updated.name, updated.roaster, updated.varietal, updated.country, updated.process,
        updated.producer, updated.roastedOn, updated.weightGrams,
        updated.notes, updated.cataInicial, updated.notaFinal,
        updated.lastTweak ? JSON.stringify(updated.lastTweak) : "",
-       updated.finishedAt,
+       updated.finishedAt, updated.rating, JSON.stringify(updated.flavorTags),
        updated.updatedAt, updated.deletedAt, updated.version, id, userId],
     );
     await enqueue(userId, "update", "coffee_beans", id, coffeeBeanToWire(updated, userId));
@@ -4174,6 +4177,8 @@ interface DbCoffeeBeanRow {
   nota_final: string;
   last_tweak: string;
   finished_at: string | null;
+  rating: number | null;
+  flavor_tags: string;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -4196,6 +4201,8 @@ function fromDbCoffeeBean(r: DbCoffeeBeanRow): CoffeeBean {
     notaFinal: r.nota_final ?? "",
     lastTweak: r.last_tweak ? parseJson<CoffeeTweak | null>(r.last_tweak, null) : null,
     finishedAt: r.finished_at ?? null,
+    rating: r.rating ?? null,
+    flavorTags: parseJson<string[]>(r.flavor_tags, []),
     createdAt: r.created_at,
     updatedAt: r.updated_at,
     deletedAt: r.deleted_at,
@@ -4209,7 +4216,7 @@ function coffeeBeanToWire(b: CoffeeBean, userId: string) {
     country: b.country, process: b.process, producer: b.producer, roasted_on: b.roastedOn,
     weight_grams: b.weightGrams, notes: b.notes,
     cata_inicial: b.cataInicial, nota_final: b.notaFinal, last_tweak: b.lastTweak,
-    finished_at: b.finishedAt,
+    finished_at: b.finishedAt, rating: b.rating, flavor_tags: b.flavorTags,
     created_at: b.createdAt, updated_at: b.updatedAt, deleted_at: b.deletedAt, version: b.version,
   };
 }

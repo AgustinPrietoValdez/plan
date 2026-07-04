@@ -177,6 +177,7 @@ export function CafeView() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [askBrewBean, setAskBrewBean] = useState<CoffeeBean | null>(null);
   const [askBrewText, setAskBrewText] = useState("");
+  const [finishingBean, setFinishingBean] = useState<CoffeeBean | null>(null);
 
   const beansQ = useCoffeeBeans();
   const recipesQ = useCoffeeRecipes();
@@ -314,7 +315,7 @@ export function CafeView() {
             onEdit={openEditBean}
             onDeleteRequest={setDeleteBean}
             onCreateTask={(b) => void createOrderTask(b)}
-            onMarkFinished={(b) => { if (window.confirm(`Marcar "${b.name}" como terminado?`)) patchBean.mutate({ id: b.id, patch: { finishedAt: new Date().toISOString() } }); }}
+            onMarkFinished={(b) => setFinishingBean(b)}
             onConsume={(b) => {
               const inp = window.prompt(`Cuantos gramos usaste de "${b.name}"? (quedan ${b.weightGrams}g)`, "");
               if (inp == null) return;
@@ -396,6 +397,20 @@ export function CafeView() {
             </button>
           </div>
         </Modal>
+      )}
+
+      {/* Marcar terminado: pedir puntaje + tags de sabor antes de archivar (issue #10) */}
+      {finishingBean && (
+        <FinishBeanModal
+          bean={finishingBean}
+          onClose={() => setFinishingBean(null)}
+          onConfirm={async (rating, flavorTags) => {
+            await patchBean.mutateAsync({
+              id: finishingBean.id,
+              patch: { finishedAt: new Date().toISOString(), rating, flavorTags },
+            });
+          }}
+        />
       )}
 
       {/* Delete confirms */}
@@ -798,6 +813,22 @@ function BeanCard({
                 terminado{b.finishedAt ? ` ${fmtDmY(b.finishedAt.slice(0, 10))}` : ""}
               </span>
             )}
+            {isFinished && b.rating != null && (
+              <span style={{ fontSize: 11, color: "var(--accent)", fontWeight: 600 }}>
+                ⭐ {b.rating}/10
+              </span>
+            )}
+            {isFinished && b.flavorTags.length > 0 && b.flavorTags.map((t) => (
+              <span
+                key={t}
+                style={{
+                  fontSize: 10.5, padding: "1px 7px", borderRadius: 999,
+                  background: "var(--bg-sunken)", color: "var(--fg-muted)",
+                }}
+              >
+                {t}
+              </span>
+            ))}
             {!isFinished && needsOrder && (
               <button className="btn ghost" style={{ fontSize: 11, padding: "2px 8px", color: "var(--accent)" }}
                 onClick={() => onCreateTask(b)}>
@@ -1330,6 +1361,112 @@ function RecipeModal({ form, isEdit, saving, error, onChange, onStepsChange, onS
         </Field>
       </div>
       <ModalFooter saving={saving} isEdit={isEdit} onSave={onSave} onClose={onClose} saveLabel="receta" />
+    </Modal>
+  );
+}
+
+const FLAVOR_TAG_OPTIONS = [
+  "Floral", "Cítrico", "Frutal", "Achocolatado", "Nuez/Caramelo",
+  "Especiado", "Herbal", "Terroso", "Ácido brillante", "Dulce",
+];
+
+function FinishBeanModal({ bean, onClose, onConfirm }: {
+  bean: CoffeeBean;
+  onClose: () => void;
+  onConfirm: (rating: number | null, flavorTags: string[]) => Promise<void>;
+}) {
+  const [rating, setRating] = useState<number | null>(null);
+  const [tags, setTags] = useState<string[]>([]);
+  const [customTag, setCustomTag] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const toggleTag = (t: string) => {
+    setTags((prev) => (prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]));
+  };
+
+  const addCustomTag = () => {
+    const t = customTag.trim();
+    if (t && !tags.includes(t)) setTags((prev) => [...prev, t]);
+    setCustomTag("");
+  };
+
+  const confirm = async () => {
+    if (saving) return;
+    setSaving(true);
+    setError(null);
+    const finalTags = customTag.trim() && !tags.includes(customTag.trim())
+      ? [...tags, customTag.trim()]
+      : tags;
+    const timeout = new Promise<never>((_, rej) =>
+      setTimeout(() => rej(new Error("Timeout — reintentá si sigue pasando")), 10_000)
+    );
+    try {
+      await Promise.race([onConfirm(rating, finalTags), timeout]);
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo guardar");
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal title={`Marcar "${bean.name}" como terminado`} onClose={onClose}>
+      <Field label="Puntaje (1-10)">
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
+            <button
+              key={n}
+              type="button"
+              className={`btn ${rating === n ? "primary" : "ghost"}`}
+              style={{ width: 34, padding: "4px 0", fontVariantNumeric: "tabular-nums" }}
+              onClick={() => setRating(n)}
+            >
+              {n}
+            </button>
+          ))}
+        </div>
+      </Field>
+
+      <Field label="Sabores (opcional)">
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {FLAVOR_TAG_OPTIONS.map((t) => (
+            <button
+              key={t}
+              type="button"
+              className={`btn ${tags.includes(t) ? "primary" : "ghost"}`}
+              style={{ fontSize: 11.5, padding: "3px 9px", borderRadius: 999 }}
+              onClick={() => toggleTag(t)}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+          <input
+            className="input"
+            placeholder="Agregar sabor propio…"
+            value={customTag}
+            onChange={(e) => setCustomTag(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addCustomTag(); } }}
+            style={{ flex: 1 }}
+          />
+          <button type="button" className="btn ghost" onClick={addCustomTag} disabled={!customTag.trim()}>
+            Agregar
+          </button>
+        </div>
+      </Field>
+
+      {error && (
+        <div style={{ fontSize: 12, color: "var(--danger)" }}>{error}</div>
+      )}
+
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+        <button className="btn" onClick={onClose} disabled={saving}>Cancelar</button>
+        <button className="btn primary" onClick={() => void confirm()} disabled={saving}>
+          {saving ? "Guardando…" : "Marcar terminado"}
+        </button>
+      </div>
     </Modal>
   );
 }

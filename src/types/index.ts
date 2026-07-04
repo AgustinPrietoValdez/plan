@@ -357,6 +357,8 @@ export interface CoffeeBean {
   notaFinal: string; // a donde llegue (al terminarlo)
   lastTweak: CoffeeTweak | null; // ultimo ajuste; salta al brewear este grano
   finishedAt: string | null; // null = activo; ISO = terminado (no tengo mas)
+  rating: number | null; // 1-10, cargado al marcar terminado
+  flavorTags: string[]; // tags de sabor, cargados al marcar terminado
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
