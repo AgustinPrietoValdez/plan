@@ -311,6 +311,42 @@ Perfect Daily Grind. Todas las generalizaciones son tendencias, no universales.)
     molienda **73->70** (palanca de extraccion; temp se mantiene en 94 porque a igual extraccion
     +-2C casi no mueve, Batali 2020). Pendiente re-catar a 70.
 
+#### Potosi - San Juan (La Cabra) -- Colombia, San Juan, Natural
+
+- **Ficha:** roaster La Cabra; productor "Cafe granja" = **Cafe Granja La Esperanza (CGLE)**,
+  Finca Potosi, Caicedonia, Valle del Cauca; tostado 2026-06-11; 250 g. Varietal **San Juan** =
+  cruza propia de Granja entre su Bourbon y Pacamara. Proceso: **"XO Natural"** de CGLE
+  (~50 h de fermentacion en cereza en tanques con temperatura controlada + secado mecanico
+  lento; el clima humedo de Caicedonia no permite natural tradicional). Altitud: no verificada.
+  (La Cabra, pagina del producto, verificado 2026-07-05.)
+- **Perfil esperado:** natural -> acidez mas baja y redonda, dulzor alto, cuerpo pesado, fruta
+  intensa con posible nota a vino/fermento (tabla de proceso, Parte 2). El roaster publica
+  **fruta suave, cacao y acidez "crisp"/jugosa** -- o sea un natural mas limpio que funky
+  (fermentacion controlada, no secado a la intemperie). Esperar mas dulzor/cuerpo y menos
+  brillo que el Monkaaba washed. (Confianza media; ajustar con las catas reales.)
+- **Tueste / TEMP por REPOSO:** La Cabra = claro/nordico, temp por REPOSO (sec 8). roasted_on
+  2026-06-11; a 2026-07-05 = ~24 dias = ~3.4 semanas = **REPOSADO (3-6 sem) -> 94 C** (estandar
+  La Cabra). Ojo natural: si aparece aspereza/amargor, este es el cafe donde SI conviene bajar
+  un toque la temp (nota de ajuste por proceso, Parte 2) antes que en un washed.
+- **Receta recomendada:** la cata se hace con V60. Principal = **Hoffmann Ultimate** (baseline);
+  alternativa = **4:6 de Kasuya con 1er vertido mas chico**.
+  - **Hoffmann (principal):** 30 g : 500 g (1:16.7), agua **94 C** (no 100: reposado + claro,
+    estandar La Cabra), molienda K6 **~80-85 clicks**.
+  - **4:6 (alternativa):** 20 g : 300 g (1:15), **1er vertido mas chico** (menos brillo, cuida
+    el dulzor sin sobre-extraer), 94 C, K6 ~85-90.
+  - Razon: la regla de la guia para natural/honey frutado es "Hoffmann o 4:6 con 1er vertido mas
+    chico (no sobre-extraer)" (sec 7). Lance queda descartada de entrada: su alta agitacion empuja
+    extraccion, y los naturales ya "extraen mas facil" y se van a amargo/fermento (Parte 2).
+  - **Molienda:** el principio de Parte 2 dice arrancar "un toque mas grueso" que un washed ->
+    ancla V60 washed = 80 clicks, asi que 80-85 (+3-5). PERO el Monkaaba (mismo roaster, washed)
+    salio sub-extraido incluso a 73-80, asi que NO arrancar mas grueso que 85: probar 80-82 y
+    diagnosticar. Dos fuerzas opuestas (natural extrae facil vs tueste nordico cuesta extraer):
+    que decida la taza.
+- **Diagnostico rapido (Coffee Compass):** agrio/plano -> mas fino (temp quieta en 94);
+  amargo/aspero/fermento pesado -> mas grueso o bajar a 92. Mover una palanca por vez.
+- **Catas y ajustes:** (pendiente -- aun no catado; sin cata_inicial ni brews en la app al
+  2026-07-05).
+
 _Los proximos cafes se agregan abajo con el mismo formato (ficha, perfil esperado, receta
 recomendada con molienda+temp, diagnostico, catas)._
 
