@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useEvents, useCreateEvent, usePatchEvent, useDeleteEvent, useCategories, useProjects } from "../lib/queries";
 import { useApp } from "../lib/store";
 import { colorsForCategory } from "../lib/categoryColor";
+import { todayYmd } from "../lib/date";
 import { vars } from "../lib/style";
 import { IX, ITrash, ICal } from "./icons";
 
@@ -48,7 +49,7 @@ export function EventEditor(props: Props) {
       ? (eventsQ.data ?? []).find((e) => e.id === props.eventId) ?? null
       : null;
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayYmd();
 
   const [title, setTitle] = useState(existing?.title ?? "");
   const [day, setDay] = useState(

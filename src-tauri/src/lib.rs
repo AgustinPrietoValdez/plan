@@ -467,14 +467,18 @@ fn launch_coffee_analysis(
 
     // 4) abrir PowerShell visible, en el dir del repo. SIN -NoExit: cuando termina la
     //    sesion de claude, la ventana se cierra sola.
-    let mut cmd = std::process::Command::new("powershell");
-    cmd.args(["-ExecutionPolicy", "Bypass", "-File"])
+    // Nota: en el build debug (console-subsystem) CREATE_NEW_CONSOLE hereda los
+    // handles de stdio del padre en vez de asignar unos nuevos, asi que la ventana
+    // se abre vacia. Por eso se lanza via `cmd /C start` (que si asigna consola
+    // propia a powershell) y se le pone CREATE_NO_WINDOW al cmd intermedio.
+    let mut cmd = std::process::Command::new("cmd");
+    cmd.args(["/C", "start", "", "powershell", "-ExecutionPolicy", "Bypass", "-File"])
         .arg(&ps1_path)
         .current_dir(&repo_path);
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x00000010); // CREATE_NEW_CONSOLE -> ventana propia visible
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW (solo para el cmd wrapper)
     }
     cmd.spawn().map_err(|e| e.to_string())?;
     Ok(())
@@ -512,15 +516,16 @@ fn launch_coffee_question(
     let script = format!("claude @'\n{}\n'@\n", prompt);
     std::fs::write(&ps1_path, script).map_err(|e| e.to_string())?;
 
-    // 4) abrir PowerShell visible, en el dir del repo.
-    let mut cmd = std::process::Command::new("powershell");
-    cmd.args(["-ExecutionPolicy", "Bypass", "-File"])
+    // 4) abrir PowerShell visible, en el dir del repo (ver nota en launch_coffee_analysis
+    //    sobre por que se usa `cmd /C start` en vez de CREATE_NEW_CONSOLE directo).
+    let mut cmd = std::process::Command::new("cmd");
+    cmd.args(["/C", "start", "", "powershell", "-ExecutionPolicy", "Bypass", "-File"])
         .arg(&ps1_path)
         .current_dir(&repo_path);
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x00000010); // CREATE_NEW_CONSOLE -> ventana propia visible
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW (solo para el cmd wrapper)
     }
     cmd.spawn().map_err(|e| e.to_string())?;
     Ok(())

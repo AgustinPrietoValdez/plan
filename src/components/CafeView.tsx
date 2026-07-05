@@ -333,7 +333,12 @@ export function CafeView() {
               // Reactivar reinicia el descanso: cuenta desde hoy, no desde el tueste original.
               patchBean.mutate({ id: b.id, patch: { finishedAt: null, roastedOn: todayYmd(), weightGrams: Number.isFinite(g) && g > 0 ? g : b.weightGrams } });
             }}
-            onAnalizar={(b) => void analyzeCoffee(b)}
+            onAnalizar={(b) => {
+              analyzeCoffee(b).catch((err) => {
+                console.error("[CafeView] analyzeCoffee failed:", err);
+                window.alert(`No se pudo lanzar el analisis: ${err instanceof Error ? err.message : String(err)}`);
+              });
+            }}
             onAskAboutBrew={(b) => { setAskBrewText(""); setAskBrewBean(b); }}
           />
         )}
@@ -393,7 +398,10 @@ export function CafeView() {
               className="btn primary"
               disabled={!askBrewText.trim()}
               onClick={() => {
-                void askAboutBrew(askBrewBean, lastBrewFor(askBrewBean.id), askBrewText.trim());
+                askAboutBrew(askBrewBean, lastBrewFor(askBrewBean.id), askBrewText.trim()).catch((err) => {
+                  console.error("[CafeView] askAboutBrew failed:", err);
+                  window.alert(`No se pudo lanzar la consulta: ${err instanceof Error ? err.message : String(err)}`);
+                });
                 setAskBrewBean(null);
               }}
             >

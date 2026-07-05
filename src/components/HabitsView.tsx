@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import { categoryFor } from "../lib/categoryFor";
 import { colorsForCategory } from "../lib/categoryColor";
-import { addDays, DOW_MINI, fromYmd, todayYmd, ymd } from "../lib/date";
+import { addDays, DOW_MINI, fromYmd, ymd } from "../lib/date";
+import { useToday } from "../lib/useToday";
 import { formatRule, isExpectedDay, nextOccurrence, previousOccurrence } from "../lib/recurrence";
 import {
   useCategories,
@@ -77,7 +78,7 @@ export function HabitsView() {
   const { openCompletion } = useApp();
 
   const [viewMonth, setViewMonth] = useState<string>(todayMonthKey);
-  const today = todayYmd();
+  const today = useToday();
 
   const [year, monthNum] = viewMonth.split("-").map(Number);
   const monthIndex = monthNum - 1;

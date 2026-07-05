@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { colorsForHue } from "../lib/categoryColor";
 import { useSession } from "../lib/auth";
-import { fromYmd, shiftMonth } from "../lib/date";
+import { fromYmd, shiftMonth, todayYmd } from "../lib/date";
 import { CURRENCY, convertViaUsd, DEFAULT_RATES_PER_USD, fmtMoney, fmtMoneyIn, parseMoney } from "../lib/money";
 import { formatRule } from "../lib/recurrence";
 import { useMaterializeRecurringExpenses } from "../lib/materializeRecurringExpenses";
@@ -720,7 +720,7 @@ export function BudgetView() {
         <button className="icon-btn" onClick={() => setBudgetMonth(shiftMonth(budgetMonth, 1))} title="Next month">
           <IChevR size={15} />
         </button>
-        <button className="btn" onClick={() => openExpenseCreate({ spentOn: new Date().toISOString().slice(0, 10) })}>
+        <button className="btn" onClick={() => openExpenseCreate({ spentOn: todayYmd() })}>
           <IPlus size={12} /> Expense
         </button>
         <button className="btn ghost" onClick={openBudgetManager}>Edit budgets</button>
