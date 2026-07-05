@@ -29,11 +29,14 @@ const isMobile =
 
 type FreshnessStatus = "unknown" | "too-fresh" | "in-range" | "limit" | "stale";
 
-function freshnessStatus(roastedOn: string | null): FreshnessStatus {
+// `asOf` congela el conteo: para un grano terminado se pasa la fecha en que
+// se termino (no la fecha real de hoy), asi el descanso deja de sumar dias
+// mientras el grano esta archivado.
+function freshnessStatus(roastedOn: string | null, asOf: string = todayYmd()): FreshnessStatus {
   if (!roastedOn) return "unknown";
-  const today = fromYmd(todayYmd());
+  const ref = fromYmd(asOf);
   const roasted = fromYmd(roastedOn);
-  const days = Math.floor((today.getTime() - roasted.getTime()) / 86_400_000);
+  const days = Math.floor((ref.getTime() - roasted.getTime()) / 86_400_000);
   if (days < 0) return "unknown";
   if (days < 21) return "too-fresh";
   if (days <= 42) return "in-range";
@@ -41,11 +44,11 @@ function freshnessStatus(roastedOn: string | null): FreshnessStatus {
   return "stale";
 }
 
-function daysOld(roastedOn: string | null): number | null {
+function daysOld(roastedOn: string | null, asOf: string = todayYmd()): number | null {
   if (!roastedOn) return null;
-  const today = fromYmd(todayYmd());
+  const ref = fromYmd(asOf);
   const roasted = fromYmd(roastedOn);
-  return Math.floor((today.getTime() - roasted.getTime()) / 86_400_000);
+  return Math.floor((ref.getTime() - roasted.getTime()) / 86_400_000);
 }
 
 function fmtDmY(ymd: string): string {
@@ -327,7 +330,8 @@ export function CafeView() {
               const inp = window.prompt(`Reactivar "${b.name}". Gramos de stock nuevo:`, "250");
               if (inp == null) return;
               const g = parseFloat(inp.replace(",", "."));
-              patchBean.mutate({ id: b.id, patch: { finishedAt: null, weightGrams: Number.isFinite(g) && g > 0 ? g : b.weightGrams } });
+              // Reactivar reinicia el descanso: cuenta desde hoy, no desde el tueste original.
+              patchBean.mutate({ id: b.id, patch: { finishedAt: null, roastedOn: todayYmd(), weightGrams: Number.isFinite(g) && g > 0 ? g : b.weightGrams } });
             }}
             onAnalizar={(b) => void analyzeCoffee(b)}
             onAskAboutBrew={(b) => { setAskBrewText(""); setAskBrewBean(b); }}
@@ -764,10 +768,11 @@ function BeanCard({
   onAnalizar: (b: CoffeeBean) => void;
   onAskAboutBrew: (b: CoffeeBean) => void;
 }) {
-  const status = freshnessStatus(b.roastedOn);
-  const days = daysOld(b.roastedOn);
-  const color = FRESHNESS_COLOR[status];
   const isFinished = !!b.finishedAt;
+  const asOf = isFinished && b.finishedAt ? b.finishedAt.slice(0, 10) : todayYmd();
+  const status = freshnessStatus(b.roastedOn, asOf);
+  const days = daysOld(b.roastedOn, asOf);
+  const color = FRESHNESS_COLOR[status];
 
   return (
     <div style={{
@@ -1419,7 +1424,7 @@ function FinishBeanModal({ bean, onClose, onConfirm }: {
               key={n}
               type="button"
               className={`btn ${rating === n ? "primary" : "ghost"}`}
-              style={{ width: 34, padding: "4px 0", fontVariantNumeric: "tabular-nums" }}
+              style={{ width: 34, padding: "4px 0", fontVariantNumeric: "tabular-nums", justifyContent: "center" }}
               onClick={() => setRating(n)}
             >
               {n}
