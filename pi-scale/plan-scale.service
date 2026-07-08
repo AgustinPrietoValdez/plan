@@ -1,0 +1,22 @@
+[Unit]
+Description=Plan app - captura automatica de brews via balanza BLE
+# hciuart.service es el que attachea el chip BLE onboard de la Pi (UART) a
+# BlueZ; bluetooth.target solo garantiza que el target fue "alcanzado", no
+# que el adaptador ya este registrado -> sin esto el primer intento de scan
+# tras bootear puede pegar "No Bluetooth adapters found" (el propio backoff
+# de scale_ble.py lo reintenta solo, pero esto reduce que pase).
+After=hciuart.service bluetooth.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=prieto
+SupplementaryGroups=bluetooth
+WorkingDirectory=/home/prieto/Documents/pi-scale
+EnvironmentFile=/home/prieto/Documents/pi-scale/.env
+ExecStart=/home/prieto/Documents/pi-scale/venv/bin/python /home/prieto/Documents/pi-scale/main.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

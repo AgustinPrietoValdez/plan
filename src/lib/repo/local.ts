@@ -49,6 +49,7 @@ import type {
   AccountCreate,
   AccountTransferCreate,
   AccountTransferPatch,
+  BrewSessionAssign,
   BrewSessionCreate,
   BudgetUpsert,
   CategoryCreate,
@@ -2979,6 +2980,57 @@ export const localRepo: Repo = {
       updated_at: session.updatedAt, deleted_at: null, version: 1,
     });
     return session;
+  },
+
+  /** Asigna grano/receta a una sesion capturada por el Pi (recipe_id/bean_id
+   *  llegaron null). Edicion normal por outbox: el pull ya trajo la sesion
+   *  con sus datapoints, asi que solo se tocan las columnas de asignacion y
+   *  se reencola la fila COMPLETA (datapoints incluidos) porque el server
+   *  aplica "update" como upsert de la fila entera, no un patch parcial. */
+  async assignBrewSession(id: string, input: BrewSessionAssign) {
+    const userId = await requireUserId();
+    const db = await getDb();
+    interface Row {
+      id: string; recipe_id: string | null; recipe_name: string;
+      bean_id: string | null; bean_name: string; dose_grams: number;
+      total_water_grams: number; duration_ms: number; notes: string;
+      datapoints: string;
+      created_at: string; updated_at: string; deleted_at: string | null; version: number;
+    }
+    const rows = await db.select<Row[]>(
+      "SELECT * FROM brew_sessions WHERE id = ? AND user_id = ? AND deleted_at IS NULL LIMIT 1",
+      [id, userId],
+    );
+    if (!rows[0]) throw new Error(`BrewSession ${id} not found`);
+    const existing = rows[0];
+    const updatedAt = now();
+    const version = existing.version + 1;
+    const recipeId = input.recipeId ?? null;
+    const recipeName = input.recipeName ?? "";
+    const doseGrams = input.doseGrams ?? existing.dose_grams;
+
+    await db.execute(
+      `UPDATE brew_sessions SET recipe_id = ?, recipe_name = ?, bean_id = ?, bean_name = ?,
+         dose_grams = ?, updated_at = ?, version = ?
+       WHERE id = ? AND user_id = ?`,
+      [recipeId, recipeName, input.beanId, input.beanName, doseGrams, updatedAt, version, id, userId],
+    );
+
+    await enqueue(userId, "update", "brew_sessions", id, {
+      id: existing.id, user_id: userId, recipe_id: recipeId, recipe_name: recipeName,
+      bean_id: input.beanId, bean_name: input.beanName, dose_grams: doseGrams,
+      total_water_grams: existing.total_water_grams, duration_ms: existing.duration_ms,
+      notes: existing.notes, datapoints: existing.datapoints,
+      created_at: existing.created_at, updated_at: updatedAt,
+      deleted_at: null, version,
+    });
+
+    return {
+      id: existing.id, recipeId, recipeName, beanId: input.beanId, beanName: input.beanName,
+      doseGrams, totalWaterGrams: existing.total_water_grams, durationMs: existing.duration_ms,
+      notes: existing.notes, createdAt: existing.created_at, updatedAt,
+      deletedAt: null, version,
+    } as BrewSession;
   },
 
   async addBrewDatapoints(

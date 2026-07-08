@@ -8,6 +8,7 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { useEffect, useMemo, useState } from "react";
+import { BrewAssignModal } from "./components/BrewAssignModal";
 import { BudgetManager } from "./components/BudgetManager";
 import { BudgetView } from "./components/BudgetView";
 import { AhorrosView } from "./components/finanzas/AhorrosView";
@@ -384,6 +385,7 @@ function App() {
           onSwitchToTask={() => { closeEventEditor(); openCreate({}); }}
         />
       )}
+      {!modalOpen && <BrewAssignModal />}
     </DndContext>
   );
 }

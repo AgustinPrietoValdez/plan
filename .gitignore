@@ -55,6 +55,10 @@ AI.md
 
 __pycache__/
 
+# Pi scale service: local test/bench captures, not code
+pi-scale/captures/
+pi-scale/venv/
+
 # Claude worktrees + Supabase CLI temp state
 .claude/
 supabase/.temp/

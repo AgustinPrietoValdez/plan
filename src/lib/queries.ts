@@ -32,6 +32,7 @@ import {
   type FinanzasSettingsUpsert,
   type NetWorthSnapshotUpsert,
   type TaskCreate, type TaskPatch,
+  type BrewSessionAssign,
   type BrewSessionCreate,
 } from "./repo";
 
@@ -1053,6 +1054,25 @@ export function useCreateBrewSession() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: BrewSessionCreate) => repo.createBrewSession(input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.brewSessions }),
+  });
+}
+
+/** Sesiones que llegaron del Pi sin grano/receta asignados. Un session
+ *  creado por la app siempre trae recipeId (el brew guiado exige elegir
+ *  receta), asi que ambos null es inequivoco: viene de la captura automatica.
+ *  recipeId solo (sin bean) no cuenta como pendiente: el usuario puede optar
+ *  por no asignar receta y no queremos re-preguntarle cada vez. */
+export function usePendingBrewSessions() {
+  const { data: sessions = [] } = useBrewSessions();
+  return sessions.filter((s) => s.recipeId === null && s.beanId === null);
+}
+
+export function useAssignBrewSession() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, input }: { id: string; input: BrewSessionAssign }) =>
+      repo.assignBrewSession(id, input),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.brewSessions }),
   });
 }

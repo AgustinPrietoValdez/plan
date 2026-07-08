@@ -56,7 +56,7 @@ python C:\Users\agusp\Documentos\Organization_App\calendar-app\tools\plan_cli.py
 python C:\Users\agusp\Documentos\Organization_App\calendar-app\tools\plan_cli.py complete "tuning"
 ```
 
-Scripts de import/automatizacion (job-search): `C:\Users\agusp\job-search\plan-import\`
+Scripts de import/automatizacion (job-search): `C:\Users\agusp\Documentos\job-search\plan-import\`
 (`read_tasks.py` es solo lectura; el resto escribe).
 
 ## Reglas de oro
@@ -83,6 +83,6 @@ Scripts de import/automatizacion (job-search): `C:\Users\agusp\job-search\plan-i
 | App (source) | `C:\Users\agusp\Documentos\Organization_App\calendar-app` |
 | DB | `%APPDATA%\com.agusp.calendarapp\calendar.db` |
 | CLI de tareas | `C:\Users\agusp\Documentos\Organization_App\calendar-app\tools\plan_cli.py` |
-| Scripts import | `C:\Users\agusp\job-search\plan-import\` |
+| Scripts import | `C:\Users\agusp\Documentos\job-search\plan-import\` |
 | Guia Obsidian | `Documentos\Notas\Guides\Plan_app_guide.md` |
 | Notas de Claude | `AI.md` (junto a este archivo, no va a git) |

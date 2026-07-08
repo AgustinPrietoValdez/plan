@@ -415,7 +415,7 @@ function fmtDuration(ms: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
-function BrewOverlayChart({
+export function BrewOverlayChart({
   sessions,
   dataBySession,
   maxWeight,

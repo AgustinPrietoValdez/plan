@@ -56,5 +56,6 @@ export type {
   NetWorthSnapshotUpsert,
   TaskCreate,
   TaskPatch,
+  BrewSessionAssign,
   BrewSessionCreate,
 } from "./types";

@@ -192,6 +192,16 @@ export type BrewSessionCreate = {
   datapoints?: Omit<BrewDatapoint, "id" | "sessionId">[];
 };
 
+/** Asigna grano/receta a una sesion capturada por el Pi (recipeId/beanId
+ *  llegan null). doseGrams es opcional porque la Pi no la conoce. */
+export type BrewSessionAssign = {
+  beanId: string;
+  beanName: string;
+  recipeId?: string | null;
+  recipeName?: string;
+  doseGrams?: number;
+};
+
 export type AutomationCreate = Pick<Automation, "name" | "kind"> & {
   projectId?: string | null;
   config?: Record<string, unknown>;
@@ -384,6 +394,7 @@ export interface Repo {
 
   listBrewSessions(recipeId?: string): Promise<BrewSession[]>;
   createBrewSession(input: BrewSessionCreate): Promise<BrewSession>;
+  assignBrewSession(id: string, input: BrewSessionAssign): Promise<BrewSession>;
   addBrewDatapoints(sessionId: string, points: Omit<BrewDatapoint, "id" | "sessionId">[]): Promise<void>;
   getBrewDatapoints(sessionId: string): Promise<BrewDatapoint[]>;
   deleteBrewSession(id: string): Promise<void>;
