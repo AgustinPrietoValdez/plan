@@ -1265,8 +1265,11 @@ function PlanPanel() {
     });
     const need = aggregateNeed(planEntries);
     const needByCategory = aggregateCategoryNeed(planEntries);
-    // subtract what's already at home (inventory)
+    // subtract what's already at home (inventory) — skip lots that already
+    // expired, since spoiled-but-undeleted stock isn't actually usable
+    const today = todayYmd();
     for (const row of inventoryQ.data ?? []) {
+      if (row.expiresOn && row.expiresOn < today) continue;
       if (need.has(row.ingredientId)) {
         need.set(row.ingredientId, Math.max(0, (need.get(row.ingredientId) ?? 0) - row.quantity));
       }

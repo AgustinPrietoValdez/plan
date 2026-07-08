@@ -25,29 +25,41 @@ export function useLogMeal() {
   const inventoryQ = useInventory();
 
   return async (recipe: Recipe, cookedServings: number, eatenServings: number, slot: MealSlot, eatenOn: string) => {
+    // Consume ingredients FIRST, log the meal LAST: if the app is killed
+    // partway through, worst case is inventory already deducted with no log
+    // entry yet (re-runnable/harmless) rather than a log claiming the full
+    // recipe was cooked while some ingredients were never deducted.
+    if (cookedServings > 0) {
+      const ris = (riQ.data ?? []).filter((ri) => ri.recipeId === recipe.id);
+      const factor = recipe.servings > 0 ? cookedServings / recipe.servings : 1;
+      // Local running quantities per lot, updated as each recipe_ingredient row
+      // consumes — a snapshot read once and never updated would let a second
+      // row for the same ingredient overwrite the first row's deduction.
+      const remainingByLot = new Map<string, number>();
+      for (const l of inventoryQ.data ?? []) remainingByLot.set(l.id, l.quantity);
+
+      for (const ri of ris) {
+        let need = ri.quantity * factor;
+        if (need <= 0) continue;
+        const lots = (inventoryQ.data ?? [])
+          .filter((l) => l.ingredientId === ri.ingredientId)
+          .sort((a, b) => (a.expiresOn ?? "9999").localeCompare(b.expiresOn ?? "9999"));
+        for (const lot of lots) {
+          if (need <= 0) break;
+          const available = remainingByLot.get(lot.id) ?? lot.quantity;
+          if (available <= 0) continue;
+          const take = Math.min(available, need);
+          need -= take;
+          const remaining = available - take;
+          remainingByLot.set(lot.id, remaining);
+          if (remaining <= 0.0001) await deleteInventory.mutateAsync(lot.id);
+          else await patchInventory.mutateAsync({ id: lot.id, patch: { quantity: remaining } });
+        }
+      }
+    }
     // meal_log records what was eaten (drives plan progress)
     if (eatenServings > 0) {
       await createMealLog.mutateAsync({ eatenOn, mealSlot: slot, recipeId: recipe.id, servings: eatenServings });
-    }
-    // ingredients are consumed by what was cooked
-    if (cookedServings <= 0) return;
-    const ris = (riQ.data ?? []).filter((ri) => ri.recipeId === recipe.id);
-    const factor = recipe.servings > 0 ? cookedServings / recipe.servings : 1;
-    const inv = inventoryQ.data ?? [];
-    for (const ri of ris) {
-      let need = ri.quantity * factor;
-      if (need <= 0) continue;
-      const lots = inv
-        .filter((l) => l.ingredientId === ri.ingredientId)
-        .sort((a, b) => (a.expiresOn ?? "9999").localeCompare(b.expiresOn ?? "9999"));
-      for (const lot of lots) {
-        if (need <= 0) break;
-        const take = Math.min(lot.quantity, need);
-        need -= take;
-        const remaining = lot.quantity - take;
-        if (remaining <= 0.0001) await deleteInventory.mutateAsync(lot.id);
-        else await patchInventory.mutateAsync({ id: lot.id, patch: { quantity: remaining } });
-      }
     }
   };
 }

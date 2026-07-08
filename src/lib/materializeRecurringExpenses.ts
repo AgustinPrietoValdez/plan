@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { useCreateExpense, useExpenses } from "./queries";
+import { useCreateExpense, useExpenses, usePatchExpense } from "./queries";
 import { nextOccurrence } from "./recurrence";
 import { todayYmd } from "./date";
 
@@ -9,6 +9,7 @@ import { todayYmd } from "./date";
 export function useMaterializeRecurringExpenses(userId: string | undefined) {
   const expensesQ = useExpenses();
   const create = useCreateExpense();
+  const patch = usePatchExpense();
   const ranRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -55,7 +56,10 @@ export function useMaterializeRecurringExpenses(userId: string | undefined) {
           if (haveDates.has(next)) continue;
 
           // Materialize new instance from the most-recent's data, with rule
-          // moved forward to it. Clear rule from `mostRecent` (freeze prev).
+          // moved forward to it, THEN clear the rule from `mostRecent` (freeze
+          // prev) — created first so an interruption between the two never
+          // loses the rule (same fix as the habit chain bug: the rule only
+          // ever lives on one active instance).
           await create.mutateAsync({
             name: mostRecent.name,
             amount: mostRecent.amount,
@@ -66,6 +70,9 @@ export function useMaterializeRecurringExpenses(userId: string | undefined) {
             recurrence: mostRecent.recurrence,
             recurrenceParentId: root,
           });
+          if (mostRecent.recurrence) {
+            await patch.mutateAsync({ id: mostRecent.id, patch: { recurrence: null } });
+          }
           haveDates.add(next);
           // (We don't update `mostRecent` to the just-created instance because
           // create.mutateAsync returns it but invalidation will refresh the
@@ -74,5 +81,5 @@ export function useMaterializeRecurringExpenses(userId: string | undefined) {
         }
       }
     })();
-  }, [userId, expensesQ.data, expensesQ.isLoading, expensesQ.isFetching, create]);
+  }, [userId, expensesQ.data, expensesQ.isLoading, expensesQ.isFetching, create, patch]);
 }

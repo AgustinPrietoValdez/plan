@@ -122,6 +122,48 @@ export function useCompleteTask() {
   const create = useCreateTask();
   const habitLog = useUpsertHabitLog();
   return async (task: Task, actualDuration: number) => {
+    // Create the next occurrence BEFORE freezing this one. If the app gets
+    // killed partway through, worst case is a harmless duplicate instance —
+    // never a dead chain (the old bug: freeze-then-create meant a crash
+    // between the two steps permanently lost the recurrence rule, since it
+    // only ever lives on the single active instance).
+    if (task.recurrence && task.day) {
+      const { nextOccurrence } = await import("./recurrence");
+      const nextDay = nextOccurrence(task.recurrence, task.day);
+      if (nextDay) {
+        const parentId = task.recurrenceParentId ?? task.id;
+        // Idempotency guard: if a prior attempt already created the next
+        // occurrence (e.g. the app was killed right after that create but
+        // before this instance got frozen, and the user is completing it
+        // again after relaunch), don't create a second sibling — that would
+        // fork the chain into two parallel copies that both keep advancing.
+        const siblings = await repo.listTasks();
+        const alreadyExists = siblings.some(
+          (t) =>
+            !t.deletedAt &&
+            t.day === nextDay &&
+            (t.recurrenceParentId ?? t.id) === parentId,
+        );
+        if (!alreadyExists) {
+          await create.mutateAsync({
+            title: task.title,
+            projectId: task.projectId,
+            categoryId: task.categoryId,
+            priority: task.priority,
+            duration: task.duration,
+            day: nextDay,
+            due: null,
+            recurring: true,
+            recurrence: task.recurrence,
+            recurrenceParentId: parentId,
+            notes: task.notes,
+            subtasks: task.subtasks.map((s) => ({ ...s, done: false })),
+            isHabit: task.isHabit,
+          });
+        }
+      }
+    }
+
     await patch.mutateAsync({
       id: task.id,
       patch: {
@@ -137,29 +179,6 @@ export function useCompleteTask() {
     if (task.isHabit && task.day) {
       const habitTaskId = task.recurrenceParentId ?? task.id;
       await habitLog.mutateAsync({ taskId: habitTaskId, day: task.day, done: true });
-    }
-
-    if (task.recurrence && task.day) {
-      const { nextOccurrence } = await import("./recurrence");
-      const nextDay = nextOccurrence(task.recurrence, task.day);
-      if (nextDay) {
-        const parentId = task.recurrenceParentId ?? task.id;
-        await create.mutateAsync({
-          title: task.title,
-          projectId: task.projectId,
-          categoryId: task.categoryId,
-          priority: task.priority,
-          duration: task.duration,
-          day: nextDay,
-          due: null,
-          recurring: true,
-          recurrence: task.recurrence,
-          recurrenceParentId: parentId,
-          notes: task.notes,
-          subtasks: task.subtasks.map((s) => ({ ...s, done: false })),
-          isHabit: task.isHabit,
-        });
-      }
     }
   };
 }

@@ -171,6 +171,30 @@ export function useRealtimeSync(userId: string | undefined) {
           if (row) void applyRealtime("compras_settings", row, qc);
         },
       )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "events", filter: `user_id=eq.${userId}` },
+        (payload) => {
+          const row = (payload.new ?? payload.old) as Record<string, unknown> | null;
+          if (row) void applyRealtime("events", row, qc);
+        },
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "expense_line_items", filter: `user_id=eq.${userId}` },
+        (payload) => {
+          const row = (payload.new ?? payload.old) as Record<string, unknown> | null;
+          if (row) void applyRealtime("expense_line_items", row, qc);
+        },
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "automations", filter: `user_id=eq.${userId}` },
+        (payload) => {
+          const row = (payload.new ?? payload.old) as Record<string, unknown> | null;
+          if (row) void applyRealtime("automations", row, qc);
+        },
+      )
       .subscribe();
 
     return () => {

@@ -32,7 +32,10 @@ type Entity =
   | "net_worth_snapshots"
   | "coffee_beans"
   | "coffee_recipes"
-  | "brew_sessions";
+  | "brew_sessions"
+  | "events"
+  | "expense_line_items"
+  | "automations";
 
 interface OutboxRow {
   id: number;
@@ -97,12 +100,20 @@ export async function drainOutbox(userId: string): Promise<void> {
   }
   drainInFlight = true;
   setStatus("syncing");
+  // Rows that failed with a non-network error THIS pass — skipped so they
+  // don't block every later, unrelated row behind them; still retried on the
+  // next drainOutbox call (each call re-queries, so a skip here isn't final).
+  const skipIds: number[] = [];
+  let anyNonNetworkError = false;
   try {
     const db = await getDb();
     while (true) {
+      const placeholders = skipIds.map(() => "?").join(",");
       const rows = await db.select<OutboxRow[]>(
-        "SELECT * FROM outbox WHERE user_id = ? ORDER BY id ASC LIMIT 1",
-        [userId],
+        `SELECT * FROM outbox WHERE user_id = ?${
+          skipIds.length ? ` AND id NOT IN (${placeholders})` : ""
+        } ORDER BY id ASC LIMIT 1`,
+        [userId, ...skipIds],
       );
       const row = rows[0];
       if (!row) break;
@@ -121,17 +132,19 @@ export async function drainOutbox(userId: string): Promise<void> {
           setStatus("offline");
           return;
         }
-        // Otherwise the row is stuck — drop it after 5 attempts to avoid
-        // blocking the queue, log a warning so the user notices.
+        // Otherwise the row is stuck — drop it after 5 attempts, otherwise
+        // skip it for the rest of THIS pass so it doesn't block every other
+        // pending row (it's retried again on the next drainOutbox call).
         if (row.attempts + 1 >= 5) {
           console.error("Giving up on outbox row after 5 attempts:", row, e);
           await db.execute("DELETE FROM outbox WHERE id = ?", [row.id]);
         } else {
-          throw e;
+          anyNonNetworkError = true;
+          skipIds.push(row.id);
         }
       }
     }
-    setStatus("idle");
+    setStatus(anyNonNetworkError ? "error" : "idle");
   } catch (e) {
     console.error("drainOutbox failed:", e);
     setStatus("error");
@@ -210,6 +223,9 @@ export async function pullDeltas(userId: string, qc: QueryClient): Promise<void>
     try { any = (await pullEntity(userId, "coffee_beans")) || any; } catch (e) { console.warn("coffee_beans pull skipped:", e); }
     try { any = (await pullEntity(userId, "coffee_recipes")) || any; } catch (e) { console.warn("coffee_recipes pull skipped:", e); }
     try { any = (await pullEntity(userId, "brew_sessions")) || any; } catch (e) { console.warn("brew_sessions pull skipped:", e); }
+    try { any = (await pullEntity(userId, "events")) || any; } catch (e) { console.warn("events pull skipped:", e); }
+    try { any = (await pullEntity(userId, "expense_line_items")) || any; } catch (e) { console.warn("expense_line_items pull skipped:", e); }
+    try { any = (await pullEntity(userId, "automations")) || any; } catch (e) { console.warn("automations pull skipped:", e); }
     if (any) {
       qc.invalidateQueries({ queryKey: ["tasks"] });
       qc.invalidateQueries({ queryKey: ["projects"] });
@@ -242,7 +258,10 @@ export async function pullDeltas(userId: string, qc: QueryClient): Promise<void>
     }
     if (currentStatus === "syncing") setStatus("idle");
   } catch (e) {
-    console.error("pullDeltas failed:", e);
+    const detail = e instanceof Error
+      ? { name: e.name, message: e.message, stack: e.stack, ...(e as unknown as Record<string, unknown>) }
+      : e;
+    console.error("pullDeltas failed:", JSON.stringify(detail));
     if (isNetworkError(e)) setStatus("offline");
     else setStatus("error");
   } finally {
@@ -610,6 +629,46 @@ async function upsertLocal(
         }
       }
     }
+  } else if (entity === "events") {
+    await db.execute(
+      `INSERT OR REPLACE INTO events
+        (id, user_id, title, day, start_time, end_time, location,
+         notify_minutes_before, notes, category_id, project_id,
+         created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        row.id, row.user_id, row.title ?? "", row.day, row.start_time ?? null,
+        row.end_time ?? null, row.location ?? "", row.notify_minutes_before ?? null,
+        row.notes ?? "", row.category_id ?? null, row.project_id ?? null,
+        row.created_at, row.updated_at, row.deleted_at, row.version,
+      ],
+    );
+  } else if (entity === "expense_line_items") {
+    await db.execute(
+      `INSERT OR REPLACE INTO expense_line_items
+        (id, user_id, expense_id, name, quantity, unit_price,
+         created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        row.id, row.user_id, row.expense_id, row.name ?? "",
+        row.quantity ?? 1, row.unit_price ?? 0,
+        row.created_at, row.updated_at, row.deleted_at, row.version,
+      ],
+    );
+  } else if (entity === "automations") {
+    await db.execute(
+      `INSERT OR REPLACE INTO automations
+        (id, user_id, project_id, name, kind, config, trigger, schedule,
+         enabled, notes, last_run_at, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        row.id, row.user_id, row.project_id ?? null, row.name ?? "", row.kind ?? "",
+        typeof row.config === "string" ? row.config : JSON.stringify(row.config ?? {}),
+        row.trigger ?? "manual", row.schedule ?? null,
+        row.enabled ? 1 : 0, row.notes ?? "", row.last_run_at ?? null,
+        row.created_at, row.updated_at, row.deleted_at, row.version,
+      ],
+    );
   }
 }
 

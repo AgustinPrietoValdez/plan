@@ -24,6 +24,15 @@ export function fromYmd(s: string): Date {
   return new Date(y, m - 1, d);
 }
 
+/** Whole calendar days between two dates, DST-safe (compares UTC-normalized
+ *  midnights so a spring-forward/fall-back between them never skews the count
+ *  the way dividing a raw ms difference by 86_400_000 would). */
+export function daysBetween(a: Date, b: Date): number {
+  const utcA = Date.UTC(a.getFullYear(), a.getMonth(), a.getDate());
+  const utcB = Date.UTC(b.getFullYear(), b.getMonth(), b.getDate());
+  return Math.round((utcB - utcA) / 86_400_000);
+}
+
 export function sameDay(a: Date, b: Date): boolean {
   return (
     a.getFullYear() === b.getFullYear() &&

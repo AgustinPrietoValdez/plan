@@ -281,6 +281,10 @@ export interface Repo {
   createAccount(input: AccountCreate): Promise<Account>;
   patchAccount(id: string, patch: AccountPatch): Promise<Account>;
   deleteAccount(id: string): Promise<void>;
+  /** Recompute each account's balance from openingBalance + the ledger
+   *  (expenses/incomes/transfers) since balanceAsOf, and self-heal any drift
+   *  found (e.g. from a process kill mid-write). Safe to call repeatedly. */
+  reconcileAccountBalances(): Promise<void>;
 
   listAccountTransfers(): Promise<AccountTransfer[]>;
   createAccountTransfer(input: AccountTransferCreate): Promise<AccountTransfer>;

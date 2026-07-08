@@ -13,7 +13,7 @@ import {
   useBrewSessions,
   useDeleteBrewSession,
 } from "../lib/queries";
-import { addDays, fromYmd, todayYmd, ymd } from "../lib/date";
+import { addDays, daysBetween, fromYmd, todayYmd, ymd } from "../lib/date";
 import type { CoffeeBean, CoffeeRecipe, CoffeeRecipeStep, CoffeeStepType, WaterMode, BrewSession, BrewDatapoint } from "../types";
 import type { CoffeeBeanCreate, CoffeeRecipeCreate } from "../lib/repo";
 import { IPlus, ITrash, IChevD, IChevU, IX } from "./icons";
@@ -31,9 +31,7 @@ type FreshnessStatus = "unknown" | "too-fresh" | "in-range" | "limit" | "stale";
 
 function freshnessStatus(roastedOn: string | null): FreshnessStatus {
   if (!roastedOn) return "unknown";
-  const today = fromYmd(todayYmd());
-  const roasted = fromYmd(roastedOn);
-  const days = Math.floor((today.getTime() - roasted.getTime()) / 86_400_000);
+  const days = daysBetween(fromYmd(roastedOn), fromYmd(todayYmd()));
   if (days < 0) return "unknown";
   if (days < 21) return "too-fresh";
   if (days <= 42) return "in-range";
@@ -43,9 +41,7 @@ function freshnessStatus(roastedOn: string | null): FreshnessStatus {
 
 function daysOld(roastedOn: string | null): number | null {
   if (!roastedOn) return null;
-  const today = fromYmd(todayYmd());
-  const roasted = fromYmd(roastedOn);
-  return Math.floor((today.getTime() - roasted.getTime()) / 86_400_000);
+  return daysBetween(fromYmd(roastedOn), fromYmd(todayYmd()));
 }
 
 function fmtDmY(ymd: string): string {
@@ -175,6 +171,12 @@ export function CafeView() {
   const [deleteBean, setDeleteBean] = useState<string | null>(null);
   const [deleteRecipe, setDeleteRecipe] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  // True from the moment a save starts until the REAL mutation settles — unlike
+  // react-query's isPending, this isn't cleared by .reset() on a client-side
+  // timeout, so the Save button stays disabled and can't fire a duplicate
+  // create while the original request is still in flight in the background.
+  const [beanSavePending, setBeanSavePending] = useState(false);
+  const [recipeSavePending, setRecipeSavePending] = useState(false);
 
   const beansQ = useCoffeeBeans();
   const recipesQ = useCoffeeRecipes();
@@ -210,19 +212,31 @@ export function CafeView() {
       notaFinal: beanForm.notaFinal.trim(),
     };
     if (!payload.name) return;
+    if (beanSavePending) return; // a real save is still in flight — never fire a second one
     const timeout = new Promise<never>((_, rej) =>
-      setTimeout(() => rej(new Error("Timeout — reiniciá la app si sigue pasando")), 10_000)
+      setTimeout(() => rej(new Error("Sigue guardando en segundo plano — esperá antes de reintentar")), 10_000)
     );
     const isEdit = beanEditor.open && beanEditor.bean !== null;
+    setBeanSavePending(true);
+    const real = isEdit && beanEditor.open && beanEditor.bean
+      ? patchBean.mutateAsync({ id: beanEditor.bean.id, patch: payload })
+      : createBean.mutateAsync(payload);
+    void real
+      .then(() => {
+        // Succeeded — even if this resolves after the timeout branch already
+        // reported an error below, make sure the UI reflects the real outcome.
+        setBeanEditor({ open: false });
+        setSaveError(null);
+      })
+      .catch(() => {
+        // Real failure. If the timeout already surfaced an error this is a
+        // no-op; if the timeout hasn't fired yet, the catch below handles it.
+      })
+      .finally(() => setBeanSavePending(false));
     try {
-      if (isEdit && beanEditor.open && beanEditor.bean) {
-        await Promise.race([patchBean.mutateAsync({ id: beanEditor.bean.id, patch: payload }), timeout]);
-      } else {
-        await Promise.race([createBean.mutateAsync(payload), timeout]);
-      }
+      await Promise.race([real, timeout]);
       setBeanEditor({ open: false });
     } catch (err) {
-      if (isEdit) patchBean.reset(); else createBean.reset();
       const msg = err instanceof Error ? err.message : String(err);
       console.error("saveBean failed:", err);
       setSaveError(msg);
@@ -258,19 +272,26 @@ export function CafeView() {
       notes: recipeForm.notes.trim(),
     };
     if (!payload.name) return;
+    if (recipeSavePending) return; // a real save is still in flight — never fire a second one
     const timeout = new Promise<never>((_, rej) =>
-      setTimeout(() => rej(new Error("Timeout — reiniciá la app si sigue pasando")), 10_000)
+      setTimeout(() => rej(new Error("Sigue guardando en segundo plano — esperá antes de reintentar")), 10_000)
     );
     const isEdit = recipeEditor.open && recipeEditor.recipe !== null;
+    setRecipeSavePending(true);
+    const real = isEdit && recipeEditor.open && recipeEditor.recipe
+      ? patchRecipe.mutateAsync({ id: recipeEditor.recipe.id, patch: payload })
+      : createRecipe.mutateAsync(payload);
+    void real
+      .then(() => {
+        setRecipeEditor({ open: false });
+        setSaveError(null);
+      })
+      .catch(() => {})
+      .finally(() => setRecipeSavePending(false));
     try {
-      if (isEdit && recipeEditor.open && recipeEditor.recipe) {
-        await Promise.race([patchRecipe.mutateAsync({ id: recipeEditor.recipe.id, patch: payload }), timeout]);
-      } else {
-        await Promise.race([createRecipe.mutateAsync(payload), timeout]);
-      }
+      await Promise.race([real, timeout]);
       setRecipeEditor({ open: false });
     } catch (err) {
-      if (isEdit) patchRecipe.reset(); else createRecipe.reset();
       const msg = err instanceof Error ? err.message : String(err);
       console.error("saveRecipe failed:", err);
       setSaveError(msg);
@@ -336,7 +357,7 @@ export function CafeView() {
         <BeanModal
           form={beanForm}
           isEdit={beanEditor.bean !== null}
-          saving={createBean.isPending || patchBean.isPending}
+          saving={beanSavePending}
           error={saveError}
           onChange={(k, v) => setBeanForm((p) => ({ ...p, [k]: v }))}
           onSave={() => void saveBean()}
@@ -349,7 +370,7 @@ export function CafeView() {
         <RecipeModal
           form={recipeForm}
           isEdit={recipeEditor.recipe !== null}
-          saving={createRecipe.isPending || patchRecipe.isPending}
+          saving={recipeSavePending}
           error={saveError}
           onChange={(k, v) => setRecipeForm((p) => ({ ...p, [k]: v }))}
           onStepsChange={(steps) => setRecipeForm((p) => ({ ...p, steps }))}
@@ -665,9 +686,9 @@ function GranosTab({
   }
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      {needsOrder && active.length > 0 && (
+      {needsOrder && (
         <div style={{ fontSize: 12, color: "var(--danger)", fontWeight: 500, padding: "6px 10px", background: "color-mix(in oklch, var(--danger) 10%, var(--bg))", borderRadius: 8, border: "1px solid color-mix(in oklch, var(--danger) 30%, transparent)" }}>
-          ⚠ Quedan {active.length === 1 ? "solo 1 grano" : active.length === 0 ? "sin granos activos" : "solo 2 granos"} — pedí más pronto
+          ⚠ {active.length === 0 ? "Sin granos activos" : active.length === 1 ? "Queda solo 1 grano" : "Quedan solo 2 granos"} — pedí más pronto
         </div>
       )}
       {active.map((b) => (
@@ -753,7 +774,7 @@ function BeanCard({
             )}
             {isFinished && (
               <span style={{ fontSize: 11, color: "var(--fg-subtle)", fontWeight: 500 }}>
-                terminado{b.finishedAt ? ` ${fmtDmY(b.finishedAt.slice(0, 10))}` : ""}
+                terminado{b.finishedAt ? ` ${fmtDmY(ymd(new Date(b.finishedAt)))}` : ""}
               </span>
             )}
             {!isFinished && needsOrder && (

@@ -1,9 +1,6 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// @ts-expect-error process is a nodejs global
-const host = process.env.TAURI_DEV_HOST;
-
 // https://vite.dev/config/
 export default defineConfig(async () => ({
   plugins: [react()],
@@ -16,10 +13,12 @@ export default defineConfig(async () => ({
   server: {
     port: 1420,
     strictPort: true,
-    host: host || "0.0.0.0",
+    // bind all interfaces so both desktop (localhost) and phone (LAN IP) can reach it;
+    // omitting hmr.host lets Vite infer it from the browser's own location.hostname,
+    // so the same server works for both without env vars.
+    host: "0.0.0.0",
     hmr: {
       protocol: "ws",
-      host: host || "localhost",
       port: 1421,
       timeout: 120000,
     },

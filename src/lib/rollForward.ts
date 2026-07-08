@@ -44,11 +44,38 @@ export async function rollForwardRecurringTasks(
     const rule = t.recurrence;
 
     try {
+      // Create the fresh instance BEFORE freezing/dropping the old one. If the
+      // app is killed partway through, the worst case is a harmless leftover
+      // old instance still carrying the rule (retried next time) — never a
+      // dead chain, since the rule would otherwise only ever live on the one
+      // row we're about to freeze/delete.
+      const siblings = await repo.listTasks();
+      const alreadyExists = siblings.some(
+        (s) => !s.deletedAt && s.day === next && (s.recurrenceParentId ?? s.id) === parentId,
+      );
+      if (!alreadyExists) {
+        await repo.createTask({
+          title: t.title,
+          projectId: t.projectId,
+          categoryId: t.categoryId,
+          priority: t.priority,
+          duration: t.duration,
+          day: next,
+          due: null,
+          recurring: true,
+          recurrence: rule,
+          recurrenceParentId: parentId,
+          notes: t.notes,
+          subtasks: t.subtasks.map((s) => ({ ...s, done: false })),
+          isHabit: t.isHabit,
+        });
+      }
+
       if (t.isHabit) {
         // A skipped habit day just lapses. The missed log written above is the
         // record that matters for the tracker, so we do NOT keep the old
         // instance around as a red "not finished" leftover — drop it. The chain
-        // still advances via the fresh instance created below.
+        // still advances via the fresh instance created above.
         await repo.deleteTask(t.id);
       } else {
         // Real task: freeze the old instance on its original day. Clearing the
@@ -57,24 +84,6 @@ export async function rollForwardRecurringTasks(
         // user can still tick off.
         await repo.patchTask(t.id, { recurrence: null });
       }
-
-      // Create the fresh instance at the next due day, carrying the rule
-      // forward so the chain keeps advancing.
-      await repo.createTask({
-        title: t.title,
-        projectId: t.projectId,
-        categoryId: t.categoryId,
-        priority: t.priority,
-        duration: t.duration,
-        day: next,
-        due: null,
-        recurring: true,
-        recurrence: rule,
-        recurrenceParentId: parentId,
-        notes: t.notes,
-        subtasks: t.subtasks.map((s) => ({ ...s, done: false })),
-        isHabit: t.isHabit,
-      });
       rolled++;
     } catch (e) {
       console.error("Failed to roll forward task:", e);

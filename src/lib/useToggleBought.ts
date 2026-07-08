@@ -3,26 +3,29 @@ import {
   useDeleteInventory,
   useIngredientPresentations,
   useIngredients,
-  useInventory,
   usePatchShoppingItem,
 } from "./queries";
+import { repo } from "./repo";
 import { fromYmd, todayYmd, ymd } from "./date";
 import type { ShoppingItem } from "../types";
 
 /** Toggle a shopping item's "bought" flag. When the item is linked to a
  *  presentation, marking it bought adds that many inventory lots (one per
  *  unit, each with its own expiry from the ingredient's shelf life); un-marking
- *  removes that many still-full lots of the same presentation. */
+ *  removes that many still-full lots of the same presentation.
+ *
+ *  Returns a promise so callers can disable the toggle control while it's in
+ *  flight — a rapid re-toggle before the previous call finished used to read
+ *  a stale inventory snapshot and corrupt/miss lots. */
 export function useToggleBought() {
   const patchItem = usePatchShoppingItem();
   const createInventory = useCreateInventory();
   const deleteInventory = useDeleteInventory();
   const ingredientsQ = useIngredients();
   const presentationsQ = useIngredientPresentations();
-  const inventoryQ = useInventory();
 
-  return (item: ShoppingItem, nextBought: boolean) => {
-    patchItem.mutate({ id: item.id, patch: { bought: nextBought } });
+  return async (item: ShoppingItem, nextBought: boolean) => {
+    await patchItem.mutateAsync({ id: item.id, patch: { bought: nextBought } });
     if (!item.ingredientId || !item.presentationId) return;
     const pres = (presentationsQ.data ?? []).find((p) => p.id === item.presentationId);
     if (!pres) return;
@@ -37,7 +40,7 @@ export function useToggleBought() {
         expiresOn = ymd(d);
       }
       for (let k = 0; k < count; k++) {
-        createInventory.mutate({
+        await createInventory.mutateAsync({
           ingredientId: item.ingredientId,
           presentationId: pres.id,
           quantity: pres.size,
@@ -45,8 +48,13 @@ export function useToggleBought() {
         });
       }
     } else {
-      // undo: remove up to `count` still-full lots of this presentation (newest first)
-      const lots = (inventoryQ.data ?? [])
+      // undo: remove up to `count` still-full lots of this presentation (newest
+      // first). Read straight from the repo instead of the React Query cache —
+      // the cache snapshot captured at render time can be stale (a just-created
+      // lot from the "mark bought" branch hasn't been refetched yet), which
+      // would otherwise delete the wrong lot or none at all.
+      const freshInventory = await repo.listInventory();
+      const lots = freshInventory
         .filter(
           (l) =>
             l.ingredientId === item.ingredientId &&
@@ -54,7 +62,7 @@ export function useToggleBought() {
             Math.abs(l.quantity - pres.size) < 0.0001,
         )
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-      for (const lot of lots.slice(0, count)) deleteInventory.mutate(lot.id);
+      for (const lot of lots.slice(0, count)) await deleteInventory.mutateAsync(lot.id);
     }
   };
 }

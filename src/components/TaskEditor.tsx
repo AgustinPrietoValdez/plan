@@ -4,6 +4,7 @@ import { colorsForCategory } from "../lib/categoryColor";
 import { fmtDuration, priLabel } from "../lib/format";
 import {
   useCategories,
+  useCompleteTask,
   useCreateTask,
   useDeleteTask,
   usePatchTask,
@@ -78,6 +79,7 @@ export function TaskEditor({ mode, task, prefill, onClose, onSwitchToEvent }: Pr
   const categories = categoriesQ.data ?? [];
   const patchTask = usePatchTask();
   const createTask = useCreateTask();
+  const completeTask = useCompleteTask();
   const deleteTask = useDeleteTask();
   const { openCategoryManager } = useApp();
 
@@ -95,23 +97,48 @@ export function TaskEditor({ mode, task, prefill, onClose, onSwitchToEvent }: Pr
   const save = () => {
     const isHabit = draft.recurrence !== null && draft.isHabit;
     if (mode === "edit" && task) {
-      patchTask.mutate({
-        id: task.id,
-        patch: {
-          title: draft.title,
-          projectId: draft.projectId,
-          categoryId: draft.categoryId,
-          priority: draft.priority,
-          duration: draft.duration,
-          day: draft.day,
-          recurring: draft.recurrence !== null,
-          recurrence: draft.recurrence,
-          notes: draft.notes,
-          subtasks: draft.subtasks,
-          done: draft.done,
-          isHabit,
-        },
-      });
+      // Checking "done" on a recurring/habit task here has to advance the
+      // chain the same way the completion modal does — otherwise the chain
+      // silently stops forever (recurrence only ever lives on this one row).
+      const justCompleted = !task.done && draft.done && task.recurrence !== null;
+      if (justCompleted) {
+        void completeTask(task, draft.duration).then(() => {
+          // completeTask only patches done/actualDuration/completedAt/recurrence —
+          // apply the rest of the edited fields (title, project, notes, etc.) too.
+          patchTask.mutate({
+            id: task.id,
+            patch: {
+              title: draft.title,
+              projectId: draft.projectId,
+              categoryId: draft.categoryId,
+              priority: draft.priority,
+              duration: draft.duration,
+              day: draft.day,
+              notes: draft.notes,
+              subtasks: draft.subtasks,
+              isHabit,
+            },
+          });
+        });
+      } else {
+        patchTask.mutate({
+          id: task.id,
+          patch: {
+            title: draft.title,
+            projectId: draft.projectId,
+            categoryId: draft.categoryId,
+            priority: draft.priority,
+            duration: draft.duration,
+            day: draft.day,
+            recurring: draft.recurrence !== null,
+            recurrence: draft.recurrence,
+            notes: draft.notes,
+            subtasks: draft.subtasks,
+            done: draft.done,
+            isHabit,
+          },
+        });
+      }
     } else {
       createTask.mutate({
         title: draft.title,

@@ -3,6 +3,7 @@ import { useEvents, useCreateEvent, usePatchEvent, useDeleteEvent, useCategories
 import { useApp } from "../lib/store";
 import { colorsForCategory } from "../lib/categoryColor";
 import { vars } from "../lib/style";
+import { todayYmd } from "../lib/date";
 import { IX, ITrash, ICal } from "./icons";
 
 const NOTIFY_OPTIONS = [
@@ -48,7 +49,7 @@ export function EventEditor(props: Props) {
       ? (eventsQ.data ?? []).find((e) => e.id === props.eventId) ?? null
       : null;
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayYmd();
 
   const [title, setTitle] = useState(existing?.title ?? "");
   const [day, setDay] = useState(

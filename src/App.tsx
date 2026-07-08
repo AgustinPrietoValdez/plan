@@ -38,12 +38,13 @@ import { DragGhost } from "./components/dnd/DragGhost";
 import { useSession } from "./lib/auth";
 import { fromYmd, todayYmd, ymd } from "./lib/date";
 import { useApp, AREA_OF_VIEW, CALENDARIO_TABS, type View } from "./lib/store";
-import { useCategories, useHabitLogs, usePatchTask, useProjects, useTasks } from "./lib/queries";
+import { useCategories, useDeleteTask, useHabitLogs, usePatchTask, useProjects, useTasks } from "./lib/queries";
 import type { CalendarEvent } from "./types";
 import { useRealtimeSync } from "./lib/realtime";
 import { useRollForwardRecurringTasks } from "./lib/rollForward";
 import { useSeedDefaultCategories } from "./lib/seedCategories";
 import { useSeedDefaultExpenseCategories } from "./lib/seedExpenseCategories";
+import { useReconcileAccountBalances } from "./lib/reconcileBalances";
 import { useExternalChangesPoller } from "./lib/externalChanges";
 import { useSyncEngine } from "./lib/sync";
 import { useEventNotifications } from "./lib/useEventNotifications";
@@ -88,6 +89,7 @@ function App() {
   const projects = projectsQ.data ?? [];
   const categories = categoriesQ.data ?? [];
   const patchTask = usePatchTask();
+  const deleteTaskMutation = useDeleteTask();
   const { session } = useSession();
   useSyncEngine(session?.user.id);
   useExternalChangesPoller(session?.user.id);
@@ -95,6 +97,7 @@ function App() {
   useEventNotifications();
   useSeedDefaultCategories(session?.user.id);
   useSeedDefaultExpenseCategories(session?.user.id);
+  useReconcileAccountBalances(session?.user.id);
   useRollForwardRecurringTasks(
     tasksQ.data,
     Boolean(session?.user.id) && tasksQ.isSuccess,
@@ -123,10 +126,36 @@ function App() {
 
   const onToggleDone = (t: Task) => {
     if (t.done) {
-      patchTask.mutate({
-        id: t.id,
-        patch: { done: false, actualDuration: null, completedAt: null },
-      });
+      // Completing a recurring/habit task freezes its recurrence to null and
+      // moves the rule onto a freshly-created successor instance. Un-completing
+      // can only safely restore that rule if no successor has been acted on
+      // yet — copy the rule back from the successor and remove it, rather than
+      // leaving two rows both able to advance the same chain.
+      const rootId = t.recurrenceParentId ?? t.id;
+      const successor = tasks.find(
+        (x) => x.id !== t.id && (x.recurrenceParentId ?? x.id) === rootId && x.recurrence !== null,
+      );
+      if (successor && !successor.done) {
+        patchTask.mutate({
+          id: t.id,
+          patch: {
+            done: false,
+            actualDuration: null,
+            completedAt: null,
+            recurrence: successor.recurrence,
+            recurring: true,
+          },
+        });
+        deleteTaskMutation.mutate(successor.id);
+      } else {
+        // No untouched successor to restore the rule from (either none was
+        // ever created, or it was already completed/rolled forward itself) —
+        // just uncheck; it stays a plain one-off, same as today.
+        patchTask.mutate({
+          id: t.id,
+          patch: { done: false, actualDuration: null, completedAt: null },
+        });
+      }
     } else {
       openCompletion(t.id);
     }

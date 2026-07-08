@@ -40,8 +40,17 @@ export async function scanForScales(
     const hasPerms = await invoke<boolean>("ble_check_permissions");
     if (!hasPerms) {
         await invoke("ble_request_permissions");
-        await new Promise<void>((r) => setTimeout(r, 500));
-        const granted = await invoke<boolean>("ble_check_permissions");
+        // ble_request_permissions is fire-and-forget: the OS permission dialog
+        // appears asynchronously and a human needs more than a moment to read
+        // and tap it. Poll for a while instead of checking once after a fixed
+        // short sleep, which almost always lost the race with the user.
+        const deadline = Date.now() + 20_000;
+        let granted = false;
+        while (Date.now() < deadline) {
+            await new Promise<void>((r) => setTimeout(r, 500));
+            granted = await invoke<boolean>("ble_check_permissions");
+            if (granted) break;
+        }
         if (!granted) {
             throw new Error(
                 "Permisos BLE denegados. Habilitá Bluetooth y los permisos de la app en Configuración.",

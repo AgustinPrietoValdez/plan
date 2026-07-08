@@ -231,7 +231,8 @@ async function enqueue(
     | "expense_line_items"
     | "coffee_beans"
     | "coffee_recipes"
-    | "brew_sessions",
+    | "brew_sessions"
+    | "automations",
   entityId: string,
   payload: unknown,
 ): Promise<void> {
@@ -841,6 +842,9 @@ export const localRepo: Repo = {
     if (!updated.deletedAt) {
       const newEffect = await toAccountCurrency(db, userId, updated.accountId, updated.amount, updated.currency);
       await adjustAccountBalance(db, userId, updated.accountId, -newEffect);
+      if (updated.goalId) {
+        await evaluateGoalPurchase(db, userId, updated.goalId, updated.amount, updated.currency);
+      }
     }
     return updated;
   },
@@ -1290,6 +1294,65 @@ export const localRepo: Repo = {
       [ts, ts, id, userId],
     );
     await enqueue(userId, "delete", "accounts", id, null);
+  },
+
+  /** Self-healing safety net for the account-balance drift bug: `balance` is
+   *  maintained incrementally (adjustAccountBalance) across separate, non-
+   *  transactional writes, so a process kill mid-write can leave it out of
+   *  sync with the actual expense/income/transfer history. Recompute the
+   *  truth from openingBalance + the ledger since balanceAsOf and correct
+   *  any drift found. Mirrors the exact per-entity effect math already used
+   *  by adjustAccountBalance's call sites so it doesn't fight the live code. */
+  async reconcileAccountBalances() {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const accounts = await this.listAccounts();
+    if (accounts.length === 0) return;
+    const currencyById = new Map(accounts.map((a) => [a.id, a.currency]));
+    const rates = await readRates(db, userId);
+
+    for (const acc of accounts) {
+      const floorDay = acc.balanceAsOf ?? "0000-00-00";
+      const floorMonth = floorDay.slice(0, 7);
+
+      const expenseRows = await db.select<{ amount: number; currency: string }[]>(
+        "SELECT amount, currency FROM expenses WHERE user_id = ? AND account_id = ? AND deleted_at IS NULL AND spent_on >= ?",
+        [userId, acc.id, floorDay],
+      );
+      const incomeRows = await db.select<{ amount: number }[]>(
+        "SELECT amount FROM incomes WHERE user_id = ? AND account_id = ? AND deleted_at IS NULL AND month >= ?",
+        [userId, acc.id, floorMonth],
+      );
+      const transfersOut = await db.select<{ amount: number }[]>(
+        "SELECT amount FROM account_transfers WHERE user_id = ? AND from_account_id = ? AND deleted_at IS NULL AND transferred_on >= ?",
+        [userId, acc.id, floorDay],
+      );
+      const transfersIn = await db.select<{ amount: number; currency: string; from_account_id: string | null }[]>(
+        "SELECT amount, currency, from_account_id FROM account_transfers WHERE user_id = ? AND to_account_id = ? AND deleted_at IS NULL AND transferred_on >= ?",
+        [userId, acc.id, floorDay],
+      );
+
+      let expected = acc.openingBalance;
+      for (const e of expenseRows) expected -= convertViaUsd(e.amount, e.currency, acc.currency, rates);
+      for (const i of incomeRows) expected += i.amount; // matches upsertIncome: not currency-converted today
+      for (const t of transfersOut) expected -= t.amount; // leaves in the from-account's own currency
+      for (const t of transfersIn) {
+        const fromCur = (t.from_account_id && currencyById.get(t.from_account_id)) || t.currency;
+        expected += convertViaUsd(t.amount, fromCur, acc.currency, rates);
+      }
+
+      if (Math.abs(expected - acc.balance) > 0.005) {
+        console.warn(
+          `Account balance drift corrected for ${acc.id}: ${acc.balance} -> ${expected}`,
+        );
+        const updated: Account = { ...acc, balance: expected, updatedAt: now(), version: acc.version + 1 };
+        await db.execute(
+          "UPDATE accounts SET balance = ?, updated_at = ?, version = ? WHERE id = ? AND user_id = ?",
+          [updated.balance, updated.updatedAt, updated.version, acc.id, userId],
+        );
+        await enqueue(userId, "update", "accounts", acc.id, accountToWire(updated, userId));
+      }
+    }
   },
 
   // ---------- account_transfers ----------
@@ -2556,7 +2619,7 @@ export const localRepo: Repo = {
     await enqueue(userId, "delete", "events", id, null);
   },
 
-  // ---------- automations (local-only — no enqueue) ----------
+  // ---------- automations ----------
   async listAutomations() {
     const userId = await requireUserId();
     const db = await getDb();
@@ -2598,6 +2661,7 @@ export const localRepo: Repo = {
         automation.createdAt, automation.updatedAt, null, 1,
       ],
     );
+    await enqueue(userId, "insert", "automations", automation.id, automationToWire(automation, userId));
     return automation;
   },
 
@@ -2629,6 +2693,7 @@ export const localRepo: Repo = {
         id, userId,
       ],
     );
+    await enqueue(userId, "update", "automations", id, automationToWire(updated, userId));
     return updated;
   },
 
@@ -2640,6 +2705,7 @@ export const localRepo: Repo = {
       "UPDATE automations SET deleted_at = ?, updated_at = ?, version = version + 1 WHERE id = ? AND user_id = ?",
       [ts, ts, id, userId],
     );
+    await enqueue(userId, "delete", "automations", id, null);
   },
 
   // ---------- coffee beans ----------
@@ -4071,6 +4137,26 @@ function fromDbEvent(r: DbEventRow): CalendarEvent {
     updatedAt: r.updated_at,
     deletedAt: r.deleted_at,
     version: r.version,
+  };
+}
+
+function automationToWire(a: Automation, userId: string) {
+  return {
+    id: a.id,
+    user_id: userId,
+    project_id: a.projectId,
+    name: a.name,
+    kind: a.kind,
+    config: a.config,
+    trigger: a.trigger,
+    schedule: a.schedule,
+    enabled: a.enabled,
+    notes: a.notes,
+    last_run_at: a.lastRunAt,
+    created_at: a.createdAt,
+    updated_at: a.updatedAt,
+    deleted_at: a.deletedAt,
+    version: a.version,
   };
 }
 
