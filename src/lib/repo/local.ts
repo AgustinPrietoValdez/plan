@@ -3016,6 +3016,10 @@ export const localRepo: Repo = {
       [recipeId, recipeName, input.beanId, input.beanName, doseGrams, updatedAt, version, id, userId],
     );
 
+    if (input.beanId && doseGrams > 0) {
+      try { await localRepo.consumeCoffeeBean(input.beanId, doseGrams); } catch { /* best-effort */ }
+    }
+
     await enqueue(userId, "update", "brew_sessions", id, {
       id: existing.id, user_id: userId, recipe_id: recipeId, recipe_name: recipeName,
       bean_id: input.beanId, bean_name: input.beanName, dose_grams: doseGrams,
