@@ -543,21 +543,19 @@ export function BudgetView() {
   );
   // Expenses can be entered in any currency now (EUR/ARS/USD against a DKK account, etc.) —
   // convert each to nominal DKK before summing/charting, same as incomes.
-  const totalSpent = monthExpenses.reduce(
-    (s, e) => s + convertViaUsd(e.amount, e.currency, CURRENCY, ratesPerUsd),
-    0,
-  );
+  // Hidden categories (hiddenFromChart) don't count toward the header totals either —
+  // hiding one shrinks both totalSpent and totalBudget, not just the pie arcs.
+  const totalSpent = monthExpenses
+    .filter((e) => !categories.find((c) => c.id === e.categoryId)?.hiddenFromChart)
+    .reduce((s, e) => s + convertViaUsd(e.amount, e.currency, CURRENCY, ratesPerUsd), 0);
   const monthExpensesForPie = useMemo(
     () => monthExpenses.map((e) => ({ ...e, amount: convertViaUsd(e.amount, e.currency, CURRENCY, ratesPerUsd), currency: CURRENCY })),
     [monthExpenses, ratesPerUsd],
   );
-  const totalBudget = budgets.reduce((s, b) => s + b.monthlyAmount, 0);
-  const pctUsed = totalBudget > 0 ? Math.round((totalSpent / totalBudget) * 100) : 0;
-  // Piechart limit excludes hidden categories' own budget cap too, so hiding one
-  // actually shrinks the denominator and the remaining %s recalculate (not just the arcs).
-  const chartBudgetLimit = budgets
+  const totalBudget = budgets
     .filter((b) => !categories.find((c) => c.id === b.categoryId)?.hiddenFromChart)
     .reduce((s, b) => s + b.monthlyAmount, 0);
+  const pctUsed = totalBudget > 0 ? Math.round((totalSpent / totalBudget) * 100) : 0;
   // Incomes are now per (month, account). Total = sum of all incomes for the
   // month, converted to the Finanzas base currency so mixed-currency incomes
   // add up correctly (old months' legacy "general" no-account income still counts).
@@ -686,18 +684,24 @@ export function BudgetView() {
             {incomeAmount > 0 && (
               <>
                 <span style={{ color: "var(--line-strong)" }}>·</span>
-                <span>
-                  <span
-                    style={{
-                      color: leftover < 0 ? "var(--danger)" : "var(--fg)",
-                      fontWeight: 600,
-                      fontVariantNumeric: "tabular-nums",
-                    }}
-                  >
-                    {fmtMoney(leftover)}
-                  </span>{" "}
-                  leftover
-                </span>
+                {leftover >= 0 ? (
+                  <span>
+                    <span
+                      style={{
+                        color: "var(--fg)",
+                        fontWeight: 600,
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
+                      {fmtMoney(leftover)}
+                    </span>{" "}
+                    leftover
+                  </span>
+                ) : (
+                  <span style={{ color: "var(--danger)", fontWeight: 600 }}>
+                    no leftover
+                  </span>
+                )}
                 {totalAllocated > 0 && (
                   <>
                     <span style={{ color: "var(--line-strong)" }}>·</span>
@@ -746,7 +750,7 @@ export function BudgetView() {
             layout="row"
             fill={false}
             sizePx={pieSizePx}
-            limit={chartBudgetLimit > 0 ? chartBudgetLimit : undefined}
+            limit={totalBudget > 0 ? totalBudget : undefined}
             budgets={budgets}
             onToggleHidden={(categoryId) => {
               const cat = categories.find((c) => c.id === categoryId);
