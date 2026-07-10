@@ -448,6 +448,11 @@ function AccountEditor({
     if (!name) return;
     const balance = parseMoney(balanceText) ?? 0;
     if (mode === "edit" && existing) {
+      // A manual balance edit must also move the opening_balance/balance_as_of
+      // anchor to today, or the next reconcileAccountBalances() self-heal
+      // (runs on every app start) recomputes from the OLD anchor and overwrites
+      // this edit right back to the stale value.
+      const balanceChanged = balance !== existing.balance;
       patch.mutate({
         id: existing.id,
         patch: {
@@ -456,6 +461,10 @@ function AccountEditor({
           type: draft.type,
           currency: draft.currency,
           balance,
+          ...(balanceChanged && {
+            openingBalance: balance,
+            balanceAsOf: new Date().toISOString().slice(0, 10),
+          }),
           institution: draft.institution.trim(),
           note: draft.note.trim(),
           receivesIncome: draft.receivesIncome,
