@@ -4,7 +4,6 @@ import { useApp } from "../lib/store";
 import { colorsForCategory } from "../lib/categoryColor";
 import { todayYmd } from "../lib/date";
 import { vars } from "../lib/style";
-import { todayYmd } from "../lib/date";
 import { IX, ITrash, ICal } from "./icons";
 
 const NOTIFY_OPTIONS = [
