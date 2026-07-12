@@ -467,14 +467,65 @@ fn launch_coffee_analysis(
 
     // 4) abrir PowerShell visible, en el dir del repo. SIN -NoExit: cuando termina la
     //    sesion de claude, la ventana se cierra sola.
-    let mut cmd = std::process::Command::new("powershell");
-    cmd.args(["-ExecutionPolicy", "Bypass", "-File"])
+    // Nota: en el build debug (console-subsystem) CREATE_NEW_CONSOLE hereda los
+    // handles de stdio del padre en vez de asignar unos nuevos, asi que la ventana
+    // se abre vacia. Por eso se lanza via `cmd /C start` (que si asigna consola
+    // propia a powershell) y se le pone CREATE_NO_WINDOW al cmd intermedio.
+    let mut cmd = std::process::Command::new("cmd");
+    cmd.args(["/C", "start", "", "powershell", "-ExecutionPolicy", "Bypass", "-File"])
         .arg(&ps1_path)
         .current_dir(&repo_path);
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x00000010); // CREATE_NEW_CONSOLE -> ventana propia visible
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW (solo para el cmd wrapper)
+    }
+    cmd.spawn().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Lanza una terminal con Claude Code para responder una duda puntual sobre un
+/// brew (Fase 7c, desktop/Windows). Mismo patron que launch_coffee_analysis,
+/// pero el prompt parte de la queja del usuario en vez de armar una receta inicial.
+#[tauri::command]
+fn launch_coffee_question(
+    repo_path: String,
+    context: String,
+    question: String,
+) -> Result<(), String> {
+    let tmp = std::env::temp_dir();
+
+    // 1) contexto del grano (+ ultimo brew) -> archivo temporal
+    let ctx_path = tmp.join("plan-coffee-question.md");
+    std::fs::write(&ctx_path, context.as_bytes()).map_err(|e| e.to_string())?;
+
+    // 2) prompt para Claude
+    let prompt = format!(
+        "Ajuste de cafe (app Plan).\n\
+         El usuario preparo este cafe y no le gusto como salio: \"{question}\"\n\
+         1) Lee COFFEE_GUIDE.md y CATA_GUIDE.md de este repo, y el contexto del grano + ultimo brew en: {ctx}\n\
+         2) Proponer 1-3 cambios concretos de parametro (molienda / ratio / temperatura / perfil de vertido), con el porque.\n\
+         3) Si corresponde, persisti el ajuste con tools/coffee_cli.py set-tweak (patron outbox):\n\
+            python tools/coffee_cli.py set-tweak \"<grano>\" --grind <clicks> --temp <c> --dose <g> --water <g> --notes \"...\"\n\
+         Responde en espanol.",
+        ctx = ctx_path.to_string_lossy(),
+    );
+
+    // 3) launcher .ps1 con here-string single-quoted (literal, sin interpolacion)
+    let ps1_path = tmp.join("plan-coffee-question-launch.ps1");
+    let script = format!("claude @'\n{}\n'@\n", prompt);
+    std::fs::write(&ps1_path, script).map_err(|e| e.to_string())?;
+
+    // 4) abrir PowerShell visible, en el dir del repo (ver nota en launch_coffee_analysis
+    //    sobre por que se usa `cmd /C start` en vez de CREATE_NEW_CONSOLE directo).
+    let mut cmd = std::process::Command::new("cmd");
+    cmd.args(["/C", "start", "", "powershell", "-ExecutionPolicy", "Bypass", "-File"])
+        .arg(&ps1_path)
+        .current_dir(&repo_path);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW (solo para el cmd wrapper)
     }
     cmd.spawn().map_err(|e| e.to_string())?;
     Ok(())
@@ -717,6 +768,12 @@ pub fn run() {
             sql: include_str!("../migrations/0039_shopping_items_week.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 40,
+            description: "coffee_beans: add rating (1-10) + flavor_tags (issue #10)",
+            sql: include_str!("../migrations/0040_coffee_bean_rating.sql"),
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
@@ -741,6 +798,7 @@ pub fn run() {
             kettle_disconnect,
             scaffold_project_guide,
             launch_coffee_analysis,
+            launch_coffee_question,
             schedule_event_notification,
             cancel_event_notification,
         ])

@@ -122,7 +122,7 @@ export async function drainOutbox(userId: string): Promise<void> {
         await applyToServer(row);
         await db.execute("DELETE FROM outbox WHERE id = ?", [row.id]);
       } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
+        const msg = errorMessage(e);
         await db.execute(
           "UPDATE outbox SET attempts = attempts + 1, last_error = ? WHERE id = ?",
           [msg, row.id],
@@ -172,6 +172,20 @@ async function applyToServer(row: OutboxRow): Promise<void> {
       .eq("id", row.entity_id);
     if (error) throw error;
   }
+}
+
+/** Postgrest/Supabase errors are plain objects (not Error instances), so
+ *  `e instanceof Error ? e.message : String(e)` always fell through to the
+ *  useless "[object Object]" for them — surface their real message/code. */
+function errorMessage(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  if (e && typeof e === "object" && "message" in e) {
+    const { message, code, details, hint } = e as { message: unknown; code?: unknown; details?: unknown; hint?: unknown };
+    return [String(message), code && `code=${code}`, details && `details=${details}`, hint && `hint=${hint}`]
+      .filter(Boolean)
+      .join(" | ");
+  }
+  return String(e);
 }
 
 function isNetworkError(e: unknown): boolean {
@@ -576,14 +590,16 @@ async function upsertLocal(
   } else if (entity === "coffee_beans") {
     await db.execute(
       `INSERT OR REPLACE INTO coffee_beans
-        (id, user_id, name, roaster, varietal, country, process, producer, roasted_on, weight_grams, notes, cata_inicial, nota_final, last_tweak, finished_at, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, user_id, name, roaster, varietal, country, process, producer, roasted_on, weight_grams, notes, cata_inicial, nota_final, last_tweak, finished_at, rating, flavor_tags, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         row.id, row.user_id, row.name, row.roaster ?? "", row.varietal ?? "", row.country ?? "",
         row.process ?? "", row.producer ?? "", row.roasted_on ?? null, row.weight_grams ?? 0, row.notes ?? "",
         row.cata_inicial ?? "", row.nota_final ?? "",
         typeof row.last_tweak === "string" ? row.last_tweak : JSON.stringify(row.last_tweak ?? null),
         row.finished_at ?? null,
+        row.rating ?? null,
+        typeof row.flavor_tags === "string" ? row.flavor_tags : JSON.stringify(row.flavor_tags ?? []),
         row.created_at, row.updated_at, row.deleted_at, row.version,
       ],
     );

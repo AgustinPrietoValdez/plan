@@ -46,6 +46,8 @@ export function ProjectManager({ onClose }: Props) {
 
   // Create form
   const [creating, setCreating] = useState(false);
+  const [creatingSaving, setCreatingSaving] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
   const [newCategoryId, setNewCategoryId] = useState<string>("");
   const [newObjetivo, setNewObjetivo] = useState("");
@@ -88,6 +90,7 @@ export function ProjectManager({ onClose }: Props) {
     setNewObjetivo("");
     setNewMilestones([]);
     setNewCategoryId(categories[0].id);
+    setCreateError(null);
     setCreating(true);
   };
 
@@ -96,22 +99,32 @@ export function ProjectManager({ onClose }: Props) {
     setNewName("");
     setNewObjetivo("");
     setNewMilestones([]);
+    setCreateError(null);
   };
 
   const submitCreate = async () => {
     const name = newName.trim();
-    if (name.length === 0 || !newCategoryId) return;
+    if (name.length === 0 || !newCategoryId || creatingSaving) return;
     const milestones = newMilestones
       .map((m) => ({ ...m, title: m.title.trim(), description: m.description.trim() }))
       .filter((m) => m.title.length > 0);
     const objetivo = newObjetivo.trim();
 
-    await createProject.mutateAsync({
-      name,
-      categoryId: newCategoryId,
-      objetivo,
-      milestones,
-    });
+    setCreatingSaving(true);
+    setCreateError(null);
+    const timeout = new Promise<never>((_, rej) =>
+      setTimeout(() => rej(new Error("Timeout — reintentá si sigue pasando")), 10_000)
+    );
+    try {
+      await Promise.race([
+        createProject.mutateAsync({ name, categoryId: newCategoryId, objetivo, milestones }),
+        timeout,
+      ]);
+    } catch (e) {
+      setCreatingSaving(false);
+      setCreateError(e instanceof Error ? e.message : "No se pudo crear el proyecto");
+      return;
+    }
 
     // Desktop only: scaffold the Obsidian guide. A missing vault / Android
     // never blocks project creation, so swallow any error.
@@ -123,6 +136,7 @@ export function ProjectManager({ onClose }: Props) {
       }
     }
 
+    setCreatingSaving(false);
     cancelCreate();
   };
 
@@ -252,16 +266,19 @@ export function ProjectManager({ onClose }: Props) {
                   <IPlus size={11} /> Agregar hito
                 </button>
               </div>
+              {createError && (
+                <div style={{ fontSize: 12, color: "var(--danger)" }}>{createError}</div>
+              )}
               <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-                <button className="btn ghost" onClick={cancelCreate}>
+                <button className="btn ghost" onClick={cancelCreate} disabled={creatingSaving}>
                   Cancelar
                 </button>
                 <button
                   className="btn primary"
-                  onClick={submitCreate}
-                  disabled={newName.trim().length === 0}
+                  onClick={() => void submitCreate()}
+                  disabled={newName.trim().length === 0 || creatingSaving}
                 >
-                  Crear proyecto
+                  {creatingSaving ? "Creando…" : "Crear proyecto"}
                 </button>
               </div>
             </div>

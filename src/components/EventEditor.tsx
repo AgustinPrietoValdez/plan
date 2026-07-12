@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useEvents, useCreateEvent, usePatchEvent, useDeleteEvent, useCategories, useProjects } from "../lib/queries";
 import { useApp } from "../lib/store";
 import { colorsForCategory } from "../lib/categoryColor";
+import { todayYmd } from "../lib/date";
 import { vars } from "../lib/style";
 import { todayYmd } from "../lib/date";
 import { IX, ITrash, ICal } from "./icons";
@@ -64,11 +65,21 @@ export function EventEditor(props: Props) {
   const [categoryId, setCategoryId] = useState<string | null>(existing?.categoryId ?? null);
   const [projectId, setProjectId] = useState<string | null>(existing?.projectId ?? null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
-  const isBusy = createEvent.isPending || patchEvent.isPending || deleteEvent.isPending;
+  const isBusy = createEvent.isPending || patchEvent.isPending || deleteEvent.isPending || saving;
+
+  const withTimeout = <T,>(p: Promise<T>): Promise<T> =>
+    Promise.race([
+      p,
+      new Promise<never>((_, rej) => setTimeout(() => rej(new Error("Timeout — reintentá si sigue pasando")), 10_000)),
+    ]);
 
   const handleSave = async () => {
-    if (!title.trim()) return;
+    if (!title.trim() || saving) return;
+    setSaving(true);
+    setError(null);
     const payload = {
       title: title.trim(),
       day,
@@ -80,20 +91,33 @@ export function EventEditor(props: Props) {
       categoryId,
       projectId,
     };
-    if (props.mode === "create") {
-      await createEvent.mutateAsync(payload);
-    } else {
-      await patchEvent.mutateAsync({ id: props.eventId, patch: payload });
+    try {
+      if (props.mode === "create") {
+        await withTimeout(createEvent.mutateAsync(payload));
+      } else {
+        await withTimeout(patchEvent.mutateAsync({ id: props.eventId, patch: payload }));
+      }
+      props.onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo guardar");
+      setSaving(false);
     }
-    props.onClose();
   };
 
   const handleDelete = async () => {
     if (!confirmDelete) { setConfirmDelete(true); return; }
-    if (props.mode === "edit") {
-      await deleteEvent.mutateAsync(props.eventId);
+    if (saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      if (props.mode === "edit") {
+        await withTimeout(deleteEvent.mutateAsync(props.eventId));
+      }
+      props.onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo borrar");
+      setSaving(false);
     }
-    props.onClose();
   };
 
   const resolvedCatId = categoryId
@@ -289,6 +313,9 @@ export function EventEditor(props: Props) {
               onChange={(e) => setNotes(e.target.value)}
             />
           </div>
+          {error && (
+            <div style={{ fontSize: 12, color: "var(--danger)" }}>{error}</div>
+          )}
         </div>
 
         <div className="modal-foot">

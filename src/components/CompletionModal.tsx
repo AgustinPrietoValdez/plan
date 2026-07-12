@@ -26,6 +26,8 @@ export function CompletionModal({ task, onClose }: Props) {
 
   const [actual, setActual] = useState<number>(task.duration || 30);
   const [mode, setMode] = useState<Mode | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const setQuick = (m: number, kind: Mode) => {
     setActual(m);
@@ -35,8 +37,19 @@ export function CompletionModal({ task, onClose }: Props) {
   const delta = actual - (task.duration || 0);
 
   const confirm = async (val: number) => {
-    await completeTask(task, val);
-    onClose();
+    if (saving) return;
+    setSaving(true);
+    setError(null);
+    const timeout = new Promise<never>((_, rej) =>
+      setTimeout(() => rej(new Error("Timeout — reintentá si sigue pasando")), 10_000)
+    );
+    try {
+      await Promise.race([completeTask(task, val), timeout]);
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo guardar");
+      setSaving(false);
+    }
   };
 
   useEffect(() => {
@@ -170,18 +183,21 @@ export function CompletionModal({ task, onClose }: Props) {
               </span>
             )}
           </div>
+          {error && (
+            <div style={{ fontSize: 12, color: "var(--danger)" }}>{error}</div>
+          )}
         </div>
 
         <div className="modal-foot">
-          <button className="btn ghost" onClick={() => confirm(task.duration || 0)}>
+          <button className="btn ghost" onClick={() => void confirm(task.duration || 0)} disabled={saving}>
             Skip — log estimate
           </button>
           <div className="actions">
-            <button className="btn ghost" onClick={onClose}>
+            <button className="btn ghost" onClick={onClose} disabled={saving}>
               Cancel
             </button>
-            <button className="btn primary" onClick={() => confirm(actual)}>
-              Mark done
+            <button className="btn primary" onClick={() => void confirm(actual)} disabled={saving}>
+              {saving ? "Guardando…" : "Mark done"}
             </button>
           </div>
         </div>

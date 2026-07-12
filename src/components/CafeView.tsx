@@ -13,11 +13,11 @@ import {
   useBrewSessions,
   useDeleteBrewSession,
 } from "../lib/queries";
-import { addDays, daysBetween, fromYmd, todayYmd, ymd } from "../lib/date";
+import { addDays, fromYmd, todayYmd, ymd } from "../lib/date";
 import type { CoffeeBean, CoffeeRecipe, CoffeeRecipeStep, CoffeeStepType, WaterMode, BrewSession, BrewDatapoint } from "../types";
 import type { CoffeeBeanCreate, CoffeeRecipeCreate } from "../lib/repo";
 import { IPlus, ITrash, IChevD, IChevU, IX } from "./icons";
-import { analyzeCoffee } from "../lib/coffeeAnalysis";
+import { analyzeCoffee, askAboutBrew } from "../lib/coffeeAnalysis";
 import { useApp } from "../lib/store";
 
 // El boton "Analizar" lanza una terminal con Claude: desktop-only (en mobile no hay terminal).
@@ -29,9 +29,14 @@ const isMobile =
 
 type FreshnessStatus = "unknown" | "too-fresh" | "in-range" | "limit" | "stale";
 
-function freshnessStatus(roastedOn: string | null): FreshnessStatus {
+// `asOf` congela el conteo: para un grano terminado se pasa la fecha en que
+// se termino (no la fecha real de hoy), asi el descanso deja de sumar dias
+// mientras el grano esta archivado.
+function freshnessStatus(roastedOn: string | null, asOf: string = todayYmd()): FreshnessStatus {
   if (!roastedOn) return "unknown";
-  const days = daysBetween(fromYmd(roastedOn), fromYmd(todayYmd()));
+  const ref = fromYmd(asOf);
+  const roasted = fromYmd(roastedOn);
+  const days = Math.floor((ref.getTime() - roasted.getTime()) / 86_400_000);
   if (days < 0) return "unknown";
   if (days < 21) return "too-fresh";
   if (days <= 42) return "in-range";
@@ -39,9 +44,11 @@ function freshnessStatus(roastedOn: string | null): FreshnessStatus {
   return "stale";
 }
 
-function daysOld(roastedOn: string | null): number | null {
+function daysOld(roastedOn: string | null, asOf: string = todayYmd()): number | null {
   if (!roastedOn) return null;
-  return daysBetween(fromYmd(roastedOn), fromYmd(todayYmd()));
+  const ref = fromYmd(asOf);
+  const roasted = fromYmd(roastedOn);
+  return Math.floor((ref.getTime() - roasted.getTime()) / 86_400_000);
 }
 
 function fmtDmY(ymd: string): string {
@@ -177,9 +184,13 @@ export function CafeView() {
   // create while the original request is still in flight in the background.
   const [beanSavePending, setBeanSavePending] = useState(false);
   const [recipeSavePending, setRecipeSavePending] = useState(false);
+  const [askBrewBean, setAskBrewBean] = useState<CoffeeBean | null>(null);
+  const [askBrewText, setAskBrewText] = useState("");
+  const [finishingBean, setFinishingBean] = useState<CoffeeBean | null>(null);
 
   const beansQ = useCoffeeBeans();
   const recipesQ = useCoffeeRecipes();
+  const sessionsQ = useBrewSessions();
   const createBean = useCreateCoffeeBean();
   const patchBean = usePatchCoffeeBean();
   const consumeBean = useConsumeCoffeeBean();
@@ -191,6 +202,13 @@ export function CafeView() {
 
   const beans = beansQ.data ?? [];
   const recipes = recipesQ.data ?? [];
+  const sessions = sessionsQ.data ?? [];
+
+  function lastBrewFor(beanId: string): BrewSession | null {
+    const bs = sessions.filter((s) => s.beanId === beanId);
+    if (bs.length === 0) return null;
+    return bs.reduce((a, s) => (s.createdAt > a.createdAt ? s : a));
+  }
 
   // ---- bean actions ----
   function openCreateBean() { setBeanForm(defaultBeanForm()); setBeanEditor({ open: true, bean: null }); }
@@ -325,7 +343,7 @@ export function CafeView() {
             onEdit={openEditBean}
             onDeleteRequest={setDeleteBean}
             onCreateTask={(b) => void createOrderTask(b)}
-            onMarkFinished={(b) => { if (window.confirm(`Marcar "${b.name}" como terminado?`)) patchBean.mutate({ id: b.id, patch: { finishedAt: new Date().toISOString() } }); }}
+            onMarkFinished={(b) => setFinishingBean(b)}
             onConsume={(b) => {
               const inp = window.prompt(`Cuantos gramos usaste de "${b.name}"? (quedan ${b.weightGrams}g)`, "");
               if (inp == null) return;
@@ -337,9 +355,16 @@ export function CafeView() {
               const inp = window.prompt(`Reactivar "${b.name}". Gramos de stock nuevo:`, "250");
               if (inp == null) return;
               const g = parseFloat(inp.replace(",", "."));
-              patchBean.mutate({ id: b.id, patch: { finishedAt: null, weightGrams: Number.isFinite(g) && g > 0 ? g : b.weightGrams } });
+              // Reactivar reinicia el descanso: cuenta desde hoy, no desde el tueste original.
+              patchBean.mutate({ id: b.id, patch: { finishedAt: null, roastedOn: todayYmd(), weightGrams: Number.isFinite(g) && g > 0 ? g : b.weightGrams } });
             }}
-            onAnalizar={(b) => void analyzeCoffee(b)}
+            onAnalizar={(b) => {
+              analyzeCoffee(b).catch((err) => {
+                console.error("[CafeView] analyzeCoffee failed:", err);
+                window.alert(`No se pudo lanzar el analisis: ${err instanceof Error ? err.message : String(err)}`);
+              });
+            }}
+            onAskAboutBrew={(b) => { setAskBrewText(""); setAskBrewBean(b); }}
           />
         )}
         {tab === "recetas" && (
@@ -376,6 +401,52 @@ export function CafeView() {
           onStepsChange={(steps) => setRecipeForm((p) => ({ ...p, steps }))}
           onSave={() => void saveRecipe()}
           onClose={() => { setRecipeEditor({ open: false }); setSaveError(null); }}
+        />
+      )}
+
+      {/* Fase 7c: preguntarle a Claude sobre un brew que no salio bien */}
+      {askBrewBean && (
+        <Modal title={`Preguntar sobre "${askBrewBean.name}"`} onClose={() => setAskBrewBean(null)}>
+          <Field label="¿Qué salió mal? (amargo, plano, muy ácido...)">
+            <textarea
+              className="input"
+              rows={4}
+              autoFocus
+              value={askBrewText}
+              onChange={(e) => setAskBrewText(e.target.value)}
+              placeholder="Ej: salió muy amargo y con poco cuerpo"
+            />
+          </Field>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <button className="btn" onClick={() => setAskBrewBean(null)}>Cancelar</button>
+            <button
+              className="btn primary"
+              disabled={!askBrewText.trim()}
+              onClick={() => {
+                askAboutBrew(askBrewBean, lastBrewFor(askBrewBean.id), askBrewText.trim()).catch((err) => {
+                  console.error("[CafeView] askAboutBrew failed:", err);
+                  window.alert(`No se pudo lanzar la consulta: ${err instanceof Error ? err.message : String(err)}`);
+                });
+                setAskBrewBean(null);
+              }}
+            >
+              Preguntarle a Claude
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {/* Marcar terminado: pedir puntaje + tags de sabor antes de archivar (issue #10) */}
+      {finishingBean && (
+        <FinishBeanModal
+          bean={finishingBean}
+          onClose={() => setFinishingBean(null)}
+          onConfirm={async (rating, flavorTags) => {
+            await patchBean.mutateAsync({
+              id: finishingBean.id,
+              patch: { finishedAt: new Date().toISOString(), rating, flavorTags },
+            });
+          }}
         />
       )}
 
@@ -660,7 +731,7 @@ function BrewHistorialTab() {
 // ---------- Granos tab ----------
 
 function GranosTab({
-  beans, onEdit, onDeleteRequest, onCreateTask, onMarkFinished, onConsume, onReactivate, onAnalizar,
+  beans, onEdit, onDeleteRequest, onCreateTask, onMarkFinished, onConsume, onReactivate, onAnalizar, onAskAboutBrew,
 }: {
   beans: CoffeeBean[];
   onEdit: (b: CoffeeBean) => void;
@@ -670,6 +741,7 @@ function GranosTab({
   onConsume: (b: CoffeeBean) => void;
   onReactivate: (b: CoffeeBean) => void;
   onAnalizar: (b: CoffeeBean) => void;
+  onAskAboutBrew: (b: CoffeeBean) => void;
 }) {
   const active = beans.filter((b) => !b.finishedAt);
   const finished = beans.filter((b) => b.finishedAt);
@@ -693,7 +765,7 @@ function GranosTab({
       )}
       {active.map((b) => (
         <BeanCard key={b.id} bean={b} onEdit={onEdit} onDelete={onDeleteRequest} onCreateTask={onCreateTask}
-          needsOrder={needsOrder} onMarkFinished={onMarkFinished} onConsume={onConsume} onReactivate={onReactivate} onAnalizar={onAnalizar} />
+          needsOrder={needsOrder} onMarkFinished={onMarkFinished} onConsume={onConsume} onReactivate={onReactivate} onAnalizar={onAnalizar} onAskAboutBrew={onAskAboutBrew} />
       ))}
       {active.length === 0 && (
         <div style={{ fontSize: 13, color: "var(--fg-muted)", padding: "8px 4px" }}>No tenés cafés activos.</div>
@@ -707,7 +779,7 @@ function GranosTab({
           </button>
           {showFinished && finished.map((b) => (
             <BeanCard key={b.id} bean={b} onEdit={onEdit} onDelete={onDeleteRequest} onCreateTask={onCreateTask}
-              needsOrder={false} onMarkFinished={onMarkFinished} onConsume={onConsume} onReactivate={onReactivate} onAnalizar={onAnalizar} />
+              needsOrder={false} onMarkFinished={onMarkFinished} onConsume={onConsume} onReactivate={onReactivate} onAnalizar={onAnalizar} onAskAboutBrew={onAskAboutBrew} />
           ))}
         </>
       )}
@@ -716,7 +788,7 @@ function GranosTab({
 }
 
 function BeanCard({
-  bean: b, onEdit, onDelete, onCreateTask, needsOrder, onMarkFinished, onConsume, onReactivate, onAnalizar,
+  bean: b, onEdit, onDelete, onCreateTask, needsOrder, onMarkFinished, onConsume, onReactivate, onAnalizar, onAskAboutBrew,
 }: {
   bean: CoffeeBean;
   onEdit: (b: CoffeeBean) => void;
@@ -727,11 +799,13 @@ function BeanCard({
   onConsume: (b: CoffeeBean) => void;
   onReactivate: (b: CoffeeBean) => void;
   onAnalizar: (b: CoffeeBean) => void;
+  onAskAboutBrew: (b: CoffeeBean) => void;
 }) {
-  const status = freshnessStatus(b.roastedOn);
-  const days = daysOld(b.roastedOn);
-  const color = FRESHNESS_COLOR[status];
   const isFinished = !!b.finishedAt;
+  const asOf = isFinished && b.finishedAt ? b.finishedAt.slice(0, 10) : todayYmd();
+  const status = freshnessStatus(b.roastedOn, asOf);
+  const days = daysOld(b.roastedOn, asOf);
+  const color = FRESHNESS_COLOR[status];
 
   return (
     <div style={{
@@ -777,6 +851,22 @@ function BeanCard({
                 terminado{b.finishedAt ? ` ${fmtDmY(ymd(new Date(b.finishedAt)))}` : ""}
               </span>
             )}
+            {isFinished && b.rating != null && (
+              <span style={{ fontSize: 11, color: "var(--accent)", fontWeight: 600 }}>
+                ⭐ {b.rating}/10
+              </span>
+            )}
+            {isFinished && b.flavorTags.length > 0 && b.flavorTags.map((t) => (
+              <span
+                key={t}
+                style={{
+                  fontSize: 10.5, padding: "1px 7px", borderRadius: 999,
+                  background: "var(--bg-sunken)", color: "var(--fg-muted)",
+                }}
+              >
+                {t}
+              </span>
+            ))}
             {!isFinished && needsOrder && (
               <button className="btn ghost" style={{ fontSize: 11, padding: "2px 8px", color: "var(--accent)" }}
                 onClick={() => onCreateTask(b)}>
@@ -800,6 +890,13 @@ function BeanCard({
                 style={{ fontSize: 11, padding: "2px 8px", color: "var(--accent)", fontWeight: 600 }}
                 onClick={() => onAnalizar(b)}>
                 ☕ Analizar
+              </button>
+            )}
+            {!isFinished && !isMobile && (
+              <button className="btn ghost" title="Preguntarle a Claude sobre un brew que no salio bien"
+                style={{ fontSize: 11, padding: "2px 8px", color: "var(--accent)", fontWeight: 600 }}
+                onClick={() => onAskAboutBrew(b)}>
+                💬 Preguntar
               </button>
             )}
             {isFinished && (
@@ -1302,6 +1399,112 @@ function RecipeModal({ form, isEdit, saving, error, onChange, onStepsChange, onS
         </Field>
       </div>
       <ModalFooter saving={saving} isEdit={isEdit} onSave={onSave} onClose={onClose} saveLabel="receta" />
+    </Modal>
+  );
+}
+
+const FLAVOR_TAG_OPTIONS = [
+  "Floral", "Cítrico", "Frutal", "Achocolatado", "Nuez/Caramelo",
+  "Especiado", "Herbal", "Terroso", "Ácido brillante", "Dulce",
+];
+
+function FinishBeanModal({ bean, onClose, onConfirm }: {
+  bean: CoffeeBean;
+  onClose: () => void;
+  onConfirm: (rating: number | null, flavorTags: string[]) => Promise<void>;
+}) {
+  const [rating, setRating] = useState<number | null>(null);
+  const [tags, setTags] = useState<string[]>([]);
+  const [customTag, setCustomTag] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const toggleTag = (t: string) => {
+    setTags((prev) => (prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]));
+  };
+
+  const addCustomTag = () => {
+    const t = customTag.trim();
+    if (t && !tags.includes(t)) setTags((prev) => [...prev, t]);
+    setCustomTag("");
+  };
+
+  const confirm = async () => {
+    if (saving) return;
+    setSaving(true);
+    setError(null);
+    const finalTags = customTag.trim() && !tags.includes(customTag.trim())
+      ? [...tags, customTag.trim()]
+      : tags;
+    const timeout = new Promise<never>((_, rej) =>
+      setTimeout(() => rej(new Error("Timeout — reintentá si sigue pasando")), 10_000)
+    );
+    try {
+      await Promise.race([onConfirm(rating, finalTags), timeout]);
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo guardar");
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal title={`Marcar "${bean.name}" como terminado`} onClose={onClose}>
+      <Field label="Puntaje (1-10)">
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
+            <button
+              key={n}
+              type="button"
+              className={`btn ${rating === n ? "primary" : "ghost"}`}
+              style={{ width: 34, padding: "4px 0", fontVariantNumeric: "tabular-nums", justifyContent: "center" }}
+              onClick={() => setRating(n)}
+            >
+              {n}
+            </button>
+          ))}
+        </div>
+      </Field>
+
+      <Field label="Sabores (opcional)">
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {FLAVOR_TAG_OPTIONS.map((t) => (
+            <button
+              key={t}
+              type="button"
+              className={`btn ${tags.includes(t) ? "primary" : "ghost"}`}
+              style={{ fontSize: 11.5, padding: "3px 9px", borderRadius: 999 }}
+              onClick={() => toggleTag(t)}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+          <input
+            className="input"
+            placeholder="Agregar sabor propio…"
+            value={customTag}
+            onChange={(e) => setCustomTag(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addCustomTag(); } }}
+            style={{ flex: 1 }}
+          />
+          <button type="button" className="btn ghost" onClick={addCustomTag} disabled={!customTag.trim()}>
+            Agregar
+          </button>
+        </div>
+      </Field>
+
+      {error && (
+        <div style={{ fontSize: 12, color: "var(--danger)" }}>{error}</div>
+      )}
+
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+        <button className="btn" onClick={onClose} disabled={saving}>Cancelar</button>
+        <button className="btn primary" onClick={() => void confirm()} disabled={saving}>
+          {saving ? "Guardando…" : "Marcar terminado"}
+        </button>
+      </div>
     </Modal>
   );
 }

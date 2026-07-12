@@ -91,6 +91,11 @@ export const IRecurring = (p: IconProps) => (
   </Icon>
 );
 export const IX = (p: IconProps) => <Icon {...p} d="M6 6l12 12M18 6l-12 12" />;
+export const IEdit = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M17 3a2.83 2.83 0 014 4L7 21l-4 1 1-4z" />
+  </Icon>
+);
 export const ITrash = (p: IconProps) => (
   <Icon {...p}>
     <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" />

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import { colorsForHue } from "../lib/categoryColor";
+import { todayYmd } from "../lib/date";
 import { CURRENCY, fmtMoney, fmtMoneyIn, parseMoney } from "../lib/money";
 import {
   useAccounts,
@@ -120,7 +121,7 @@ export function ExpenseEditor({ mode, expenseId, prefill, onClose }: Props) {
       categoryId: prefill?.categoryId ?? null,
       accountId: prefill?.accountId ?? null,
       goalId: prefill?.goalId ?? null,
-      spentOn: prefill?.spentOn ?? new Date().toISOString().slice(0, 10),
+      spentOn: prefill?.spentOn ?? todayYmd(),
       note: "",
       recurrence: null,
     };

@@ -85,3 +85,11 @@ export async function analyzeCoffee(b: CoffeeBean): Promise<void> {
   const context = buildContext(b, brews);
   await invoke("launch_coffee_analysis", { repoPath: REPO_PATH, context, photoPath });
 }
+
+// Fase 7c: pregunta puntual sobre un brew que no salio como se esperaba.
+// Mismo mecanismo que analyzeCoffee (terminal con Claude), pero el prompt
+// parte de la queja del usuario en vez de armar una receta inicial.
+export async function askAboutBrew(b: CoffeeBean, lastBrew: BrewSession | null, question: string): Promise<void> {
+  const context = buildContext(b, lastBrew ? [lastBrew] : []);
+  await invoke("launch_coffee_question", { repoPath: REPO_PATH, context, question });
+}

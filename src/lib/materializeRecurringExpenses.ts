@@ -1,22 +1,26 @@
 import { useEffect, useRef } from "react";
 import { useCreateExpense, useExpenses, usePatchExpense } from "./queries";
 import { nextOccurrence } from "./recurrence";
-import { todayYmd } from "./date";
+import { useToday } from "./useToday";
 
 /** For each active recurring expense (latest in chain with rule != null),
  *  generate forward instances up to today. Idempotent because we check
- *  whether an instance for the next-due date already exists in the chain. */
+ *  whether an instance for the next-due date already exists in the chain.
+ *  `today` comes from useToday() (not a one-off todayYmd() call) so this
+ *  effect also re-runs when the calendar day changes while the app stays
+ *  open, instead of only when expense data itself changes. */
 export function useMaterializeRecurringExpenses(userId: string | undefined) {
   const expensesQ = useExpenses();
   const create = useCreateExpense();
   const patch = usePatchExpense();
   const ranRef = useRef<string | null>(null);
+  const today = useToday();
 
   useEffect(() => {
     if (!userId) return;
     if (expensesQ.isLoading || expensesQ.isFetching) return;
     if (!expensesQ.data) return;
-    const stamp = `${userId}:${expensesQ.data.length}:${expensesQ.data
+    const stamp = `${userId}:${today}:${expensesQ.data.length}:${expensesQ.data
       .map((e) => e.updatedAt)
       .reduce((max, u) => (u > max ? u : max), "")}`;
     if (ranRef.current === stamp) return;
@@ -24,7 +28,6 @@ export function useMaterializeRecurringExpenses(userId: string | undefined) {
 
     (async () => {
       const expenses = expensesQ.data ?? [];
-      const today = todayYmd();
 
       // group by chain root (recurrence_parent_id, or self if no parent)
       const chains = new Map<string, typeof expenses>();

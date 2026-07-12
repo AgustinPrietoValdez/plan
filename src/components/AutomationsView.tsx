@@ -82,16 +82,19 @@ export function AutomationsView() {
   const [form, setForm] = useState<FormState>(defaultForm());
   const [configError, setConfigError] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   function openCreate() {
     setForm(defaultForm());
     setConfigError(false);
+    setSaveError(null);
     setEditor({ open: true, automation: null });
   }
 
   function openEdit(a: Automation) {
     setForm(formFromAutomation(a));
     setConfigError(false);
+    setSaveError(null);
     setEditor({ open: true, automation: a });
   }
 
@@ -120,21 +123,37 @@ export function AutomationsView() {
       notes: form.notes.trim(),
     };
 
-    if (editor.open && editor.automation) {
-      await patchMut.mutateAsync({ id: editor.automation.id, patch: payload });
-    } else {
-      await createMut.mutateAsync(payload);
+    setSaveError(null);
+    const timeout = new Promise<never>((_, rej) =>
+      setTimeout(() => rej(new Error("Timeout — reintentá si sigue pasando")), 10_000)
+    );
+    try {
+      if (editor.open && editor.automation) {
+        await Promise.race([patchMut.mutateAsync({ id: editor.automation.id, patch: payload }), timeout]);
+      } else {
+        await Promise.race([createMut.mutateAsync(payload), timeout]);
+      }
+      closeEditor();
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : "No se pudo guardar");
     }
-    closeEditor();
   }
 
   async function handleDelete(id: string) {
-    await deleteMut.mutateAsync(id);
-    setDeleteConfirm(null);
+    try {
+      await deleteMut.mutateAsync(id);
+      setDeleteConfirm(null);
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "No se pudo borrar");
+    }
   }
 
   async function toggleEnabled(a: Automation) {
-    await patchMut.mutateAsync({ id: a.id, patch: { enabled: !a.enabled } });
+    try {
+      await patchMut.mutateAsync({ id: a.id, patch: { enabled: !a.enabled } });
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "No se pudo cambiar el estado");
+    }
   }
 
   const grouped = groupByProject(automations, projects);
@@ -199,6 +218,7 @@ export function AutomationsView() {
           isEdit={editor.automation !== null}
           projects={projects}
           configError={configError}
+          saveError={saveError}
           saving={createMut.isPending || patchMut.isPending}
           onChange={handleField}
           onSave={() => void handleSave()}
@@ -314,13 +334,14 @@ interface ModalProps {
   isEdit: boolean;
   projects: { id: string; name: string; archived: boolean }[];
   configError: boolean;
+  saveError: string | null;
   saving: boolean;
   onChange: <K extends keyof FormState>(key: K, value: FormState[K]) => void;
   onSave: () => void;
   onClose: () => void;
 }
 
-function AutomationModal({ form, isEdit, projects, configError, saving, onChange, onSave, onClose }: ModalProps) {
+function AutomationModal({ form, isEdit, projects, configError, saveError, saving, onChange, onSave, onClose }: ModalProps) {
   const activeProjects = projects.filter((p) => !p.archived);
   return (
     <div
@@ -431,8 +452,12 @@ function AutomationModal({ form, isEdit, projects, configError, saving, onChange
           Habilitada
         </label>
 
+        {saveError && (
+          <div style={{ fontSize: 12, color: "var(--danger)" }}>{saveError}</div>
+        )}
+
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, paddingTop: 4 }}>
-          <button className="btn" onClick={onClose}>Cancelar</button>
+          <button className="btn" onClick={onClose} disabled={saving}>Cancelar</button>
           <button className="btn primary" onClick={onSave} disabled={saving || !form.name.trim()}>
             {saving ? "Guardando…" : isEdit ? "Guardar" : "Crear"}
           </button>
