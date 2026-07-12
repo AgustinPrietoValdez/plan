@@ -187,7 +187,9 @@ function RecipeFollow({ recipe, onBack }: { recipe: Recipe; onBack: () => void }
 
       {sheetOpen && (
         <ComiSheet recipe={recipe} onClose={() => setSheetOpen(false)} onConfirm={(cooked, eaten, slot) => {
-          void logMeal(recipe, cooked, eaten, slot, todayYmd());
+          logMeal(recipe, cooked, eaten, slot, todayYmd()).catch((err) =>
+            window.alert(err instanceof Error ? err.message : "No se pudo registrar la comida"),
+          );
           setSheetOpen(false);
         }} />
       )}

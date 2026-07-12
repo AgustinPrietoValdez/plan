@@ -87,6 +87,17 @@ export function TaskEditor({ mode, task, prefill, onClose, onSwitchToEvent }: Pr
     mode === "edit" && task ? fromTask(task) : fromPrefill(prefill ?? {}),
   );
   const subtaskCounter = useRef(0);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const isBusy =
+    patchTask.isPending || createTask.isPending || deleteTask.isPending || saving;
+
+  const withTimeout = <T,>(p: Promise<T>): Promise<T> =>
+    Promise.race([
+      p,
+      new Promise<never>((_, rej) => setTimeout(() => rej(new Error("Timeout — reintentá si sigue pasando")), 10_000)),
+    ]);
 
   useEffect(() => {
     if (mode === "edit" && task) setDraft(fromTask(task));
@@ -94,76 +105,99 @@ export function TaskEditor({ mode, task, prefill, onClose, onSwitchToEvent }: Pr
 
   const set = (patch: Partial<DraftFields>) => setDraft((d) => ({ ...d, ...patch }));
 
-  const save = () => {
+  const save = async () => {
+    if (saving) return;
+    setSaving(true);
+    setError(null);
     const isHabit = draft.recurrence !== null && draft.isHabit;
-    if (mode === "edit" && task) {
-      // Checking "done" on a recurring/habit task here has to advance the
-      // chain the same way the completion modal does — otherwise the chain
-      // silently stops forever (recurrence only ever lives on this one row).
-      const justCompleted = !task.done && draft.done && task.recurrence !== null;
-      if (justCompleted) {
-        void completeTask(task, draft.duration).then(() => {
+    try {
+      if (mode === "edit" && task) {
+        // Checking "done" on a recurring/habit task here has to advance the
+        // chain the same way the completion modal does — otherwise the chain
+        // silently stops forever (recurrence only ever lives on this one row).
+        const justCompleted = !task.done && draft.done && task.recurrence !== null;
+        if (justCompleted) {
+          await withTimeout(completeTask(task, draft.duration));
           // completeTask only patches done/actualDuration/completedAt/recurrence —
           // apply the rest of the edited fields (title, project, notes, etc.) too.
-          patchTask.mutate({
-            id: task.id,
-            patch: {
-              title: draft.title,
-              projectId: draft.projectId,
-              categoryId: draft.categoryId,
-              priority: draft.priority,
-              duration: draft.duration,
-              day: draft.day,
-              notes: draft.notes,
-              subtasks: draft.subtasks,
-              isHabit,
-            },
-          });
-        });
+          await withTimeout(
+            patchTask.mutateAsync({
+              id: task.id,
+              patch: {
+                title: draft.title,
+                projectId: draft.projectId,
+                categoryId: draft.categoryId,
+                priority: draft.priority,
+                duration: draft.duration,
+                day: draft.day,
+                notes: draft.notes,
+                subtasks: draft.subtasks,
+                isHabit,
+              },
+            }),
+          );
+        } else {
+          await withTimeout(
+            patchTask.mutateAsync({
+              id: task.id,
+              patch: {
+                title: draft.title,
+                projectId: draft.projectId,
+                categoryId: draft.categoryId,
+                priority: draft.priority,
+                duration: draft.duration,
+                day: draft.day,
+                recurring: draft.recurrence !== null,
+                recurrence: draft.recurrence,
+                notes: draft.notes,
+                subtasks: draft.subtasks,
+                done: draft.done,
+                isHabit,
+              },
+            }),
+          );
+        }
       } else {
-        patchTask.mutate({
-          id: task.id,
-          patch: {
+        await withTimeout(
+          createTask.mutateAsync({
             title: draft.title,
             projectId: draft.projectId,
             categoryId: draft.categoryId,
             priority: draft.priority,
             duration: draft.duration,
             day: draft.day,
+            due: null,
             recurring: draft.recurrence !== null,
             recurrence: draft.recurrence,
+            recurrenceParentId: null,
             notes: draft.notes,
             subtasks: draft.subtasks,
-            done: draft.done,
             isHabit,
-          },
-        });
+          }),
+        );
       }
-    } else {
-      createTask.mutate({
-        title: draft.title,
-        projectId: draft.projectId,
-        categoryId: draft.categoryId,
-        priority: draft.priority,
-        duration: draft.duration,
-        day: draft.day,
-        due: null,
-        recurring: draft.recurrence !== null,
-        recurrence: draft.recurrence,
-        recurrenceParentId: null,
-        notes: draft.notes,
-        subtasks: draft.subtasks,
-        isHabit,
-      });
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo guardar");
+      setSaving(false);
     }
-    onClose();
   };
 
-  const remove = () => {
+  const remove = async () => {
+    if (saving) return;
     if (mode === "edit" && task) {
-      deleteTask.mutate(task.id);
+      setSaving(true);
+      setError(null);
+      try {
+        await withTimeout(deleteTask.mutateAsync(task.id));
+        onClose();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "No se pudo borrar");
+        setSaving(false);
+      }
+    } else {
+      onClose();
     }
-    onClose();
   };
 
   const onTitleKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -548,20 +582,23 @@ export function TaskEditor({ mode, task, prefill, onClose, onSwitchToEvent }: Pr
               </div>
             </div>
           </div>
+          {error && (
+            <div style={{ fontSize: 12, color: "var(--danger)" }}>{error}</div>
+          )}
         </div>
         <div className="modal-foot">
           {mode === "edit" ? (
-            <button className="btn ghost danger" onClick={remove}>
+            <button className="btn ghost danger" onClick={remove} disabled={isBusy}>
               <ITrash size={12} /> Delete
             </button>
           ) : (
             <span />
           )}
           <div className="actions">
-            <button className="btn ghost" onClick={onClose}>
+            <button className="btn ghost" onClick={onClose} disabled={isBusy}>
               Cancel
             </button>
-            <button className="btn primary" onClick={save}>
+            <button className="btn primary" onClick={save} disabled={isBusy}>
               Save
             </button>
           </div>

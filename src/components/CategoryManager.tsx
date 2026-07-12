@@ -51,7 +51,9 @@ export function CategoryManager({ onClose }: Props) {
     if (!editingId) return;
     const trimmed = draftName.trim();
     if (trimmed.length > 0) {
-      patchCategory.mutate({ id: editingId, patch: { name: trimmed } });
+      patchCategory.mutateAsync({ id: editingId, patch: { name: trimmed } }).catch((err) =>
+        window.alert(err instanceof Error ? err.message : "No se pudo renombrar"),
+      );
     }
     setEditingId(null);
     setDraftName("");
@@ -61,15 +63,17 @@ export function CategoryManager({ onClose }: Props) {
     const usedHues = new Set(categories.map((c) => c.hue));
     const nextHue = HUE_PRESETS.find((h) => !usedHues.has(h)) ?? HUE_PRESETS[0];
     const nextPosition = categories.length;
-    createCategory.mutate({
+    createCategory.mutateAsync({
       name: "Untitled",
       hue: nextHue,
       position: nextPosition,
-    });
+    }).catch((err) => window.alert(err instanceof Error ? err.message : "No se pudo crear"));
   };
 
   const onConfirmDelete = (id: string) => {
-    deleteCategory.mutate(id);
+    deleteCategory.mutateAsync(id).catch((err) =>
+      window.alert(err instanceof Error ? err.message : "No se pudo borrar"),
+    );
     setConfirmDeleteId(null);
   };
 
@@ -226,7 +230,11 @@ export function CategoryManager({ onClose }: Props) {
                     return (
                       <button
                         key={h}
-                        onClick={() => patchCategory.mutate({ id: c.id, patch: { hue: h } })}
+                        onClick={() =>
+                          patchCategory.mutateAsync({ id: c.id, patch: { hue: h } }).catch((err) =>
+                            window.alert(err instanceof Error ? err.message : "No se pudo cambiar el color"),
+                          )
+                        }
                         title={`Hue ${h}`}
                         style={{
                           width: 22,

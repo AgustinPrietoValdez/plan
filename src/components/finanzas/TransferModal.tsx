@@ -66,19 +66,38 @@ export function TransferModal({
   const amount = parseMoney(amountText);
   const canSave = !!fromId && !!toId && fromId !== toId && amount !== null && amount > 0;
 
-  const save = () => {
-    if (!canSave || !fromAccount || amount === null) return;
-    create.mutate({
-      fromAccountId: fromId,
-      toAccountId: toId,
-      amount,
-      currency: fromAccount.currency,
-      transferredOn: date,
-      kind,
-      goalId: kind === "savings" && goalId ? goalId : null,
-    });
-    onSaved?.();
-    onClose();
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const isBusy = create.isPending || saving;
+
+  const withTimeout = <T,>(p: Promise<T>): Promise<T> =>
+    Promise.race([
+      p,
+      new Promise<never>((_, rej) => setTimeout(() => rej(new Error("Timeout — reintentá si sigue pasando")), 10_000)),
+    ]);
+
+  const save = async () => {
+    if (!canSave || !fromAccount || amount === null || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await withTimeout(
+        create.mutateAsync({
+          fromAccountId: fromId,
+          toAccountId: toId,
+          amount,
+          currency: fromAccount.currency,
+          transferredOn: date,
+          kind,
+          goalId: kind === "savings" && goalId ? goalId : null,
+        }),
+      );
+      onSaved?.();
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo guardar");
+      setSaving(false);
+    }
   };
 
   const onBackdropMouseDown = (e: MouseEvent<HTMLDivElement>) => {
@@ -173,16 +192,19 @@ export function TransferModal({
               <input type="date" className="input" style={{ width: "auto" }} value={date} onChange={(e) => setDate(e.target.value)} />
             </div>
           </div>
+          {error && (
+            <div style={{ fontSize: 12, color: "var(--danger)" }}>{error}</div>
+          )}
         </div>
 
         <div className="modal-foot">
           <span />
           <div className="actions">
-            <button className="btn ghost" onClick={onClose}>Cancelar</button>
+            <button className="btn ghost" onClick={onClose} disabled={isBusy}>Cancelar</button>
             <button
               className="btn primary"
               onClick={save}
-              disabled={!canSave}
+              disabled={!canSave || isBusy}
               style={!canSave ? { opacity: 0.5, cursor: "not-allowed" } : undefined}
             >
               Guardar

@@ -280,13 +280,17 @@ export function HabitsView() {
     // same day (same DB key), so the two writes never conflict.
     const periodStart = habitPeriodStart(h.rule, h.anchorDay, today);
     if (covered) {
-      upsertLog.mutate({ taskId: h.rootId, day: periodStart, done: false });
+      upsertLog.mutateAsync({ taskId: h.rootId, day: periodStart, done: false }).catch((err) =>
+        window.alert(err instanceof Error ? err.message : "No se pudo guardar el habito"),
+      );
       return;
     }
     if (h.todayActive) {
       openCompletion(h.todayActive.id);
     } else {
-      upsertLog.mutate({ taskId: h.rootId, day: periodStart, done: true });
+      upsertLog.mutateAsync({ taskId: h.rootId, day: periodStart, done: true }).catch((err) =>
+        window.alert(err instanceof Error ? err.message : "No se pudo guardar el habito"),
+      );
     }
   };
 
@@ -314,9 +318,13 @@ export function HabitsView() {
     if (containsToday) {
       onCheck(h);
     } else if (state === "done") {
-      upsertLog.mutate({ taskId: h.rootId, day: segPeriodStart, done: false });
+      upsertLog.mutateAsync({ taskId: h.rootId, day: segPeriodStart, done: false }).catch((err) =>
+        window.alert(err instanceof Error ? err.message : "No se pudo guardar el habito"),
+      );
     } else if (state === "missed") {
-      upsertLog.mutate({ taskId: h.rootId, day: segPeriodStart, done: true });
+      upsertLog.mutateAsync({ taskId: h.rootId, day: segPeriodStart, done: true }).catch((err) =>
+        window.alert(err instanceof Error ? err.message : "No se pudo guardar el habito"),
+      );
     }
   };
 

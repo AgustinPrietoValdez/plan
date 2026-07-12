@@ -443,69 +443,110 @@ function AccountEditor({
     if (e.target === e.currentTarget) onClose();
   };
 
-  const save = () => {
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const isBusy = create.isPending || patch.isPending || remove.isPending || saving;
+
+  const withTimeout = <T,>(p: Promise<T>): Promise<T> =>
+    Promise.race([
+      p,
+      new Promise<never>((_, rej) => setTimeout(() => rej(new Error("Timeout — reintentá si sigue pasando")), 10_000)),
+    ]);
+
+  const save = async () => {
     const name = draft.name.trim();
-    if (!name) return;
+    if (!name || saving) return;
     const balance = parseMoney(balanceText) ?? 0;
-    if (mode === "edit" && existing) {
-      // A manual balance edit must also move the opening_balance/balance_as_of
-      // anchor to today, or the next reconcileAccountBalances() self-heal
-      // (runs on every app start) recomputes from the OLD anchor and overwrites
-      // this edit right back to the stale value.
-      const balanceChanged = balance !== existing.balance;
-      patch.mutate({
-        id: existing.id,
-        patch: {
-          name,
-          owner: draft.owner,
-          type: draft.type,
-          currency: draft.currency,
-          balance,
-          ...(balanceChanged && {
+    setSaving(true);
+    setError(null);
+    try {
+      if (mode === "edit" && existing) {
+        // A manual balance edit must also move the opening_balance/balance_as_of
+        // anchor to today, or the next reconcileAccountBalances() self-heal
+        // (runs on every app start) recomputes from the OLD anchor and overwrites
+        // this edit right back to the stale value.
+        const balanceChanged = balance !== existing.balance;
+        await withTimeout(
+          patch.mutateAsync({
+            id: existing.id,
+            patch: {
+              name,
+              owner: draft.owner,
+              type: draft.type,
+              currency: draft.currency,
+              balance,
+              ...(balanceChanged && {
+                openingBalance: balance,
+                balanceAsOf: new Date().toISOString().slice(0, 10),
+              }),
+              institution: draft.institution.trim(),
+              note: draft.note.trim(),
+              receivesIncome: draft.receivesIncome,
+              paysExpenses: draft.paysExpenses,
+              isSavingsTarget: draft.isSavingsTarget,
+              isInvestmentTarget: draft.isInvestmentTarget,
+            },
+          }),
+        );
+      } else {
+        // Phase B: opening balance = balance.
+        await withTimeout(
+          create.mutateAsync({
+            name,
+            owner: draft.owner,
+            type: draft.type,
+            currency: draft.currency,
+            balance,
             openingBalance: balance,
             balanceAsOf: new Date().toISOString().slice(0, 10),
+            institution: draft.institution.trim(),
+            note: draft.note.trim(),
+            receivesIncome: draft.receivesIncome,
+            paysExpenses: draft.paysExpenses,
+            isSavingsTarget: draft.isSavingsTarget,
+            isInvestmentTarget: draft.isInvestmentTarget,
           }),
-          institution: draft.institution.trim(),
-          note: draft.note.trim(),
-          receivesIncome: draft.receivesIncome,
-          paysExpenses: draft.paysExpenses,
-          isSavingsTarget: draft.isSavingsTarget,
-          isInvestmentTarget: draft.isInvestmentTarget,
-        },
-      });
+        );
+      }
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo guardar");
+      setSaving(false);
+    }
+  };
+
+  const onArchive = async () => {
+    if (saving) return;
+    if (mode === "edit" && existing) {
+      setSaving(true);
+      setError(null);
+      try {
+        await withTimeout(patch.mutateAsync({ id: existing.id, patch: { archived: true } }));
+        onClose();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "No se pudo archivar");
+        setSaving(false);
+      }
     } else {
-      // Phase B: opening balance = balance.
-      create.mutate({
-        name,
-        owner: draft.owner,
-        type: draft.type,
-        currency: draft.currency,
-        balance,
-        openingBalance: balance,
-        balanceAsOf: new Date().toISOString().slice(0, 10),
-        institution: draft.institution.trim(),
-        note: draft.note.trim(),
-        receivesIncome: draft.receivesIncome,
-        paysExpenses: draft.paysExpenses,
-        isSavingsTarget: draft.isSavingsTarget,
-        isInvestmentTarget: draft.isInvestmentTarget,
-      });
+      onClose();
     }
-    onClose();
   };
 
-  const onArchive = () => {
+  const onDelete = async () => {
+    if (saving) return;
     if (mode === "edit" && existing) {
-      patch.mutate({ id: existing.id, patch: { archived: true } });
+      setSaving(true);
+      setError(null);
+      try {
+        await withTimeout(remove.mutateAsync(existing.id));
+        onClose();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "No se pudo borrar");
+        setSaving(false);
+      }
+    } else {
+      onClose();
     }
-    onClose();
-  };
-
-  const onDelete = () => {
-    if (mode === "edit" && existing) {
-      remove.mutate(existing.id);
-    }
-    onClose();
   };
 
   const checkbox = (
@@ -661,6 +702,9 @@ function AccountEditor({
               onChange={(e) => set({ note: e.target.value })}
             />
           </div>
+          {error && (
+            <div style={{ fontSize: 12, color: "var(--danger)" }}>{error}</div>
+          )}
         </div>
 
         <div className="modal-foot">
@@ -670,6 +714,7 @@ function AccountEditor({
                 <button
                   className="btn ghost"
                   onClick={() => setConfirmDelete(false)}
+                  disabled={isBusy}
                   style={{ padding: "4px 8px", fontSize: 11.5 }}
                 >
                   Cancelar
@@ -677,6 +722,7 @@ function AccountEditor({
                 <button
                   className="btn"
                   onClick={onDelete}
+                  disabled={isBusy}
                   style={{
                     padding: "4px 8px",
                     fontSize: 11.5,
@@ -689,10 +735,10 @@ function AccountEditor({
               </div>
             ) : (
               <div style={{ display: "flex", gap: 6 }}>
-                <button className="btn ghost" onClick={onArchive}>
+                <button className="btn ghost" onClick={onArchive} disabled={isBusy}>
                   Archivar
                 </button>
-                <button className="btn ghost danger" onClick={() => setConfirmDelete(true)}>
+                <button className="btn ghost danger" onClick={() => setConfirmDelete(true)} disabled={isBusy}>
                   <ITrash size={12} /> Borrar
                 </button>
               </div>
@@ -701,13 +747,13 @@ function AccountEditor({
             <span />
           )}
           <div className="actions">
-            <button className="btn ghost" onClick={onClose}>
+            <button className="btn ghost" onClick={onClose} disabled={isBusy}>
               Cancelar
             </button>
             <button
               className="btn primary"
               onClick={save}
-              disabled={draft.name.trim().length === 0}
+              disabled={draft.name.trim().length === 0 || isBusy}
               style={draft.name.trim().length === 0 ? { opacity: 0.5, cursor: "not-allowed" } : undefined}
             >
               <ICheck size={12} stroke={2.4} /> Guardar

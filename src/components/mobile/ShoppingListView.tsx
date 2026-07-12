@@ -45,13 +45,21 @@ export function ShoppingListView() {
 
   const setQtyAbs = (it: ShoppingItem, n: number) => {
     const next = Math.max(1, n);
-    if (next !== it.quantity) patchItem.mutate({ id: it.id, patch: { quantity: next } });
+    if (next !== it.quantity) {
+      patchItem.mutateAsync({ id: it.id, patch: { quantity: next } }).catch((err) =>
+        window.alert(err instanceof Error ? err.message : "No se pudo guardar la cantidad"),
+      );
+    }
   };
 
   const clearBought = () => {
     if (bought.length === 0) return;
     if (!window.confirm(`Vaciar ${bought.length} producto(s) comprado(s)?`)) return;
-    for (const it of bought) deleteItem.mutate(it.id);
+    for (const it of bought) {
+      deleteItem.mutateAsync(it.id).catch((err) =>
+        window.alert(err instanceof Error ? err.message : "No se pudo borrar un ítem"),
+      );
+    }
   };
 
   return (
@@ -78,7 +86,11 @@ export function ShoppingListView() {
               usdRate={usdRate}
               onToggle={() => toggleBought(it, !it.bought)}
               onSetQty={(n) => setQtyAbs(it, n)}
-              onDelete={() => deleteItem.mutate(it.id)}
+              onDelete={() =>
+                deleteItem.mutateAsync(it.id).catch((err) =>
+                  window.alert(err instanceof Error ? err.message : "No se pudo borrar"),
+                )
+              }
             />
           ))}
           {bought.length > 0 && (
@@ -97,7 +109,11 @@ export function ShoppingListView() {
               usdRate={usdRate}
               onToggle={() => toggleBought(it, !it.bought)}
               onSetQty={(n) => setQtyAbs(it, n)}
-              onDelete={() => deleteItem.mutate(it.id)}
+              onDelete={() =>
+                deleteItem.mutateAsync(it.id).catch((err) =>
+                  window.alert(err instanceof Error ? err.message : "No se pudo borrar"),
+                )
+              }
             />
           ))}
         </ul>
@@ -140,8 +156,10 @@ function AddSheet({ onClose }: { onClose: () => void }) {
     const item = { ...add, weekStart };
     const current = (itemsQ.data ?? []).filter((i) => i.weekStart === weekStart);
     const target = findMergeTarget(current, item);
-    if (target) patchItem.mutate({ id: target.id, patch: { quantity: target.quantity + add.quantity } });
-    else createItem.mutate(item);
+    const p = target
+      ? patchItem.mutateAsync({ id: target.id, patch: { quantity: target.quantity + add.quantity } })
+      : createItem.mutateAsync(item);
+    p.catch((err) => window.alert(err instanceof Error ? err.message : "No se pudo agregar"));
   };
 
   return (

@@ -642,7 +642,9 @@ export function BudgetView() {
     : monthExpenses;
 
   const onPauseRecurring = (e: Expense) => {
-    patchExpense.mutate({ id: e.id, patch: { recurrence: null } });
+    patchExpense.mutateAsync({ id: e.id, patch: { recurrence: null } }).catch((err) =>
+      window.alert(err instanceof Error ? err.message : "No se pudo pausar"),
+    );
   };
 
   return (
@@ -754,7 +756,11 @@ export function BudgetView() {
             budgets={budgets}
             onToggleHidden={(categoryId) => {
               const cat = categories.find((c) => c.id === categoryId);
-              if (cat) patchExpenseCategory.mutate({ id: categoryId, patch: { hiddenFromChart: !cat.hiddenFromChart } });
+              if (cat) {
+                patchExpenseCategory
+                  .mutateAsync({ id: categoryId, patch: { hiddenFromChart: !cat.hiddenFromChart } })
+                  .catch((err) => window.alert(err instanceof Error ? err.message : "No se pudo cambiar"));
+              }
             }}
             selectedCategoryId={filterCategoryId}
             onSelectCategory={(categoryId) => setFilterCategoryId(filterCategoryId === categoryId ? null : categoryId)}
@@ -812,7 +818,9 @@ export function BudgetView() {
                 onToggle={() => setExpandedExpenseId(expandedExpenseId === e.id ? null : e.id)}
                 onEdit={() => openExpenseEdit(e.id)}
                 onDelete={() => {
-                  deleteExpense.mutate(e.id);
+                  deleteExpense.mutateAsync(e.id).catch((err) =>
+                    window.alert(err instanceof Error ? err.message : "No se pudo borrar"),
+                  );
                   if (expandedExpenseId === e.id) setExpandedExpenseId(null);
                 }}
               />
@@ -838,7 +846,9 @@ export function BudgetView() {
             accounts={incomeAccounts}
             incomeByAccountId={incomeByAccountId}
             onSave={(account, amount) =>
-              upsertIncome.mutate({ month: budgetMonth, amount, currency: account.currency, accountId: account.id })
+              upsertIncome
+                .mutateAsync({ month: budgetMonth, amount, currency: account.currency, accountId: account.id })
+                .catch((err) => window.alert(err instanceof Error ? err.message : "No se pudo guardar el ingreso"))
             }
           />
 
@@ -855,8 +865,16 @@ export function BudgetView() {
                     goal={goal}
                     overflowPct={overflowPercent}
                     leftover={leftover}
-                    onPatchPercent={(pct) => patchGoal.mutate({ id: goal.id, patch: { savingsPercent: pct } })}
-                    onToggleOverflow={() => patchGoal.mutate({ id: goal.id, patch: { isOverflowTarget: !goal.isOverflowTarget } })}
+                    onPatchPercent={(pct) =>
+                      patchGoal.mutateAsync({ id: goal.id, patch: { savingsPercent: pct } }).catch((err) =>
+                        window.alert(err instanceof Error ? err.message : "No se pudo guardar"),
+                      )
+                    }
+                    onToggleOverflow={() =>
+                      patchGoal
+                        .mutateAsync({ id: goal.id, patch: { isOverflowTarget: !goal.isOverflowTarget } })
+                        .catch((err) => window.alert(err instanceof Error ? err.message : "No se pudo guardar"))
+                    }
                   />
                 ))}
               </div>
@@ -894,7 +912,11 @@ export function BudgetView() {
             transfers={transfers}
             accounts={allAccounts}
             onAdd={() => setShowTransferModal(true)}
-            onDelete={(id) => deleteTransfer.mutate(id)}
+            onDelete={(id) =>
+              deleteTransfer.mutateAsync(id).catch((err) =>
+                window.alert(err instanceof Error ? err.message : "No se pudo borrar"),
+              )
+            }
           />
           </div>
         </div>
@@ -922,7 +944,9 @@ export function BudgetView() {
             // Una transferencia real puede cubrir varios goals de la misma cuenta —
             // se registra el aporte de cada uno para el progreso individual.
             for (const { goal, target } of goalTransfer.goals) {
-              upsertContribution.mutate({ goalId: goal.id, month: budgetMonth, amount: target });
+              upsertContribution.mutateAsync({ goalId: goal.id, month: budgetMonth, amount: target }).catch((err) =>
+                window.alert(err instanceof Error ? err.message : "No se pudo registrar el aporte"),
+              );
             }
           }}
           onClose={() => setGoalTransfer(null)}

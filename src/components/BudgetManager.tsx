@@ -55,10 +55,16 @@ export function BudgetManager({ onClose }: Props) {
     const existingBudget = budgets.find((b) => b.categoryId === categoryId);
     if (parsed === null || parsed === 0) {
       // blank/zero → remove budget if exists
-      if (existingBudget) remove.mutate(existingBudget.id);
+      if (existingBudget) {
+        remove.mutateAsync(existingBudget.id).catch((err) =>
+          window.alert(err instanceof Error ? err.message : "No se pudo borrar el presupuesto"),
+        );
+      }
       return;
     }
-    upsert.mutate({ categoryId, monthlyAmount: parsed, currency: CURRENCY });
+    upsert.mutateAsync({ categoryId, monthlyAmount: parsed, currency: CURRENCY }).catch((err) =>
+      window.alert(err instanceof Error ? err.message : "No se pudo guardar el presupuesto"),
+    );
   };
 
   const total = budgets.reduce((s, b) => s + b.monthlyAmount, 0);

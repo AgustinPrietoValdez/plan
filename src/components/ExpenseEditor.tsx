@@ -139,45 +139,76 @@ export function ExpenseEditor({ mode, expenseId, prefill, onClose }: Props) {
 
   const set = (patch: Partial<DraftFields>) => setDraft((d) => ({ ...d, ...patch }));
 
-  const save = () => {
-    if (draft.amount <= 0) return; // require positive amount
-    if (mode === "edit" && existing) {
-      patchMut.mutate({
-        id: existing.id,
-        patch: {
-          name: draft.name,
-          amount: draft.amount,
-          currency: draft.currency,
-          categoryId: draft.categoryId,
-          accountId: draft.accountId,
-          goalId: draft.goalId,
-          spentOn: draft.spentOn,
-          note: draft.note,
-          recurrence: draft.recurrence,
-        },
-      });
-    } else {
-      create.mutate({
-        name: draft.name,
-        amount: draft.amount,
-        currency: draft.currency,
-        categoryId: draft.categoryId,
-        accountId: draft.accountId,
-        goalId: draft.goalId,
-        spentOn: draft.spentOn,
-        note: draft.note,
-        recurrence: draft.recurrence,
-        recurrenceParentId: null,
-      });
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const isBusy = create.isPending || patchMut.isPending || remove.isPending || saving;
+
+  const withTimeout = <T,>(p: Promise<T>): Promise<T> =>
+    Promise.race([
+      p,
+      new Promise<never>((_, rej) => setTimeout(() => rej(new Error("Timeout — reintentá si sigue pasando")), 10_000)),
+    ]);
+
+  const save = async () => {
+    if (draft.amount <= 0 || saving) return; // require positive amount
+    setSaving(true);
+    setError(null);
+    try {
+      if (mode === "edit" && existing) {
+        await withTimeout(
+          patchMut.mutateAsync({
+            id: existing.id,
+            patch: {
+              name: draft.name,
+              amount: draft.amount,
+              currency: draft.currency,
+              categoryId: draft.categoryId,
+              accountId: draft.accountId,
+              goalId: draft.goalId,
+              spentOn: draft.spentOn,
+              note: draft.note,
+              recurrence: draft.recurrence,
+            },
+          }),
+        );
+      } else {
+        await withTimeout(
+          create.mutateAsync({
+            name: draft.name,
+            amount: draft.amount,
+            currency: draft.currency,
+            categoryId: draft.categoryId,
+            accountId: draft.accountId,
+            goalId: draft.goalId,
+            spentOn: draft.spentOn,
+            note: draft.note,
+            recurrence: draft.recurrence,
+            recurrenceParentId: null,
+          }),
+        );
+      }
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo guardar");
+      setSaving(false);
     }
-    onClose();
   };
 
-  const onDelete = () => {
+  const onDelete = async () => {
+    if (saving) return;
     if (mode === "edit" && existing) {
-      remove.mutate(existing.id);
+      setSaving(true);
+      setError(null);
+      try {
+        await withTimeout(remove.mutateAsync(existing.id));
+        onClose();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "No se pudo borrar");
+        setSaving(false);
+      }
+    } else {
+      onClose();
     }
-    onClose();
   };
 
   useEffect(() => {
@@ -475,24 +506,27 @@ export function ExpenseEditor({ mode, expenseId, prefill, onClose }: Props) {
               </div>
             </div>
           )}
+          {error && (
+            <div style={{ fontSize: 12, color: "var(--danger)" }}>{error}</div>
+          )}
         </div>
 
         <div className="modal-foot">
           {mode === "edit" ? (
-            <button className="btn ghost danger" onClick={onDelete}>
+            <button className="btn ghost danger" onClick={onDelete} disabled={isBusy}>
               <ITrash size={12} /> Delete
             </button>
           ) : (
             <span />
           )}
           <div className="actions">
-            <button className="btn ghost" onClick={onClose}>
+            <button className="btn ghost" onClick={onClose} disabled={isBusy}>
               Cancel
             </button>
             <button
               className="btn primary"
               onClick={save}
-              disabled={draft.amount <= 0}
+              disabled={draft.amount <= 0 || isBusy}
               style={draft.amount <= 0 ? { opacity: 0.5, cursor: "not-allowed" } : undefined}
             >
               <ICheck size={12} stroke={2.4} /> Save

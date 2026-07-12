@@ -51,7 +51,9 @@ export function ExpenseCategoryManager({ onClose }: Props) {
     if (!editingId) return;
     const trimmed = draftName.trim();
     if (trimmed.length > 0) {
-      patch.mutate({ id: editingId, patch: { name: trimmed } });
+      patch.mutateAsync({ id: editingId, patch: { name: trimmed } }).catch((err) =>
+        window.alert(err instanceof Error ? err.message : "No se pudo renombrar"),
+      );
     }
     setEditingId(null);
     setDraftName("");
@@ -60,11 +62,15 @@ export function ExpenseCategoryManager({ onClose }: Props) {
   const onAdd = () => {
     const usedHues = new Set(categories.map((c) => c.hue));
     const nextHue = HUE_PRESETS.find((h) => !usedHues.has(h)) ?? HUE_PRESETS[0];
-    create.mutate({ name: "Untitled", hue: nextHue, position: categories.length });
+    create.mutateAsync({ name: "Untitled", hue: nextHue, position: categories.length }).catch((err) =>
+      window.alert(err instanceof Error ? err.message : "No se pudo crear"),
+    );
   };
 
   const onConfirmDelete = (id: string) => {
-    remove.mutate(id);
+    remove.mutateAsync(id).catch((err) =>
+      window.alert(err instanceof Error ? err.message : "No se pudo borrar"),
+    );
     setConfirmDeleteId(null);
   };
 
@@ -220,7 +226,11 @@ export function ExpenseCategoryManager({ onClose }: Props) {
                     return (
                       <button
                         key={h}
-                        onClick={() => patch.mutate({ id: c.id, patch: { hue: h } })}
+                        onClick={() =>
+                          patch.mutateAsync({ id: c.id, patch: { hue: h } }).catch((err) =>
+                            window.alert(err instanceof Error ? err.message : "No se pudo cambiar el color"),
+                          )
+                        }
                         title={`Hue ${h}`}
                         style={{
                           width: 22,

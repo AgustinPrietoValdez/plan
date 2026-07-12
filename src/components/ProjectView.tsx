@@ -419,8 +419,12 @@ function ProjectDetailHeader({
 
   const prog = computeProgress(project, projectTasks);
 
-  const saveMilestones = (next: Milestone[]) => {
-    patchProject.mutate({ id: project.id, patch: { milestones: next } });
+  const saveMilestones = async (next: Milestone[]) => {
+    try {
+      await patchProject.mutateAsync({ id: project.id, patch: { milestones: next } });
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : "No se pudo guardar el hito");
+    }
   };
 
   return (
@@ -456,7 +460,11 @@ function ProjectDetailHeader({
                   ? { background: accent, color: "var(--fg)", borderColor: "transparent" }
                   : undefined
               }
-              onClick={() => patchProject.mutate({ id: project.id, patch: { estado: e.value } })}
+              onClick={() =>
+                patchProject.mutateAsync({ id: project.id, patch: { estado: e.value } }).catch((err) =>
+                  window.alert(err instanceof Error ? err.message : "No se pudo cambiar el estado"),
+                )
+              }
             >
               {e.label}
             </span>
@@ -483,7 +491,9 @@ function ProjectDetailHeader({
           onChange={(e) => setObjetivoDraft(e.target.value)}
           onBlur={() => {
             if (objetivoDraft !== project.objetivo) {
-              patchProject.mutate({ id: project.id, patch: { objetivo: objetivoDraft } });
+              patchProject.mutateAsync({ id: project.id, patch: { objetivo: objetivoDraft } }).catch((err) =>
+                window.alert(err instanceof Error ? err.message : "No se pudo guardar el objetivo"),
+              );
             }
           }}
           rows={2}
