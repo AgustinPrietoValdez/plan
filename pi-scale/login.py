@@ -18,7 +18,7 @@ import getpass
 import json
 import os
 
-from supabase import create_client
+from supabase import ClientOptions, create_client
 
 from config import SESSION_DIR, SESSION_FILE, SUPABASE_ANON_KEY, SUPABASE_URL
 
@@ -27,7 +27,11 @@ def main():
     email = input("Email de Supabase: ").strip()
     password = getpass.getpass("Password: ")
 
-    client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+    # auto_refresh_token=False: ver la nota en sb.py — evita que gotrue-py
+    # rote el refresh token en un timer de fondo que nunca se persiste aca.
+    client = create_client(
+        SUPABASE_URL, SUPABASE_ANON_KEY, options=ClientOptions(auto_refresh_token=False)
+    )
     response = client.auth.sign_in_with_password({"email": email, "password": password})
 
     SESSION_DIR.mkdir(parents=True, exist_ok=True)

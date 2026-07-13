@@ -13,6 +13,21 @@ docs at supabase.com/docs/reference/python as of 2026-07):
 Supabase ROTATES refresh tokens on every refresh — the old one becomes
 invalid. Every place that touches the session below re-persists it
 immediately after, or a restart would be locked out.
+
+auto_refresh_token=False is load-bearing, not an optimization: gotrue-py's
+default (True) spins up its own background `threading.Timer` the moment
+set_session()/refresh_session() succeeds (see _save_session/
+_start_auto_refresh_token in supabase_auth/_sync/gotrue_client.py). That
+timer silently rotates the refresh token again ~1h later and saves the
+result only to the client's in-memory/internal storage — never to
+SESSION_FILE, since only THIS module's _persist() writes there. The service
+runs fine in that window (the in-memory session stays valid), but the token
+on disk is now stale; the next process restart (crash, reboot, systemd
+Restart=) calls set_session() with that stale refresh_token, which the
+server already rotated away, and the whole session dies permanently ("Corre
+python login.py de nuevo"). This is exactly the "works, then breaks after a
+day" pattern. Disabling it makes _ensure_fresh() below the ONLY thing that
+ever refreshes the token, so every refresh is guaranteed to hit _persist().
 """
 
 import json
@@ -20,7 +35,7 @@ import logging
 import os
 import time
 
-from supabase import create_client
+from supabase import ClientOptions, create_client
 
 from config import SESSION_DIR, SESSION_FILE, SUPABASE_ANON_KEY, SUPABASE_URL
 
@@ -55,8 +70,22 @@ class SupabaseSession:
     def __init__(self):
         saved = _load_saved()
         self._user_id = saved["user_id"]
-        self.client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
-        response = self.client.auth.set_session(saved["access_token"], saved["refresh_token"])
+        self.client = create_client(
+            SUPABASE_URL, SUPABASE_ANON_KEY, options=ClientOptions(auto_refresh_token=False)
+        )
+        try:
+            response = self.client.auth.set_session(saved["access_token"], saved["refresh_token"])
+        except Exception as e:
+            # Refresh tokens are single-use — if the process died between a
+            # successful refresh and persisting the new one (e.g. a reboot
+            # mid-request), the saved token is now permanently dead and no
+            # amount of retrying will revive it. Fail with a clear one-liner
+            # instead of a raw traceback so `journalctl` points straight at
+            # the fix, and so systemd's StartLimit (see plan-scale.service)
+            # gives up instead of crash-looping forever on a dead token.
+            raise RuntimeError(
+                f"Sesion de Supabase invalida ({e}). Corre 'python login.py' de nuevo."
+            ) from e
         _persist(response.session, self._user_id)
         logger.info("Supabase session restored for user %s", self._user_id)
 

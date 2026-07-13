@@ -7,11 +7,24 @@ Description=Plan app - captura automatica de brews via balanza BLE
 # de scale_ble.py lo reintenta solo, pero esto reduce que pase).
 After=hciuart.service bluetooth.service network-online.target
 Wants=network-online.target
+# Circuit breaker: if it fails this many times within the interval (e.g. a
+# dead Supabase refresh token — no amount of retrying fixes that, only
+# `python login.py` does), give up and go to "failed" instead of restarting
+# forever every RestartSec. `systemctl status plan-scale` then shows the
+# real problem instead of an endless "activating (auto-restart)".
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
 User=prieto
 SupplementaryGroups=bluetooth
+# `rfkill block/unblock bluetooth` (scale_ble.py's _hard_reset_adapter,
+# escalation for a wedged BLE discovery state that a plain bluetoothctl
+# power-cycle didn't clear) needs CAP_NET_ADMIN — without it rfkill just
+# fails silently with "Permission denied" under this non-root user.
+AmbientCapabilities=CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_ADMIN
 WorkingDirectory=/home/prieto/Documents/pi-scale
 EnvironmentFile=/home/prieto/Documents/pi-scale/.env
 ExecStart=/home/prieto/Documents/pi-scale/venv/bin/python /home/prieto/Documents/pi-scale/main.py
