@@ -20,8 +20,19 @@ tabla es priorizar y dar el diseño; el codigo lo hace Claude cuando se lo pido.
 | [#6](https://github.com/AgustinPrietoValdez/plan/issues/6) | Fase 2a: Eventos (CalendarEvent) | CERRADO 2026-06-10 | Nada (verificado y aprobado; commit 5a86aaf) |
 | [#7](https://github.com/AgustinPrietoValdez/plan/issues/7) | Fase 3: Presupuesto - rediseno layout, gastos inline, ahorros por % | CERRADO 2026-06-10 | Nada (verificado y aprobado; commit 3973db4) |
 | [#8](https://github.com/AgustinPrietoValdez/plan/issues/8) | Fase 4: Compras - default lista, generacion semanal, categorias ingredientes | CERRADO 2026-06-10 | Nada (tab inicio eliminado + categorias de ingredientes; recetas genericas DIFERIDO) |
-| [#9](https://github.com/AgustinPrietoValdez/plan/issues/9) | Telemetria cafe: sincronizar brew_datapoints phone->compu + rebuild desktop | ABIERTO | Nada por ahora (Claude implementa); decidir si lo priorizas |
-| [#10](https://github.com/AgustinPrietoValdez/plan/issues/10) | Cafe 6c: ranking/review de granos | ABIERTO | **Definir el diseno** (campos de review/puntaje) y decir "dale" |
+| [#9](https://github.com/AgustinPrietoValdez/plan/issues/9) | Telemetria cafe: sincronizar brew_datapoints phone->compu + rebuild desktop | CERRADO 2026-07-04 | Nada |
+| [#10](https://github.com/AgustinPrietoValdez/plan/issues/10) | Cafe 6c: ranking/review de granos | CERRADO 2026-07-05 | Nada |
+| [#11](https://github.com/AgustinPrietoValdez/plan/issues/11) | Fase 7: Asistente de Cafe (Claude grounded + perfil + recomendaciones) | ABIERTO | Arquitectura ya decidida (corre en terminal, no API); prereq 6c ya cerrado. Falta arrancar 7a: armar la GUIA viva. Decir "dale" cuando quieras que empiece |
+| [#12](https://github.com/AgustinPrietoValdez/plan/issues/12) | Notificaciones: avisos nativos para Eventos con hora (desktop + Android) | CERRADO 2026-07-04 | Nada |
+| [#13](https://github.com/AgustinPrietoValdez/plan/issues/13) | Tracker de Proyectos: entidad con hitos/estado + scaffolding de guia Obsidian al crear | CERRADO 2026-07-04 | Nada |
+| [#14](https://github.com/AgustinPrietoValdez/plan/issues/14) | Recetas genericas: slot de ingrediente por categoria (Compras/lista) | CERRADO 2026-07-04 | Nada |
+| [#15](https://github.com/AgustinPrietoValdez/plan/issues/15)-[#17](https://github.com/AgustinPrietoValdez/plan/issues/17) | Brew: rediseno pantalla + dosis + flows raros | CERRADO 2026-06-16 | Nada |
+| [#18](https://github.com/AgustinPrietoValdez/plan/issues/18) | Brew Historial: receta aparece DOBLE | CERRADO 2026-07-04 | Nada |
+| [#19](https://github.com/AgustinPrietoValdez/plan/issues/19) | Home: card de Cafe muestra granos terminados | CERRADO 2026-07-04 | Nada |
+| [#20](https://github.com/AgustinPrietoValdez/plan/issues/20) | Plan semanal/Listas: no se ven en el celu | CERRADO 2026-07-04 | Nada |
+| [#22](https://github.com/AgustinPrietoValdez/plan/issues/22) | Manejo de errores: mutaciones fire-and-forget sin feedback visible en el resto de la app | CERRADO 2026-07-12 | Nada (commit f1bd659) |
+| [#23](https://github.com/AgustinPrietoValdez/plan/issues/23) | Bugs del barrido general (Finanzas/Compras/Cafe): 8 casos, afectan logica financiera/stock | ABIERTO | **Revisar los 8 casos y decidir** cuales priorizar/como resolver cada uno (son decisiones de producto) |
+| [#24](https://github.com/AgustinPrietoValdez/plan/issues/24) | Pi brew capture: brews no aparecen en la app (sospecha: sesion de Supabase muerta en el Pi) | ABIERTO | **Verificar en el Pi real** (journalctl, session.json, si hace falta `python login.py` de nuevo) - el fix de logging de este commit es solo observabilidad, no repara la sesion muerta si ya esta muerta |
 
 ## Como marcar un issue como resuelto (asi Claude se entera)
 

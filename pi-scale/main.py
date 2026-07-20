@@ -95,3 +95,8 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("detenido (Ctrl+C)")
+    except RuntimeError as e:
+        # Raised with an actionable message (e.g. dead Supabase session) —
+        # log just that, not a full traceback burying it in journalctl.
+        logger.error(str(e))
+        raise SystemExit(1)
