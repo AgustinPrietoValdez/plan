@@ -1,4 +1,4 @@
-import React, { type ReactNode } from "react";
+import React, { useEffect, useRef, useState, type ReactNode } from "react";
 import { addDays, daysBetween, DOW_LONG_ES, fromYmd, MONTH_LONG_ES, MONTH_SHORT_ES, todayYmd, ymd } from "../lib/date";
 import { useFrameScale } from "../lib/uiScale";
 import { useApp } from "../lib/store";
@@ -19,9 +19,10 @@ import {
 } from "../lib/queries";
 import { colorsForHue } from "../lib/categoryColor";
 import { suggestRecipesForExpiringLots } from "../lib/compras";
+import { freshnessStatus, FRESHNESS_COLOR } from "../lib/coffeeFreshness";
 import { CURRENCY, DEFAULT_RATES_PER_USD, convertViaUsd, fmtNumber } from "../lib/money";
 import { SpendingPie } from "./SpendingPie";
-import { IAlert, ICal, ICheck, ICoffee, IFork } from "./icons";
+import { IAlert, ICal, ICheck, ICoffee } from "./icons";
 import type { CalendarEvent, Task } from "../types";
 
 // The approved mockup is a fixed-px design authored in a 1280×720 frame that is
@@ -34,13 +35,33 @@ function fluid(base: number): string {
   return `calc(var(--s, 2) * ${base}px)`;
 }
 
+// Item lists cap at 5 rows; past that, show 4 real rows and fold the rest into
+// a "+N más" row instead of growing the card past its available height.
+function capList<T>(items: T[], max = 5): { shown: T[]; more: number } {
+  if (items.length <= max) return { shown: items, more: 0 };
+  return { shown: items.slice(0, max - 1), more: items.length - (max - 1) };
+}
+
 export function HomeView() {
   const { setView, budgetMonth, openCompletion } = useApp();
   const today = todayYmd();
   const todayDate = fromYmd(today);
   const weekEnd = ymd(addDays(todayDate, 6));
   const s = useFrameScale();
-  const donutSize = 160 * s;
+  // The hero card's height is now flexible (grows toward its 85% cap when the
+  // secondary cards don't need the rest), so the donut has to track the actual
+  // available row height instead of a fixed `190 * s` — otherwise raising the
+  // cap just adds blank padding around a pie that never gets bigger.
+  const chartRowRef = useRef<HTMLDivElement | null>(null);
+  const [chartRowH, setChartRowH] = useState<number | null>(null);
+  useEffect(() => {
+    const el = chartRowRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => setChartRowH(entries[0].contentRect.height));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const donutSize = chartRowH != null ? Math.max(120, chartRowH * 0.92) : 190 * s;
 
   const tasks = useTasks().data ?? [];
   const allEvents = useEvents().data ?? [];
@@ -117,13 +138,25 @@ export function HomeView() {
     .filter((l) => !l.deletedAt && l.expiresOn != null && l.expiresOn <= weekEnd)
     .sort((a, b) => (a.expiresOn ?? "").localeCompare(b.expiresOn ?? ""));
   const ingredientById = new Map(ingredients.map((i) => [i.id, i]));
-  const suggestions = suggestRecipesForExpiringLots(inventory, recipes, recipeIngredients, 7).slice(0, 3);
+  const topSuggestion = suggestRecipesForExpiringLots(inventory, recipes, recipeIngredients, 7)[0] ?? null;
+  const { shown: expiringShown, more: expiringMore } = capList(expiringSoon);
 
   // ---- Café ----
   const lowStockBeans = coffeeBeans.filter((b) => b.weightGrams <= 50);
+  const { shown: beansShown, more: beansMore } = capList(coffeeBeans);
+  // Below this, "which variety" stops being interesting — nudge to buy more instead.
+  const fewBeans = coffeeBeans.length <= 2;
+
 
   const pendingCount = pendingToday.length;
   const greetingDay = DOW_LONG_ES[todayDate.getDay()].toLowerCase();
+  // "Tu día" shows only 3 tasks/events; the rest fold into a "+N más" card-styled
+  // link that opens the day view — a hard cap of 3, not a 5-row budget like the
+  // other lists.
+  const tasksShown = todayAll.length > 3 ? todayAll.slice(0, 3) : todayAll;
+  const tasksMore = todayAll.length > 3 ? todayAll.length - 3 : 0;
+  const eventsShown = upcomingEvents.length > 3 ? upcomingEvents.slice(0, 3) : upcomingEvents;
+  const eventsMore = upcomingEvents.length > 3 ? upcomingEvents.length - 3 : 0;
 
   return (
     <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: fluid(16), padding: fluid(20), overflow: "hidden", ["--s" as string]: s } as React.CSSProperties}>
@@ -146,10 +179,14 @@ export function HomeView() {
         </div>
       </div>
 
-      {/* Grid principal */}
-      <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "1fr 1.05fr", gap: fluid(16) }}>
+      {/* Grid principal — gridTemplateRows pins the (single) row to exactly this
+          container's own height instead of growing with content; without it, a
+          grid row defaults to content-sized ("auto") and just overflows past the
+          window edge instead of letting the columns' internal flex/scroll do
+          their job when content is taller than the available space. */}
+      <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "1fr 1.05fr", gridTemplateRows: "minmax(0, 1fr)", gap: fluid(16) }}>
 
-        {/* Columna izquierda — Tu día */}
+        {/* Columna izquierda — Tu día (solo el link "+N más" navega) */}
         <div style={{ background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: fluid(14), padding: fluid(18), display: "flex", flexDirection: "column", gap: fluid(14), boxShadow: "var(--shadow-sm)", minHeight: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: fluid(10), flexShrink: 0 }}>
             <IconBadge tone="var(--accent)"><ICal size={16} /></IconBadge>
@@ -169,9 +206,14 @@ export function HomeView() {
             {todayAll.length === 0 ? (
               <Empty text="Sin tareas para hoy" />
             ) : (
-              todayAll.map((t) => (
-                <TaskRow key={t.id} task={t} dotColor={taskDotColor(t.projectId)} onCheck={() => openCompletion(t.id)} />
-              ))
+              <>
+                {tasksShown.map((t) => (
+                  <TaskRow key={t.id} task={t} dotColor={taskDotColor(t.projectId)} onCheck={() => openCompletion(t.id)} />
+                ))}
+                {tasksMore > 0 && (
+                  <MoreCard count={tasksMore} singular="tarea más" plural="tareas más" onClick={() => setView("day")} />
+                )}
+              </>
             )}
           </div>
 
@@ -180,25 +222,31 @@ export function HomeView() {
             {upcomingEvents.length === 0 ? (
               <Empty text="Sin eventos próximos" />
             ) : (
-              upcomingEvents.map((ev, i) => <EventRow key={ev.id} event={ev} highlight={i === 0} />)
+              <>
+                {eventsShown.map((ev, i) => <EventRow key={ev.id} event={ev} highlight={i === 0} />)}
+                {eventsMore > 0 && (
+                  <MoreCard count={eventsMore} singular="evento más" plural="eventos más" onClick={() => setView("day")} />
+                )}
+              </>
             )}
-          </div>
-
-          <div
-            role="button"
-            tabIndex={0}
-            onClick={() => setView("day")}
-            style={{ marginTop: "auto", display: "flex", alignItems: "center", gap: fluid(6), fontSize: fluid(12), color: "var(--accent)", fontWeight: 600, cursor: "pointer", flexShrink: 0 }}
-          >
-            Abrir calendario <span aria-hidden>›</span>
           </div>
         </div>
 
         {/* Columna derecha — Presupuesto hero + secundarias */}
         <div style={{ display: "flex", flexDirection: "column", gap: fluid(16), minHeight: 0 }}>
 
-          {/* Presupuesto (hero) */}
-          <div style={{ flex: "0 0 auto", background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: fluid(14), padding: `${fluid(16)} ${fluid(20)}`, display: "flex", flexDirection: "column", gap: fluid(12), boxShadow: "var(--shadow-sm)" }}>
+          {/* Presupuesto (hero) — flex-grow 20 (vs. the secondary row's 1) so it
+              actually claims most of the surplus height instead of splitting it
+              50/50, since the donut should grow to fill the column, not just the
+              cap. Capped at 95% of the column so a long category legend never
+              eats into the secondary cards' share — it scrolls internally past
+              that instead, and the secondary row still gets the remainder. */}
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => setView("budget")}
+            style={{ flex: "20 1 auto", minHeight: 0, maxHeight: "95%", overflow: "hidden", background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: fluid(14), padding: `${fluid(16)} ${fluid(20)}`, display: "flex", flexDirection: "column", gap: fluid(12), boxShadow: "var(--shadow-sm)", cursor: "pointer" }}
+          >
             <div style={{ display: "flex", alignItems: "center", gap: fluid(10) }}>
               <IconBadge tone="var(--violet)"><span style={{ fontWeight: 700, fontFamily: "var(--font-mono)", fontSize: 14 }}>kr</span></IconBadge>
               <div style={{ fontSize: fluid(15), fontWeight: 600, letterSpacing: "-0.01em", flex: 1 }}>Presupuesto · {monthLabel}</div>
@@ -206,111 +254,99 @@ export function HomeView() {
                 {usedPct}% usado · {usedLabel}
               </span>
             </div>
-            {monthExpenses.length === 0 ? (
-              <Empty text="Sin gastos este mes." />
-            ) : (
-              <SpendingPie
-                expenses={monthExpensesForPie}
-                categories={expenseCategories}
-                layout="row"
-                fill={false}
-                sizePx={donutSize}
-                scale={s}
-                limit={chartBudgetLimit > 0 ? chartBudgetLimit : undefined}
-                budgets={budgets}
-                legendVariant="bars"
-                centerLabel={chartBudgetLimit > 0 ? `de ${fmtNumber(chartBudgetLimit)} kr` : undefined}
-              />
-            )}
+            <div ref={chartRowRef} style={{ flex: 1, minHeight: 0, display: "flex", alignItems: "center" }}>
+              {monthExpenses.length === 0 ? (
+                <Empty text="Sin gastos este mes." />
+              ) : (
+                <SpendingPie
+                  expenses={monthExpensesForPie}
+                  categories={expenseCategories}
+                  layout="row"
+                  fill={false}
+                  sizePx={donutSize}
+                  scale={s}
+                  limit={chartBudgetLimit > 0 ? chartBudgetLimit : undefined}
+                  budgets={budgets}
+                  legendVariant="bars"
+                  centerLabel={chartBudgetLimit > 0 ? `de ${fmtNumber(chartBudgetLimit)} kr` : undefined}
+                />
+              )}
+            </div>
           </div>
 
-          {/* Secundarias: Por vencer + Café, lado a lado */}
+          {/* Secundarias: Por vencer + Café, lado a lado — cada card entera es
+              clickeable (navega a su vista), sin CTA propio. Cada mitad se
+              dimensiona a su propio contenido (no proporciones fijas) para que
+              el espacio libre de una no le falte a la otra. flex-grow para que
+              esta fila llene el resto de la columna y su borde inferior quede
+              alineado con el de "Tu día" en vez de dejar un hueco en blanco. */}
           <div style={{ flex: "1 1 auto", minHeight: 0, display: "grid", gridTemplateColumns: "1fr 1fr", gap: fluid(16), alignItems: "stretch" }}>
 
             {/* Por vencer */}
-            <div style={{ background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: fluid(14), boxShadow: "var(--shadow-sm)", overflow: "hidden", padding: `${fluid(14)} ${fluid(16)}`, display: "flex", flexDirection: "column", gap: fluid(10), minHeight: 0 }}>
-              {/* Top half slightly shorter than the bottom half → the section label sits
-                  a bit above the midpoint, while still fitting 3 items above and 3 below. */}
-              <div style={{ flex: 0.9, minHeight: 0, display: "flex", flexDirection: "column", gap: fluid(10) }}>
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => setView("compras")}
+              style={{ background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: fluid(14), boxShadow: "var(--shadow-sm)", overflow: "auto", overflowAnchor: "none", padding: `${fluid(14)} ${fluid(16)}`, display: "flex", flexDirection: "column", gap: fluid(10), minHeight: 0, cursor: "pointer" }}
+            >
               <div style={{ display: "flex", alignItems: "center", gap: fluid(10), flexShrink: 0 }}>
                 <IconBadge tone="var(--warn)" size={fluid(26)}><IAlert size={14} /></IconBadge>
                 <div style={{ fontSize: fluid(13), fontWeight: 600, flex: 1 }}>Por vencer</div>
                 <CountBadge tone="var(--warn)">{expiringSoon.length} lotes</CountBadge>
               </div>
-              <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: fluid(8), overflow: "hidden" }}>
-                <div style={{ display: "flex", flexDirection: "column", gap: fluid(8), overflowY: "auto", minHeight: 0, flex: 1 }}>
-                  {expiringSoon.length === 0 ? (
-                    <Empty text="Nada por vencer pronto" />
-                  ) : (
-                    expiringSoon.slice(0, 3).map((l) => {
-                      const daysLeft = daysBetween(todayDate, fromYmd(l.expiresOn!));
-                      const label = daysLeft <= 0 ? "hoy" : daysLeft === 1 ? "mañana" : `${daysLeft} días`;
-                      const tone = daysLeft <= 1 ? "var(--danger)" : "var(--warn)";
-                      return (
-                        <ItemRow key={l.id} dotColor={tone} name={ingredientById.get(l.ingredientId)?.name ?? "—"} meta={label} metaTone={tone} />
-                      );
-                    })
-                  )}
-                </div>
-                {expiringSoon.length > 0 && <WarningBanner tone="var(--warn)" icon="⏳" text="Usalos pronto — cociná con esto" />}
-              </div>
-              </div>
-              {/* Bottom half: starts with the section label so it sits at the card's
-                  midpoint (same for Café), then the list, then the CTA pinned to the bottom. */}
-              <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: fluid(10) }}>
-                <SectionLabel style={{ flexShrink: 0 }}>Recetas recomendadas</SectionLabel>
-                {suggestions.length === 0 ? (
-                  <Empty text="Sin sugerencias por ahora" />
-                ) : (
-                  suggestions.map((sug) => (
-                    <div key={sug.recipe.id} style={{ display: "flex", alignItems: "center", gap: fluid(9), fontSize: fluid(12.5) }}>
-                      <EmojiBadge tone="oklch(0.68 0.16 60)"><IFork size={Math.round(13 * s)} /></EmojiBadge>
-                      <span style={{ flex: 1, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sug.recipe.name}</span>
-                    </div>
-                  ))
-                )}
-                <CtaRow tone="oklch(0.5 0.10 70)" onClick={() => setView("compras")}>Ver recetas</CtaRow>
-              </div>
+              {expiringSoon.length === 0 ? (
+                <Empty text="Nada por vencer pronto" />
+              ) : (
+                <>
+                  {expiringShown.map((l) => {
+                    const daysLeft = daysBetween(todayDate, fromYmd(l.expiresOn!));
+                    const label = daysLeft <= 0 ? "hoy" : daysLeft === 1 ? "mañana" : `${daysLeft} días`;
+                    const tone = daysLeft <= 1 ? "var(--danger)" : "var(--warn)";
+                    return (
+                      <ItemRow key={l.id} dotColor={tone} name={ingredientById.get(l.ingredientId)?.name ?? "—"} meta={label} metaTone={tone} nameSize={fluid(10.5)} />
+                    );
+                  })}
+                  {expiringMore > 0 && <MoreRow count={expiringMore} />}
+                </>
+              )}
+              {expiringSoon.length > 0 && (
+                <WarningBanner
+                  tone="var(--warn)"
+                  icon="⏳"
+                  text={topSuggestion ? `Probá: ${topSuggestion.recipe.name}` : "Usalos pronto — cociná con esto"}
+                />
+              )}
             </div>
 
             {/* Café en casa */}
-            <div style={{ background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: fluid(14), boxShadow: "var(--shadow-sm)", overflow: "hidden", padding: `${fluid(14)} ${fluid(16)}`, display: "flex", flexDirection: "column", gap: fluid(10), minHeight: 0 }}>
-              <div style={{ flex: 0.9, minHeight: 0, display: "flex", flexDirection: "column", gap: fluid(10) }}>
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => setView("cafe")}
+              style={{ background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: fluid(14), boxShadow: "var(--shadow-sm)", overflow: "auto", overflowAnchor: "none", padding: `${fluid(14)} ${fluid(16)}`, display: "flex", flexDirection: "column", gap: fluid(8), minHeight: 0, cursor: "pointer" }}
+            >
               <div style={{ display: "flex", alignItems: "center", gap: fluid(10), flexShrink: 0 }}>
                 <IconBadge tone="oklch(0.55 0.10 50)" size={fluid(26)}><ICoffee size={Math.round(16 * s)} /></IconBadge>
                 <div style={{ fontSize: fluid(13), fontWeight: 600, flex: 1 }}>Café en casa</div>
                 <CountBadge tone="oklch(0.5 0.08 50)">{coffeeBeans.length} abiertos</CountBadge>
               </div>
-              <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: fluid(8), overflow: "hidden" }}>
-                <div style={{ display: "flex", flexDirection: "column", gap: fluid(8), overflowY: "auto", minHeight: 0, flex: 1 }}>
-                  {coffeeBeans.length === 0 ? (
-                    <Empty text="Sin granos registrados" />
-                  ) : (
-                    coffeeBeans.slice(0, 3).map((b) => {
-                      const tone = b.weightGrams <= 0 ? "var(--danger)" : b.weightGrams <= 50 ? "var(--warn)" : "oklch(0.62 0.17 145)";
-                      const name = b.weightGrams <= 0 ? `${b.name} · agotado` : `${b.name}${b.roaster ? ` · ${b.roaster}` : ""}`;
-                      return <ItemRow key={b.id} dotColor={tone} name={name} meta={`${b.weightGrams} g`} metaTone={b.weightGrams <= 50 ? tone : "var(--fg-muted)"} />;
-                    })
-                  )}
-                </div>
-                {lowStockBeans.length > 0 && <WarningBanner tone="var(--danger)" icon="⚠" text="Queda poco — conviene reponer" />}
-              </div>
-              </div>
-              <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: fluid(10) }}>
-                <SectionLabel style={{ flexShrink: 0 }}>De tu lista de deseados</SectionLabel>
-                {/* TODO: wishlist de café real (a diseñar) — placeholders por ahora, ver pedido del usuario */}
-                <div style={{ display: "flex", alignItems: "center", gap: fluid(9), fontSize: fluid(12.5) }}>
-                  <EmojiBadge tone="oklch(0.55 0.10 50)"><ICoffee size={Math.round(13 * s)} /></EmojiBadge>
-                  <span style={{ flex: 1 }}><span style={{ fontWeight: 500 }}>Colombia Huila</span> <span style={{ color: "var(--fg-subtle)" }}>· Café Rituals</span></span>
-                  <span style={{ fontSize: fluid(11), color: "var(--fg-subtle)", fontVariantNumeric: "tabular-nums" }}>kr 165</span>
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: fluid(9), fontSize: fluid(12.5) }}>
-                  <EmojiBadge tone="oklch(0.55 0.10 50)"><ICoffee size={Math.round(13 * s)} /></EmojiBadge>
-                  <span style={{ flex: 1 }}><span style={{ fontWeight: 500 }}>Kenia Nyeri AA</span> <span style={{ color: "var(--fg-subtle)" }}>· La Nena</span></span>
-                  <span style={{ fontSize: fluid(11), color: "var(--fg-subtle)", fontVariantNumeric: "tabular-nums" }}>kr 190</span>
-                </div>
-                <CtaRow tone="oklch(0.5 0.10 50)" onClick={() => setView("cafe")}>Agregar a compras</CtaRow>
-              </div>
+              {coffeeBeans.length === 0 ? (
+                <Empty text="Sin granos registrados" />
+              ) : (
+                <>
+                  {beansShown.map((b) => {
+                    // El punto de color indica frescura (descansando/en rango/límite/viejo),
+                    // no stock — el peso bajo ya tiene su propio warning banner aparte.
+                    const freshTone = FRESHNESS_COLOR[freshnessStatus(b.roastedOn)];
+                    const weightTone = b.weightGrams <= 0 ? "var(--danger)" : b.weightGrams <= 50 ? "var(--warn)" : "var(--fg-muted)";
+                    const name = b.weightGrams <= 0 ? `${b.name} · agotado` : `${b.name}${b.roaster ? ` · ${b.roaster}` : ""}`;
+                    return <ItemRow key={b.id} dotColor={freshTone} name={name} meta={`${b.weightGrams} g`} metaTone={weightTone} nameSize={fluid(10.5)} />;
+                  })}
+                  {beansMore > 0 && <MoreRow count={beansMore} />}
+                </>
+              )}
+              {lowStockBeans.length > 0 && <WarningBanner tone="var(--danger)" icon="⚠" text="Queda poco — conviene reponer" />}
+              {fewBeans && <WarningBanner tone="oklch(0.55 0.10 50)" icon="☕" text="Pocas variedades — comprá más café" />}
             </div>
 
           </div>
@@ -334,14 +370,6 @@ function StatCard({ value, label, tone }: { value: ReactNode; label: string; ton
 function IconBadge({ tone, size = fluid(30), children }: { tone: string; size?: string; children: ReactNode }) {
   return (
     <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: size, height: size, borderRadius: fluid(9), color: tone, background: `color-mix(in oklch, ${tone} 15%, var(--bg))`, flexShrink: 0 }}>
-      {children}
-    </span>
-  );
-}
-
-function EmojiBadge({ tone, children }: { tone: string; children: ReactNode }) {
-  return (
-    <span style={{ width: fluid(20), height: fluid(20), borderRadius: fluid(6), background: `color-mix(in oklch, ${tone} 14%, var(--bg))`, color: tone, display: "grid", placeItems: "center", fontSize: fluid(11), flex: "0 0 auto" }}>
       {children}
     </span>
   );
@@ -372,31 +400,41 @@ function WarningBanner({ tone, icon, text }: { tone: string; icon: string; text:
   );
 }
 
-function CtaRow({ tone, onClick, children }: { tone: string; onClick: () => void; children: ReactNode }) {
+function ItemRow({ dotColor, name, meta, metaTone, nameSize }: { dotColor: string; name: string; meta: string; metaTone: string; nameSize?: string }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: fluid(8), fontSize: fluid(11.5) }}>
+      <span style={{ width: fluid(7), height: fluid(7), borderRadius: "50%", background: dotColor, flexShrink: 0 }} />
+      <span style={{ flex: 1, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: nameSize }}>{name}</span>
+      <span style={{ fontSize: fluid(10), color: metaTone, fontWeight: 600, fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>{meta}</span>
+    </div>
+  );
+}
+
+function MoreRow({ count }: { count: number }) {
+  return (
+    <div style={{ fontSize: fluid(10.5), color: "var(--fg-subtle)", fontStyle: "italic", padding: `${fluid(2)} 0`, flexShrink: 0 }}>
+      +{count} más
+    </div>
+  );
+}
+
+// Card-styled "+N más" link — used by "Tu día"'s tasks/events lists, which cap
+// at 3 rows each and hand off to the day view instead of scrolling internally.
+function MoreCard({ count, singular, plural, onClick }: { count: number; singular: string; plural: string; onClick: () => void }) {
   return (
     <div
       role="button"
       tabIndex={0}
       onClick={onClick}
-      style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: fluid(6), fontSize: fluid(12), color: tone, fontWeight: 600, cursor: "pointer", marginTop: "auto", paddingTop: fluid(2), flexShrink: 0 }}
+      style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: fluid(6), padding: `${fluid(9)} ${fluid(11)}`, border: "1px solid var(--line)", borderRadius: fluid(9), fontSize: fluid(12.5), color: "var(--accent)", fontWeight: 600, cursor: "pointer", flexShrink: 0 }}
     >
-      {children} <span aria-hidden>›</span>
-    </div>
-  );
-}
-
-function ItemRow({ dotColor, name, meta, metaTone }: { dotColor: string; name: string; meta: string; metaTone: string }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: fluid(9), fontSize: fluid(12.5) }}>
-      <span style={{ width: fluid(8), height: fluid(8), borderRadius: "50%", background: dotColor, flexShrink: 0 }} />
-      <span style={{ flex: 1, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</span>
-      <span style={{ fontSize: fluid(11), color: metaTone, fontWeight: 600, fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>{meta}</span>
+      +{count} {count === 1 ? singular : plural} <span aria-hidden>›</span>
     </div>
   );
 }
 
 function Empty({ text }: { text: string }) {
-  return <div style={{ fontSize: fluid(12.5), color: "var(--fg-subtle)", textAlign: "left", padding: `${fluid(6)} 0` }}>{text}</div>;
+  return <div style={{ fontSize: fluid(11.5), color: "var(--fg-subtle)", textAlign: "left", padding: `${fluid(6)} 0` }}>{text}</div>;
 }
 
 function TaskRow({ task, dotColor, onCheck }: { task: Task; dotColor: string; onCheck: () => void }) {

@@ -250,39 +250,65 @@ export function SpendingPie({ expenses, categories, layout = "column", size = SI
       </div>
 
       {/* Legend: all categories (hidden when too narrow -> pie only) */}
-      {showLegend && legendVariant === "bars" && (
-      <div style={{ display: "flex", flexDirection: "column", gap: scale * 10, flex: row ? 1 : undefined, minWidth: 0, overflowY: "auto" }}>
-        {legendItems
-          .filter((item) => item.cat != null && budgets?.some((b) => b.categoryId === item.cat!.id))
-          .map((item) => {
-            const colors = colorsForHue(item.cat!.hue);
-            const catBudget = budgets!.find((b) => b.categoryId === item.cat!.id)!;
-            const remaining = catBudget.monthlyAmount - item.amount;
-            const remainingFrac = catBudget.monthlyAmount > 0 ? remaining / catBudget.monthlyAmount : 0;
-            const severityColor = remainingFrac <= 0 ? "var(--danger)" : remainingFrac < 0.15 ? "var(--danger)" : remainingFrac < 0.25 ? "var(--warn)" : "var(--ok)";
-            const fillPct = catBudget.monthlyAmount > 0 ? Math.min(100, (item.amount / catBudget.monthlyAmount) * 100) : 0;
-            return (
-              <div key={item.id} style={{ display: "flex", flexDirection: "column", gap: scale * 5 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: scale * 8, fontSize: scale * 13 }}>
-                  <span style={{ width: scale * 10, height: scale * 10, borderRadius: scale * 3, background: colors.bg, flex: "0 0 auto" }} />
-                  <span style={{ flex: 1, fontWeight: 500 }}>{item.cat!.name}</span>
-                  <span style={{ color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums", fontSize: scale * 12 }}>
-                    {fmtNumber(item.amount)} / {fmtNumber(catBudget.monthlyAmount)}
-                  </span>
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: scale * 8 }}>
-                  <div style={{ flex: 1, height: scale * 5, borderRadius: 99, background: "var(--bg-sunken)", overflow: "hidden" }}>
-                    <div style={{ height: "100%", width: `${fillPct}%`, background: colors.bg, borderRadius: 99 }} />
+      {showLegend && legendVariant === "bars" && (() => {
+        // Every non-archived, non-hidden-from-chart category shows here — not just
+        // ones with an active budget row. A category can be actively spent-on with
+        // no budget configured yet (or its budget got soft-deleted separately from
+        // the category itself); those still need to show, just without a queda/bar.
+        const barsItems = legendItems.filter((item) => item.cat != null && !item.cat.hiddenFromChart);
+        // The mockup's row size is tuned for 4 categories filling the donut's height.
+        // Real accounts can have more — text has a readability floor (never shrinks
+        // past 80% of the frame scale) so it doesn't become illegible with a big
+        // category list; gaps/padding shrink further and independently to make the
+        // room instead, since that's cheap to lose and font size isn't.
+        const count = Math.max(1, barsItems.length);
+        const fs = scale * Math.max(0.85, Math.min(1.05, 4.2 / count));
+        const gs = scale * Math.min(1.1, 2.8 / count);
+        // The legend can use noticeably more than the donut's own height — the hero
+        // card grows (flex) beyond just wrapping the donut — before falling back to
+        // an internal scroll as a last resort.
+        const legendMaxHeight = pieSize != null ? pieSize * 1.6 : undefined;
+        return (
+          <div style={{ display: "flex", flexDirection: "column", gap: gs * 10, flex: row ? 1 : undefined, minWidth: 0, overflowY: "auto", maxHeight: legendMaxHeight }}>
+            {barsItems.map((item) => {
+              const colors = colorsForHue(item.cat!.hue);
+              const catBudget = budgets?.find((b) => b.categoryId === item.cat!.id);
+              const remaining = catBudget ? catBudget.monthlyAmount - item.amount : null;
+              const remainingFrac = catBudget && catBudget.monthlyAmount > 0 && remaining != null ? remaining / catBudget.monthlyAmount : 0;
+              const severityColor = remainingFrac <= 0 ? "var(--danger)" : remainingFrac < 0.15 ? "var(--danger)" : remainingFrac < 0.25 ? "var(--warn)" : "var(--ok)";
+              const fillPct = catBudget && catBudget.monthlyAmount > 0 ? Math.min(100, (item.amount / catBudget.monthlyAmount) * 100) : 0;
+              return (
+                <div key={item.id} style={{ display: "flex", flexDirection: "column", gap: gs * 3.5 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: fs * 6.5, fontSize: fs * 12.5 }}>
+                    <span style={{ width: fs * 8.5, height: fs * 8.5, borderRadius: fs * 3.2, background: colors.bg, flex: "0 0 auto" }} />
+                    <span style={{ flex: 1, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.cat!.name}</span>
+                    <span style={{ color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums", fontSize: fs * 11.5, flex: "0 0 auto" }}>
+                      {catBudget ? `${fmtNumber(item.amount)} / ${fmtNumber(catBudget.monthlyAmount)}` : fmtNumber(item.amount)}
+                    </span>
                   </div>
-                  <span style={{ fontSize: scale * 11, color: severityColor, fontWeight: 600, fontVariantNumeric: "tabular-nums", minWidth: scale * 70, textAlign: "right" }}>
-                    {remaining >= 0 ? `queda ${fmtNumber(remaining)}` : "excedido"}
-                  </span>
+                  {catBudget ? (
+                    <div style={{ display: "flex", alignItems: "center", gap: fs * 6.5 }}>
+                      <div style={{ flex: 1, height: fs * 4.2, borderRadius: 99, background: "var(--bg-sunken)", overflow: "hidden" }}>
+                        <div style={{ height: "100%", width: `${fillPct}%`, background: colors.bg, borderRadius: 99 }} />
+                      </div>
+                      <span style={{ fontSize: fs * 10.5, color: severityColor, fontWeight: 600, fontVariantNumeric: "tabular-nums", minWidth: fs * 62, textAlign: "right", flex: "0 0 auto" }}>
+                        {remaining != null && remaining >= 0 ? `queda ${fmtNumber(remaining)}` : "excedido"}
+                      </span>
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", alignItems: "center", gap: fs * 6.5 }}>
+                      <div style={{ flex: 1, height: fs * 4.2, borderRadius: 99, background: "var(--bg-sunken)" }} />
+                      {/* Invisible — matches the budgeted row's "queda N" line-height so both
+                          rows come out the same height and don't look more cramped together. */}
+                      <span style={{ fontSize: fs * 10.5, visibility: "hidden", minWidth: fs * 62, flex: "0 0 auto" }}>·</span>
+                    </div>
+                  )}
                 </div>
-              </div>
-            );
-          })}
-      </div>
-      )}
+              );
+            })}
+          </div>
+        );
+      })()}
       {showLegend && legendVariant === "list" && (
       <div style={{ display: "flex", flexDirection: "column", gap: "clamp(2px, 0.3vw, 4px)", flex: row ? (fill ? 1 : "0 1 auto") : undefined, minWidth: 0, overflowY: row ? "auto" : undefined, ...(row && fill ? { alignSelf: "stretch", justifyContent: "center" } : (row ? { maxHeight: pieSize != null ? pieSize : undefined } : {})) }}>
         {legendItems.map((item) => {
