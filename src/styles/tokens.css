@@ -21,6 +21,7 @@
   --danger: oklch(0.62 0.17 25);
   --warn: oklch(0.72 0.14 75);
   --ok: oklch(0.66 0.13 155);
+  --violet: oklch(0.62 0.17 305);
 
   /* category palette — pastel pairs (bg lightness 0.90, fg lightness 0.42) */
   --c-blue: oklch(0.90 0.05 245);

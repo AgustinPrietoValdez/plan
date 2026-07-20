@@ -3,7 +3,9 @@ import {
   MONTH_NAME,
   MONTH_SHORT,
   addDays,
+  fmtHomeSubtitle,
   fromYmd,
+  getWeekNumber,
   startOfWeek,
   todayYmd,
   ymd,
@@ -11,12 +13,6 @@ import {
 import { useApp, AREA_OF_VIEW, COMPRAS_TABS, CAFE_TABS, FINANZAS_TABS } from "../lib/store";
 import { useProjects } from "../lib/queries";
 import { IChevL, IChevR, IFilter } from "./icons";
-
-function getWeekNum(d: Date): number {
-  const start = new Date(d.getFullYear(), 0, 1);
-  const diff = (d.getTime() - start.getTime()) / 86400000;
-  return Math.ceil((diff + start.getDay() + 1) / 7);
-}
 
 export function Topbar() {
   const {
@@ -67,9 +63,12 @@ export function Topbar() {
 
   let title = "";
   let sub = "";
-  if (view === "month") {
+  if (view === "home" || view === "automations") {
+    title = "Home";
+    sub = fmtHomeSubtitle(fromYmd(todayYmd()));
+  } else if (view === "month") {
     title = `${MONTH_NAME[vd.getMonth()]} ${vd.getFullYear()}`;
-    sub = `Week ${getWeekNum(vd)}`;
+    sub = `Week ${getWeekNumber(vd)}`;
   } else if (view === "week") {
     const start = startOfWeek(vd);
     const end = addDays(start, 6);

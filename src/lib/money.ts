@@ -14,9 +14,17 @@ const COMPACT_FORMATTER = new Intl.NumberFormat(LOCALE, {
   maximumFractionDigits: 0,
 });
 
+const NUMBER_FORMATTER = new Intl.NumberFormat(LOCALE, { maximumFractionDigits: 0 });
+
 export function fmtMoney(amount: number, opts?: { compact?: boolean }): string {
   const n = Number.isFinite(amount) ? amount : 0;
   return (opts?.compact ? COMPACT_FORMATTER : FORMATTER).format(n);
+}
+
+/** Grouped number with no currency symbol (e.g. "7.000") — used for the donut
+ *  center total, which shows the currency separately in its subtitle. */
+export function fmtNumber(amount: number): string {
+  return NUMBER_FORMATTER.format(Number.isFinite(amount) ? amount : 0);
 }
 
 export function parseMoney(text: string): number | null {

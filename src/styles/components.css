@@ -2,15 +2,72 @@
 
 /* ---------- app shell ---------- */
 .app {
-  display: grid;
-  grid-template-columns: 232px 1fr;
+  display: flex;
   height: 100vh;
   width: 100vw;
   overflow: hidden;
 }
 
-/* ---------- sidebar ---------- */
+/* ---------- rail: 64px icon-only nav, always visible ---------- */
+.rail {
+  flex: 0 0 calc(var(--home-s, 1) * 64px);
+  width: calc(var(--home-s, 1) * 64px);
+  background: var(--bg-sunken);
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: calc(var(--home-s, 1) * 10px) 0;
+  gap: calc(var(--home-s, 1) * 4px);
+  overflow: hidden;
+}
+.rail-logo {
+  width: calc(var(--home-s, 1) * 26px); height: calc(var(--home-s, 1) * 26px); border-radius: calc(var(--home-s, 1) * 7px);
+  background: var(--fg);
+  color: var(--bg);
+  display: grid; place-items: center;
+  font-weight: 700; font-size: calc(var(--home-s, 1) * 12px);
+  flex: 0 0 auto;
+}
+.rail-sep { width: calc(var(--home-s, 1) * 24px); height: 1px; background: var(--line); margin: calc(var(--home-s, 1) * 2px) 0; flex: 0 0 auto; }
+.rail-btn {
+  width: calc(var(--home-s, 1) * 34px); height: calc(var(--home-s, 1) * 34px); border-radius: calc(var(--home-s, 1) * 9px);
+  display: grid; place-items: center;
+  color: var(--fg-muted);
+  border: 1px solid transparent;
+  background: none;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.rail-btn:hover { background: var(--bg-hover); color: var(--fg); }
+.rail-btn.active {
+  color: var(--accent);
+  background: var(--bg-elev);
+  box-shadow: var(--shadow-sm);
+  border-color: var(--line);
+}
+.rail-spacer { flex: 1; }
+.rail-avatar-wrap { position: relative; flex: 0 0 auto; }
+.rail-popover {
+  position: absolute;
+  left: 56px;
+  bottom: 0;
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow-md);
+  padding: 10px;
+  min-width: 180px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ---------- side panel: contextual lists, hidden on Home ---------- */
 .sidebar {
+  flex: 0 0 208px;
+  width: 208px;
   background: var(--bg-sunken);
   border-right: 1px solid var(--line);
   display: flex;
@@ -128,13 +185,13 @@
 }
 
 /* ---------- main ---------- */
-.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 
 /* topbar */
 .topbar {
-  height: 48px;
-  display: flex; align-items: center; gap: 10px;
-  padding: 0 16px;
+  height: calc(var(--home-s, 1) * 48px);
+  display: flex; align-items: center; gap: calc(var(--home-s, 1) * 10px);
+  padding: 0 calc(var(--home-s, 1) * 16px);
   border-bottom: 1px solid var(--line);
   background: var(--bg-elev);
 }
@@ -175,11 +232,11 @@
 @keyframes pulse-dot { 0%, 100% { opacity: .4 } 50% { opacity: 1 } }
 .day-task.dragging, .day-task-row.dragging { opacity: 0.35; }
 
-.title-block { display: flex; align-items: baseline; gap: 12px; }
+.title-block { display: flex; align-items: baseline; gap: calc(var(--home-s, 1) * 12px); }
 .title-block h1 {
-  font-size: 17px; font-weight: 600; letter-spacing: -0.01em; margin: 0;
+  font-size: calc(var(--home-s, 1) * 17px); font-weight: 600; letter-spacing: -0.01em; margin: 0;
 }
-.title-block .sub { color: var(--fg-subtle); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.title-block .sub { color: var(--fg-subtle); font-size: calc(var(--home-s, 1) * 12.5px); font-variant-numeric: tabular-nums; }
 
 .btn {
   display: inline-flex; align-items: center; gap: 6px;

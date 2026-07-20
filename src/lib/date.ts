@@ -9,6 +9,13 @@ export const MONTH_SHORT = [
 export const DOW_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 export const DOW_MINI = ["S", "M", "T", "W", "T", "F", "S"];
 
+export const DOW_LONG_ES = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
+export const MONTH_LONG_ES = [
+  "enero", "febrero", "marzo", "abril", "mayo", "junio",
+  "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+];
+export const MONTH_SHORT_ES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+
 export function addDays(d: Date, n: number): Date {
   const x = new Date(d);
   x.setDate(x.getDate() + n);
@@ -98,4 +105,16 @@ export function weekLabel(weekStart: string): string {
   const [, em, ed] = end.split("-");
   const endD = String(Number(ed) - 1).padStart(2, "0"); // Sunday
   return `${d}/${m} – ${endD}/${em}`;
+}
+
+/** ISO-ish week number (Jan 1 = start of week 1), matching Topbar's calendar-view label. */
+export function getWeekNumber(d: Date): number {
+  const start = new Date(d.getFullYear(), 0, 1);
+  const diff = (d.getTime() - start.getTime()) / 86400000;
+  return Math.ceil((diff + start.getDay() + 1) / 7);
+}
+
+/** "Sábado, 19 de julio · Semana 29" — Home topbar subtitle, always today's date. */
+export function fmtHomeSubtitle(d: Date): string {
+  return `${DOW_LONG_ES[d.getDay()]}, ${d.getDate()} de ${MONTH_LONG_ES[d.getMonth()]} · Semana ${getWeekNumber(d)}`;
 }

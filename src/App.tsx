@@ -7,7 +7,7 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { BrewAssignModal } from "./components/BrewAssignModal";
 import { BudgetManager } from "./components/BudgetManager";
 import { BudgetView } from "./components/BudgetView";
@@ -37,6 +37,7 @@ import { IChevD } from "./components/icons";
 import { WeekView } from "./components/WeekView";
 import { DragGhost } from "./components/dnd/DragGhost";
 import { useSession } from "./lib/auth";
+import { useFrameScale } from "./lib/uiScale";
 import { fromYmd, todayYmd, ymd } from "./lib/date";
 import { useApp, AREA_OF_VIEW, CALENDARIO_TABS, type View } from "./lib/store";
 import { useCategories, useDeleteTask, useHabitLogs, usePatchTask, useProjects, useTasks } from "./lib/queries";
@@ -107,6 +108,12 @@ function App() {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
   );
+
+  // Home is the one screen rebuilt to the 1280×720 design frame; scale its chrome
+  // (rail + topbar) together with its content so they stay coherent at 2K. Other
+  // views keep --home-s at 1 (their fixed-px chrome is unchanged).
+  const frameScale = useFrameScale();
+  const homeScale = view === "home" ? frameScale : 1;
 
   const [activeTask, setActiveTask] = useState<Task | null>(null);
 
@@ -258,11 +265,11 @@ function App() {
       onDragEnd={onDragEnd}
       onDragCancel={onDragCancel}
     >
-      <div className="app">
+      <div className="app" style={{ ["--home-s" as string]: homeScale } as CSSProperties}>
         <Sidebar />
         <div className="main">
           <Topbar />
-          {stripOpen ? (
+          {view !== "home" && (stripOpen ? (
             <div style={{ position: "relative" }}>
               <TaskStrip onAddNew={onAddNew} onOpen={onOpenTask} onToggleDone={onToggleDone} />
               <button
@@ -301,7 +308,7 @@ function App() {
               <span style={{ flex: 1 }} />
               <IChevD size={14} />
             </button>
-          )}
+          ))}
           <AreaTabs />
           {view === "home" && <HomeView />}
           {view === "month" && (

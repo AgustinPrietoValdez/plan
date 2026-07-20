@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { colorsForHue } from "../lib/categoryColor";
-import { fmtMoney } from "../lib/money";
+import { fmtMoney, fmtNumber } from "../lib/money";
 import type { Expense, ExpenseCategory } from "../types";
 import { IEye, IEyeOff } from "./icons";
 
@@ -34,6 +34,17 @@ interface Props {
   onSelectCategory?: (categoryId: string) => void;
   /** Currently selected category (highlights its row/slice). */
   selectedCategoryId?: string | null;
+  /** "list" (default): dot + name + amount + %, like BudgetView's legend.
+   *  "bars": name + "spent / budget" on top, a per-category progress bar +
+   *  "queda N" (colored by how tight it's getting) below — only categories
+   *  with a `budgets` entry are shown. Used by the Home Presupuesto hero card. */
+  legendVariant?: "list" | "bars";
+  /** Overrides the small subtitle under the center total (default "spent") when not hovering a slice. */
+  centerLabel?: string;
+  /** Uniform mockup scale factor (Home only). Multiplies the fixed-px sizes of the
+   *  "bars" legend, the donut↔legend gap, and the center label so they track the
+   *  scaled-up donut. Defaults to 1 (BudgetView's list legend is unaffected). */
+  scale?: number;
 }
 
 interface Slice {
@@ -47,8 +58,6 @@ interface Slice {
 const SIZE = 200;
 const CX = SIZE / 2;
 const CY = SIZE / 2;
-const R_OUT = 92;
-const R_IN = 60;
 
 function arcPath(start: number, end: number, ro: number, ri: number): string {
   if (Math.abs(end - start) < 0.0001) return "";
@@ -72,9 +81,18 @@ function arcPath(start: number, end: number, ro: number, ri: number): string {
   ].join(" ");
 }
 
-export function SpendingPie({ expenses, categories, layout = "column", size = SIZE, limit, budgets, fill = true, sizePx, onToggleHidden, onSelectCategory, selectedCategoryId }: Props) {
+export function SpendingPie({ expenses, categories, layout = "column", size = SIZE, limit, budgets, fill = true, sizePx, onToggleHidden, onSelectCategory, selectedCategoryId, legendVariant = "list", centerLabel, scale = 1 }: Props) {
   const [hoverId, setHoverId] = useState<string | null>(null);
   const row = layout === "row";
+  // Bars legend (Home) is authored at the mockup's 1× scale; multiply by `scale`
+  // so it grows in lockstep with the donut. `bars` also drives the donut↔legend
+  // gap (22 in the mockup) and the enlarged center label.
+  const bars = legendVariant === "bars";
+  const rowGap = bars ? scale * 22 : 16;
+  // The handoff donut is a thin ring with a large open center (stroke 26 on r=78 in
+  // a 200 viewBox → inner 65 / outer 91). BudgetView keeps the default chunkier ring.
+  const rOut = bars ? 91 : 92;
+  const rIn = bars ? 65 : 60;
 
   // Pinned-pie (row + !fill): size the pie from the actual container width so it
   // grows when the window opens, and drop the legend before names/numbers collide.
@@ -153,8 +171,8 @@ export function SpendingPie({ expenses, categories, layout = "column", size = SI
 
   return (
     <div ref={rootRef} style={row ? (fill
-      ? { display: "flex", gap: 16, alignItems: "center", flex: 1, minHeight: 0 }
-      : { display: "flex", gap: 16, alignItems: "center", justifyContent: "flex-start" }) : undefined}>
+      ? { display: "flex", gap: rowGap, alignItems: "center", flex: 1, minHeight: 0 }
+      : { display: "flex", gap: rowGap, alignItems: "center", justifyContent: "flex-start", width: "100%" }) : undefined}>
       {/* Pie chart */}
       <div
         style={row ? {
@@ -178,10 +196,10 @@ export function SpendingPie({ expenses, categories, layout = "column", size = SI
           <circle
             cx={CX}
             cy={CY}
-            r={(R_OUT + R_IN) / 2}
+            r={(rOut + rIn) / 2}
             fill="none"
             stroke="var(--bg-sunken)"
-            strokeWidth={R_OUT - R_IN}
+            strokeWidth={rOut - rIn}
           />
           {pieSlices.map((s) => {
             const colors = s.cat ? colorsForHue(s.cat.hue) : { bg: "var(--line-strong)" };
@@ -193,10 +211,10 @@ export function SpendingPie({ expenses, categories, layout = "column", size = SI
                   key={s.id}
                   cx={CX}
                   cy={CY}
-                  r={(R_OUT + R_IN) / 2}
+                  r={(rOut + rIn) / 2}
                   fill="none"
                   stroke={colors.bg}
-                  strokeWidth={R_OUT - R_IN}
+                  strokeWidth={rOut - rIn}
                   onMouseEnter={() => setHoverId(s.id)}
                   onMouseLeave={() => setHoverId(null)}
                   onClick={() => { if (s.cat && onSelectCategory) onSelectCategory(s.cat.id); }}
@@ -207,7 +225,7 @@ export function SpendingPie({ expenses, categories, layout = "column", size = SI
             return (
               <path
                 key={s.id}
-                d={arcPath(s.start, s.end, R_OUT, R_IN)}
+                d={arcPath(s.start, s.end, rOut, rIn)}
                 fill={colors.bg}
                 stroke="var(--bg-elev)"
                 strokeWidth={1.5}
@@ -220,17 +238,52 @@ export function SpendingPie({ expenses, categories, layout = "column", size = SI
           })}
         </svg>
         <div style={{ position: "absolute", textAlign: "center", pointerEvents: "none" }}>
-          <div style={{ fontSize: "clamp(14px, 1.3vw, 22px)", fontWeight: 600, letterSpacing: "-0.02em", fontVariantNumeric: "tabular-nums", color: "var(--fg)" }}>
-            {fmtMoney(hoverSlice ? hoverSlice.amount : total, { compact: true })}
+          <div style={{ fontSize: bars ? scale * 29 : "clamp(14px, 1.3vw, 22px)", fontWeight: 600, letterSpacing: "-0.02em", fontVariantNumeric: "tabular-nums", color: "var(--fg)" }}>
+            {bars
+              ? fmtNumber(hoverSlice ? hoverSlice.amount : total)
+              : fmtMoney(hoverSlice ? hoverSlice.amount : total, { compact: true })}
           </div>
-          <div style={{ fontSize: "clamp(9px, 0.65vw, 12px)", color: "var(--fg-subtle)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: 2 }}>
-            {hoverSlice ? hoverSlice.cat?.name ?? "Uncategorized" : "spent"}
+          <div style={{ fontSize: bars ? scale * 10.5 : "clamp(9px, 0.65vw, 12px)", color: "var(--fg-subtle)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: bars ? scale * 3 : 2 }}>
+            {hoverSlice ? hoverSlice.cat?.name ?? "Uncategorized" : (centerLabel ?? "spent")}
           </div>
         </div>
       </div>
 
       {/* Legend: all categories (hidden when too narrow -> pie only) */}
-      {showLegend && (
+      {showLegend && legendVariant === "bars" && (
+      <div style={{ display: "flex", flexDirection: "column", gap: scale * 10, flex: row ? 1 : undefined, minWidth: 0, overflowY: "auto" }}>
+        {legendItems
+          .filter((item) => item.cat != null && budgets?.some((b) => b.categoryId === item.cat!.id))
+          .map((item) => {
+            const colors = colorsForHue(item.cat!.hue);
+            const catBudget = budgets!.find((b) => b.categoryId === item.cat!.id)!;
+            const remaining = catBudget.monthlyAmount - item.amount;
+            const remainingFrac = catBudget.monthlyAmount > 0 ? remaining / catBudget.monthlyAmount : 0;
+            const severityColor = remainingFrac <= 0 ? "var(--danger)" : remainingFrac < 0.15 ? "var(--danger)" : remainingFrac < 0.25 ? "var(--warn)" : "var(--ok)";
+            const fillPct = catBudget.monthlyAmount > 0 ? Math.min(100, (item.amount / catBudget.monthlyAmount) * 100) : 0;
+            return (
+              <div key={item.id} style={{ display: "flex", flexDirection: "column", gap: scale * 5 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: scale * 8, fontSize: scale * 13 }}>
+                  <span style={{ width: scale * 10, height: scale * 10, borderRadius: scale * 3, background: colors.bg, flex: "0 0 auto" }} />
+                  <span style={{ flex: 1, fontWeight: 500 }}>{item.cat!.name}</span>
+                  <span style={{ color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums", fontSize: scale * 12 }}>
+                    {fmtNumber(item.amount)} / {fmtNumber(catBudget.monthlyAmount)}
+                  </span>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: scale * 8 }}>
+                  <div style={{ flex: 1, height: scale * 5, borderRadius: 99, background: "var(--bg-sunken)", overflow: "hidden" }}>
+                    <div style={{ height: "100%", width: `${fillPct}%`, background: colors.bg, borderRadius: 99 }} />
+                  </div>
+                  <span style={{ fontSize: scale * 11, color: severityColor, fontWeight: 600, fontVariantNumeric: "tabular-nums", minWidth: scale * 70, textAlign: "right" }}>
+                    {remaining >= 0 ? `queda ${fmtNumber(remaining)}` : "excedido"}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+      </div>
+      )}
+      {showLegend && legendVariant === "list" && (
       <div style={{ display: "flex", flexDirection: "column", gap: "clamp(2px, 0.3vw, 4px)", flex: row ? (fill ? 1 : "0 1 auto") : undefined, minWidth: 0, overflowY: row ? "auto" : undefined, ...(row && fill ? { alignSelf: "stretch", justifyContent: "center" } : (row ? { maxHeight: pieSize != null ? pieSize : undefined } : {})) }}>
         {legendItems.map((item) => {
           const colors = item.cat ? colorsForHue(item.cat.hue) : { bg: "var(--line-strong)", fg: "var(--fg-muted)" };
