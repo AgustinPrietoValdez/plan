@@ -66,12 +66,12 @@ export const COMPRAS_TABS: { id: ComprasTab; label: string; ready: boolean }[] =
 ];
 
 /** Sub-tabs shown inside the Cafe area. */
-export type CafeTab = "granos" | "recetas" | "historial";
+export type CafeTab = "inventario" | "historial" | "recetas";
 
-export const CAFE_TABS: { id: CafeTab; label: string }[] = [
-  { id: "granos", label: "Granos" },
-  { id: "recetas", label: "Recetas" },
-  { id: "historial", label: "Historial" },
+export const CAFE_TABS: { id: CafeTab; label: string; icon: string }[] = [
+  { id: "inventario", label: "Inventario", icon: "📦" },
+  { id: "historial", label: "Historial", icon: "🕓" },
+  { id: "recetas", label: "Recetas", icon: "📖" },
 ];
 
 /** Sub-tabs shown inside the Finanzas (ex-Presupuesto) area. */
@@ -168,7 +168,7 @@ export const useApp = create<AppState>((set) => ({
   sidebarOpen: false,
   comprasTab: "listas",
   comprasWeek: mondayOfThisWeek(),
-  cafeTab: "granos",
+  cafeTab: "inventario",
   finanzasTab: "presupuesto",
 
   setView: (view) => set({ view }),

@@ -8,6 +8,7 @@ import {
   type BudgetUpsert,
   type CoffeeBeanCreate, type CoffeeBeanPatch,
   type CoffeeRecipeCreate, type CoffeeRecipePatch,
+  type CoffeeWishlistItemCreate, type CoffeeWishlistItemPatch,
   type CategoryCreate, type CategoryPatch,
   type EventCreate, type EventPatch,
   type ExpenseCategoryCreate, type ExpenseCategoryPatch,
@@ -40,6 +41,7 @@ const KEYS = {
   automations: ["automations"] as const,
   coffeeBeans: ["coffee_beans"] as const,
   coffeeRecipes: ["coffee_recipes"] as const,
+  coffeeWishlistItems: ["coffee_wishlist_items"] as const,
   events: ["events"] as const,
   tasks: ["tasks"] as const,
   projects: ["projects"] as const,
@@ -994,6 +996,35 @@ export function useDeleteCoffeeBean() {
   return useMutation({
     mutationFn: (id: string) => repo.deleteCoffeeBean(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.coffeeBeans }),
+  });
+}
+
+export function useCoffeeWishlistItems() {
+  return useQuery({ queryKey: KEYS.coffeeWishlistItems, queryFn: () => repo.listCoffeeWishlistItems() });
+}
+
+export function useCreateCoffeeWishlistItem() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CoffeeWishlistItemCreate) => repo.createCoffeeWishlistItem(input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.coffeeWishlistItems }),
+  });
+}
+
+export function usePatchCoffeeWishlistItem() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: CoffeeWishlistItemPatch }) =>
+      repo.patchCoffeeWishlistItem(id, patch),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.coffeeWishlistItems }),
+  });
+}
+
+export function useDeleteCoffeeWishlistItem() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => repo.deleteCoffeeWishlistItem(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.coffeeWishlistItems }),
   });
 }
 

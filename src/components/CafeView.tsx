@@ -2,29 +2,48 @@ import { useState } from "react";
 import {
   useCoffeeBeans,
   useCoffeeRecipes,
+  useCoffeeWishlistItems,
   useConsumeCoffeeBean,
   useCreateCoffeeBean,
   useCreateCoffeeRecipe,
+  useCreateCoffeeWishlistItem,
   useCreateTask,
   useDeleteCoffeeBean,
   useDeleteCoffeeRecipe,
+  useDeleteCoffeeWishlistItem,
   usePatchCoffeeBean,
   usePatchCoffeeRecipe,
+  usePatchCoffeeWishlistItem,
   useBrewSessions,
   useDeleteBrewSession,
 } from "../lib/queries";
 import { addDays, fromYmd, todayYmd, ymd } from "../lib/date";
-import type { CoffeeBean, CoffeeRecipe, CoffeeRecipeStep, CoffeeStepType, WaterMode, BrewSession, BrewDatapoint } from "../types";
-import type { CoffeeBeanCreate, CoffeeRecipeCreate } from "../lib/repo";
-import { IPlus, ITrash, IChevD, IChevU, IX } from "./icons";
+import type { CoffeeBean, CoffeeRecipe, CoffeeRecipeStep, CoffeeStepType, WaterMode, BrewSession, BrewDatapoint, CoffeeWishlistItem } from "../types";
+import type { CoffeeBeanCreate, CoffeeRecipeCreate, CoffeeWishlistItemCreate } from "../lib/repo";
+import { IPlus, ITrash, IChevD, IChevU, IChevR, IX } from "./icons";
 import { analyzeCoffee, askAboutBrew } from "../lib/coffeeAnalysis";
-import { useApp } from "../lib/store";
+import { useApp, CAFE_TABS } from "../lib/store";
 import { daysOld, freshnessStatus, FRESHNESS_COLOR, FRESHNESS_LABEL } from "../lib/coffeeFreshness";
+import { useFrameScale } from "../lib/uiScale";
+import { fmtMoney } from "../lib/money";
 
 // El boton "Analizar" lanza una terminal con Claude: desktop-only (en mobile no hay terminal).
 const isMobile =
   /android/i.test(navigator.userAgent) ||
   new URLSearchParams(window.location.search).has("mobile");
+
+// Fallback solo para granos creados antes de initialWeightGrams (issue: no todas
+// las bolsas pesan lo mismo, no había que asumir una referencia global fija).
+const REFERENCE_BAG_G = 250;
+const LOW_STOCK_G = 50;
+
+// El mockup de café (como el de Home) fue diseñado en un frame fijo de 1280×720
+// pensado para 2560×1440 (2×). `fluid(n)` = "n px a esa escala": se resuelve a
+// `calc(var(--s) * n px)`, donde `--s` lo pone useFrameScale() en la raíz de
+// CafeView y cascadea a todo lo de abajo — igual que HomeView.tsx.
+function fluid(base: number): string {
+  return `calc(var(--s, 2) * ${base}px)`;
+}
 
 function fmtDmY(ymd: string): string {
   const [y, m, d] = ymd.split("-");
@@ -127,9 +146,28 @@ function autoCompleteRatio(stepIdx: number, steps: CoffeeRecipeStep[], ratio: nu
 
 type BeanEditor = { open: false } | { open: true; bean: CoffeeBean | null };
 type RecipeEditor = { open: false } | { open: true; recipe: CoffeeRecipe | null };
+type WishlistEditor = { open: false } | { open: true; item: CoffeeWishlistItem | null };
+
+interface WishlistFormState {
+  name: string;
+  roaster: string;
+  process: string;
+  priceKr: string;
+  notes: string;
+}
+
+const defaultWishlistForm = (): WishlistFormState => ({ name: "", roaster: "", process: "", priceKr: "", notes: "" });
+
+function wishlistFormFromItem(w: CoffeeWishlistItem): WishlistFormState {
+  return {
+    name: w.name, roaster: w.roaster, process: w.process,
+    priceKr: w.priceKr != null ? String(w.priceKr) : "",
+    notes: w.notes,
+  };
+}
 
 export function CafeView() {
-  const { cafeTab: tab } = useApp();
+  const { cafeTab: tab, setCafeTab } = useApp();
   const [beanEditor, setBeanEditor] = useState<BeanEditor>({ open: false });
   const [beanForm, setBeanForm] = useState<BeanFormState>(defaultBeanForm());
   const [recipeEditor, setRecipeEditor] = useState<RecipeEditor>({ open: false });
@@ -146,10 +184,16 @@ export function CafeView() {
   const [askBrewBean, setAskBrewBean] = useState<CoffeeBean | null>(null);
   const [askBrewText, setAskBrewText] = useState("");
   const [finishingBean, setFinishingBean] = useState<CoffeeBean | null>(null);
+  const [detailBeanId, setDetailBeanId] = useState<string | null>(null);
+  const [wishlistEditor, setWishlistEditor] = useState<WishlistEditor>({ open: false });
+  const [wishlistForm, setWishlistForm] = useState<WishlistFormState>(defaultWishlistForm());
+  const [deleteWishlistItem, setDeleteWishlistItem] = useState<string | null>(null);
+  const [wishlistSavePending, setWishlistSavePending] = useState(false);
 
   const beansQ = useCoffeeBeans();
   const recipesQ = useCoffeeRecipes();
   const sessionsQ = useBrewSessions();
+  const wishlistQ = useCoffeeWishlistItems();
   const createBean = useCreateCoffeeBean();
   const patchBean = usePatchCoffeeBean();
   const consumeBean = useConsumeCoffeeBean();
@@ -158,16 +202,15 @@ export function CafeView() {
   const patchRecipe = usePatchCoffeeRecipe();
   const deleteR = useDeleteCoffeeRecipe();
   const createTask = useCreateTask();
+  const createWishlistItem = useCreateCoffeeWishlistItem();
+  const patchWishlistItem = usePatchCoffeeWishlistItem();
+  const deleteWishlistItemM = useDeleteCoffeeWishlistItem();
 
   const beans = beansQ.data ?? [];
   const recipes = recipesQ.data ?? [];
   const sessions = sessionsQ.data ?? [];
-
-  function lastBrewFor(beanId: string): BrewSession | null {
-    const bs = sessions.filter((s) => s.beanId === beanId);
-    if (bs.length === 0) return null;
-    return bs.reduce((a, s) => (s.createdAt > a.createdAt ? s : a));
-  }
+  const wishlistItems = wishlistQ.data ?? [];
+  const detailBean = detailBeanId ? beans.find((b) => b.id === detailBeanId) ?? null : null;
 
   // ---- bean actions ----
   function openCreateBean() { setBeanForm(defaultBeanForm()); setBeanEditor({ open: true, bean: null }); }
@@ -275,66 +318,187 @@ export function CafeView() {
     }
   }
 
+  // ---- wishlist actions ----
+  function openCreateWishlistItem() { setWishlistForm(defaultWishlistForm()); setWishlistEditor({ open: true, item: null }); }
+  function openEditWishlistItem(w: CoffeeWishlistItem) { setWishlistForm(wishlistFormFromItem(w)); setWishlistEditor({ open: true, item: w }); }
+
+  async function saveWishlistItem() {
+    setSaveError(null);
+    const priceKr = wishlistForm.priceKr.trim() ? parseFloat(wishlistForm.priceKr.replace(",", ".")) : null;
+    const payload: CoffeeWishlistItemCreate = {
+      name: wishlistForm.name.trim(),
+      roaster: wishlistForm.roaster.trim(),
+      process: wishlistForm.process.trim(),
+      priceKr: priceKr != null && Number.isFinite(priceKr) ? priceKr : null,
+      notes: wishlistForm.notes.trim(),
+    };
+    if (!payload.name) return;
+    if (wishlistSavePending) return; // a real save is still in flight — never fire a second one
+    const timeout = new Promise<never>((_, rej) =>
+      setTimeout(() => rej(new Error("Sigue guardando en segundo plano — esperá antes de reintentar")), 10_000)
+    );
+    const isEdit = wishlistEditor.open && wishlistEditor.item !== null;
+    setWishlistSavePending(true);
+    const real = isEdit && wishlistEditor.open && wishlistEditor.item
+      ? patchWishlistItem.mutateAsync({ id: wishlistEditor.item.id, patch: payload })
+      : createWishlistItem.mutateAsync(payload);
+    void real
+      .then(() => {
+        setWishlistEditor({ open: false });
+        setSaveError(null);
+      })
+      .catch(() => {})
+      .finally(() => setWishlistSavePending(false));
+    try {
+      await Promise.race([real, timeout]);
+      setWishlistEditor({ open: false });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("saveWishlistItem failed:", err);
+      setSaveError(msg);
+    }
+  }
+
+  async function comprarWishlistItem(w: CoffeeWishlistItem) {
+    const inp = window.prompt(`Registrar "${w.name}" en el inventario. Gramos de la bolsa:`, "250");
+    if (inp == null) return;
+    const g = parseFloat(inp.replace(",", "."));
+    if (!Number.isFinite(g) || g <= 0) return;
+    await createBean.mutateAsync({
+      name: w.name, roaster: w.roaster, process: w.process, weightGrams: g,
+    });
+    await deleteWishlistItemM.mutateAsync(w.id);
+  }
+
+  const s = useFrameScale();
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+    <div
+      style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, overflow: "hidden", ["--s" as string]: s } as React.CSSProperties}
+    >
       {/* Header + tabs */}
-      <div style={{ padding: "14px 20px 0", borderBottom: "1px solid var(--line)", flexShrink: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-          <span style={{ fontSize: 16 }}>☕</span>
-          <h2 style={{ margin: 0, fontSize: 15, fontWeight: 600, flex: 1 }}>Café</h2>
+      <div style={{ padding: `${fluid(20)} ${fluid(20)} 0`, borderBottom: "1px solid var(--line)", flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: fluid(12), marginBottom: fluid(10) }}>
+          <span style={{
+            display: "inline-flex", alignItems: "center", justifyContent: "center",
+            width: fluid(38), height: fluid(38), borderRadius: fluid(9), fontSize: fluid(19),
+            color: "var(--c-peach-fg)", background: "var(--c-peach)", flexShrink: 0,
+          }}>☕</span>
+          <div style={{ flex: 1 }}>
+            <h2 style={{ margin: 0, fontSize: fluid(22), fontWeight: 600, letterSpacing: "-0.02em", lineHeight: 1.15 }}>Café</h2>
+            <div style={{ fontSize: fluid(13), color: "var(--fg-muted)", marginTop: 2 }}>
+              Tu bodega de granos, deseados y consumo
+            </div>
+          </div>
           {tab !== "historial" && (
             <button
               className="btn primary"
-              style={{ display: "flex", alignItems: "center", gap: 4 }}
-              onClick={tab === "granos" ? openCreateBean : openCreateRecipe}
+              style={{ display: "flex", alignItems: "center", gap: 4, fontSize: fluid(12.5), padding: `${fluid(7)} ${fluid(12)}` }}
+              onClick={tab === "inventario" ? openCreateBean : openCreateRecipe}
             >
-              <IPlus size={13} /> {tab === "granos" ? "Nuevo grano" : "Nueva receta"}
+              <IPlus size={13} /> {tab === "inventario" ? "Agregar grano" : "Nueva receta"}
             </button>
           )}
+        </div>
+
+        {/* Inventario / Historial / Recetas — folder tabs, como en el mockup */}
+        <div style={{ display: "flex", gap: fluid(2), alignItems: "flex-end" }}>
+          {CAFE_TABS.map((t) => {
+            const active = tab === t.id;
+            return (
+              <div
+                key={t.id}
+                role="button"
+                onClick={() => setCafeTab(t.id)}
+                style={{
+                  padding: `${fluid(9)} ${fluid(16)}`, borderRadius: `${fluid(9)} ${fluid(9)} 0 0`,
+                  fontSize: fluid(13), fontWeight: 600, cursor: "pointer",
+                  display: "inline-flex", alignItems: "center", gap: fluid(7),
+                  marginBottom: -1, border: "1px solid transparent", borderBottom: "none",
+                  background: active ? "var(--bg-sunken)" : "transparent",
+                  color: active ? "var(--fg)" : "var(--fg-muted)",
+                  borderColor: active ? "var(--line)" : "transparent",
+                }}
+              >
+                <span
+                  aria-hidden
+                  style={{
+                    display: "inline-flex", alignItems: "center", justifyContent: "center",
+                    width: fluid(16), height: fluid(16), fontSize: fluid(14), lineHeight: 1,
+                  }}
+                >
+                  {t.icon}
+                </span>
+                {t.label}
+              </div>
+            );
+          })}
         </div>
       </div>
 
       {/* Content */}
-      <div style={{ flex: 1, overflowY: "auto", padding: "16px 20px 24px" }}>
-        {tab === "granos" && (
-          <GranosTab
+      <div style={{ flex: 1, overflowY: "auto", padding: `${fluid(16)} ${fluid(20)} ${fluid(24)}` }}>
+        {tab === "inventario" && (
+          <InventarioTab
             beans={beans}
-            onEdit={openEditBean}
-            onDeleteRequest={setDeleteBean}
-            onCreateTask={(b) => void createOrderTask(b)}
+            sessions={sessions}
+            wishlistItems={wishlistItems}
+            onOpenDetail={(b) => setDetailBeanId(b.id)}
             onMarkFinished={(b) => setFinishingBean(b)}
-            onConsume={(b) => {
-              const inp = window.prompt(`Cuantos gramos usaste de "${b.name}"? (quedan ${b.weightGrams}g)`, "");
-              if (inp == null) return;
-              const g = parseFloat(inp.replace(",", "."));
-              if (!Number.isFinite(g) || g <= 0) return;
-              consumeBean.mutate({ id: b.id, grams: g });
-            }}
-            onReactivate={(b) => {
-              const inp = window.prompt(`Reactivar "${b.name}". Gramos de stock nuevo:`, "250");
-              if (inp == null) return;
-              const g = parseFloat(inp.replace(",", "."));
-              // Reactivar reinicia el descanso: cuenta desde hoy, no desde el tueste original.
-              patchBean.mutate({ id: b.id, patch: { finishedAt: null, roastedOn: todayYmd(), weightGrams: Number.isFinite(g) && g > 0 ? g : b.weightGrams } });
-            }}
-            onAnalizar={(b) => {
-              analyzeCoffee(b).catch((err) => {
-                console.error("[CafeView] analyzeCoffee failed:", err);
-                window.alert(`No se pudo lanzar el analisis: ${err instanceof Error ? err.message : String(err)}`);
-              });
-            }}
-            onAskAboutBrew={(b) => { setAskBrewText(""); setAskBrewBean(b); }}
+            onCreateWishlistItem={openCreateWishlistItem}
+            onEditWishlistItem={openEditWishlistItem}
+            onDeleteWishlistItem={setDeleteWishlistItem}
+            onComprarWishlistItem={(w) => void comprarWishlistItem(w)}
           />
         )}
         {tab === "recetas" && (
           <RecetasTab
             recipes={recipes.filter((r) => !r.baseRecipeId)}
+            sessions={sessions}
             onEdit={openEditRecipe}
             onDeleteRequest={setDeleteRecipe}
           />
         )}
-        {tab === "historial" && <BrewHistorialTab />}
+        {tab === "historial" && (
+          <HistorialTab beans={beans} sessions={sessions} onOpenDetail={(b) => setDetailBeanId(b.id)} />
+        )}
       </div>
+
+      {/* Bean detail drawer */}
+      {detailBean && (
+        <BeanDetailDrawer
+          bean={detailBean}
+          sessions={sessions.filter((s) => s.beanId === detailBean.id)}
+          onClose={() => setDetailBeanId(null)}
+          onEdit={openEditBean}
+          onDeleteRequest={setDeleteBean}
+          onCreateTask={(b) => void createOrderTask(b)}
+          onMarkFinished={(b) => setFinishingBean(b)}
+          onConsume={(b) => {
+            const inp = window.prompt(`Cuantos gramos usaste de "${b.name}"? (quedan ${b.weightGrams}g)`, "");
+            if (inp == null) return;
+            const g = parseFloat(inp.replace(",", "."));
+            if (!Number.isFinite(g) || g <= 0) return;
+            consumeBean.mutate({ id: b.id, grams: g });
+          }}
+          onReactivate={(b) => {
+            const inp = window.prompt(`Reactivar "${b.name}". Gramos de stock nuevo:`, "250");
+            if (inp == null) return;
+            const g = parseFloat(inp.replace(",", "."));
+            const newWeight = Number.isFinite(g) && g > 0 ? g : b.weightGrams;
+            // Reactivar reinicia el descanso: cuenta desde hoy, no desde el tueste original.
+            // También resetea initialWeightGrams — es una bolsa nueva, no la misma.
+            patchBean.mutate({ id: b.id, patch: { finishedAt: null, roastedOn: todayYmd(), weightGrams: newWeight, initialWeightGrams: newWeight } });
+          }}
+          onAnalizar={(b) => {
+            analyzeCoffee(b).catch((err) => {
+              console.error("[CafeView] analyzeCoffee failed:", err);
+              window.alert(`No se pudo lanzar el analisis: ${err instanceof Error ? err.message : String(err)}`);
+            });
+          }}
+          onAskAboutBrew={(b) => { setAskBrewText(""); setAskBrewBean(b); }}
+        />
+      )}
 
       {/* Bean editor */}
       {beanEditor.open && (
@@ -363,6 +527,19 @@ export function CafeView() {
         />
       )}
 
+      {/* Wishlist editor */}
+      {wishlistEditor.open && (
+        <WishlistModal
+          form={wishlistForm}
+          isEdit={wishlistEditor.item !== null}
+          saving={wishlistSavePending}
+          error={saveError}
+          onChange={(k, v) => setWishlistForm((p) => ({ ...p, [k]: v }))}
+          onSave={() => void saveWishlistItem()}
+          onClose={() => { setWishlistEditor({ open: false }); setSaveError(null); }}
+        />
+      )}
+
       {/* Fase 7c: preguntarle a Claude sobre un brew que no salio bien */}
       {askBrewBean && (
         <Modal title={`Preguntar sobre "${askBrewBean.name}"`} onClose={() => setAskBrewBean(null)}>
@@ -382,7 +559,10 @@ export function CafeView() {
               className="btn primary"
               disabled={!askBrewText.trim()}
               onClick={() => {
-                askAboutBrew(askBrewBean, lastBrewFor(askBrewBean.id), askBrewText.trim()).catch((err) => {
+                const bean = askBrewBean;
+                const bs = sessions.filter((s) => s.beanId === bean.id);
+                const lastBrew = bs.length === 0 ? null : bs.reduce((a, s) => (s.createdAt > a.createdAt ? s : a));
+                askAboutBrew(bean, lastBrew, askBrewText.trim()).catch((err) => {
                   console.error("[CafeView] askAboutBrew failed:", err);
                   window.alert(`No se pudo lanzar la consulta: ${err instanceof Error ? err.message : String(err)}`);
                 });
@@ -413,7 +593,7 @@ export function CafeView() {
       {deleteBean && (
         <ConfirmModal
           text="¿Eliminar este grano?"
-          onConfirm={() => { void deleteB.mutateAsync(deleteBean); setDeleteBean(null); }}
+          onConfirm={() => { void deleteB.mutateAsync(deleteBean); setDeleteBean(null); setDetailBeanId(null); }}
           onCancel={() => setDeleteBean(null)}
         />
       )}
@@ -424,11 +604,18 @@ export function CafeView() {
           onCancel={() => setDeleteRecipe(null)}
         />
       )}
+      {deleteWishlistItem && (
+        <ConfirmModal
+          text="¿Eliminar este grano de la lista de deseados?"
+          onConfirm={() => { void deleteWishlistItemM.mutateAsync(deleteWishlistItem); setDeleteWishlistItem(null); }}
+          onCancel={() => setDeleteWishlistItem(null)}
+        />
+      )}
     </div>
   );
 }
 
-// ---------- Brew Historial tab ----------
+// ---------- Brew Historial ----------
 
 const SESSION_COLORS = [
   "#4caf50", "#2196f3", "#ff9800", "#e91e63",
@@ -547,8 +734,122 @@ export function BrewOverlayChart({
   );
 }
 
-function BrewHistorialTab() {
-  const { data: sessions = [] } = useBrewSessions();
+/** Historial tab: stat tiles, timeline de granos (Registro) y — abajo, colapsado —
+ *  la comparación de pours agrupados por receta que ya existía. */
+function HistorialTab({
+  beans, sessions, onOpenDetail,
+}: {
+  beans: CoffeeBean[];
+  sessions: BrewSession[];
+  onOpenDetail: (b: CoffeeBean) => void;
+}) {
+  const [showCompare, setShowCompare] = useState(false);
+
+  const brewCountByBean = new Map<string, number>();
+  sessions.forEach((s) => { if (s.beanId) brewCountByBean.set(s.beanId, (brewCountByBean.get(s.beanId) ?? 0) + 1); });
+
+  const nameCounts = new Map<string, number>();
+  sessions.forEach((s) => {
+    const n = s.beanName.trim();
+    if (n) nameCounts.set(n, (nameCounts.get(n) ?? 0) + 1);
+  });
+  let topBean: { name: string; count: number } | null = null;
+  for (const [name, count] of nameCounts) {
+    if (!topBean || count > topBean.count) topBean = { name, count };
+  }
+
+  const entries = beans
+    .map((b) => ({
+      bean: b,
+      finished: !!b.finishedAt,
+      date: b.finishedAt ?? b.createdAt,
+      brews: brewCountByBean.get(b.id) ?? 0,
+    }))
+    .sort((a, b) => (a.date < b.date ? 1 : -1));
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: fluid(18) }}>
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${fluid(200)}, 1fr))`, gap: fluid(14) }}>
+        <PlaceholderStatTile label="Consumido este año" />
+        <PlaceholderStatTile label="Gastado en café" />
+        <div style={{ background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: fluid(13), padding: fluid(16), boxShadow: "var(--shadow-sm)" }}>
+          <div style={{ fontSize: fluid(16), fontWeight: 600, letterSpacing: "-0.01em" }}>{topBean ? topBean.name : "—"}</div>
+          <div style={{ fontSize: fluid(11.5), color: "var(--fg-subtle)", marginTop: fluid(2) }}>
+            {topBean ? `Tu grano más repetido (×${topBean.count})` : "Sin brews registrados aún"}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ fontSize: fluid(11), textTransform: "uppercase", letterSpacing: ".06em", fontWeight: 700, color: "var(--fg-muted)" }}>
+        Registro
+      </div>
+
+      {entries.length === 0 ? (
+        <div style={{ fontSize: fluid(13), color: "var(--fg-muted)" }}>Sin granos registrados todavía.</div>
+      ) : (
+        <div style={{ background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: fluid(13), boxShadow: "var(--shadow-sm)", overflow: "hidden" }}>
+          {entries.map(({ bean: b, finished, date, brews }, i) => (
+            <div
+              key={b.id}
+              role="button"
+              onClick={() => onOpenDetail(b)}
+              style={{
+                display: "flex", alignItems: "center", gap: fluid(12), padding: `${fluid(13)} ${fluid(16)}`, cursor: "pointer",
+                borderBottom: i < entries.length - 1 ? "1px solid var(--line)" : "none",
+              }}
+            >
+              <div style={{
+                width: fluid(30), height: fluid(30), borderRadius: fluid(8), flexShrink: 0, fontSize: fluid(15),
+                display: "grid", placeItems: "center",
+                background: finished ? "color-mix(in oklch, var(--danger) 10%, var(--bg))" : "color-mix(in oklch, var(--c-peach-fg) 12%, var(--bg))",
+              }}>
+                {finished ? "☕" : "🛒"}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: fluid(13), fontWeight: 600 }}>{b.name}</div>
+                <div style={{ fontSize: fluid(11.5), color: "var(--fg-subtle)" }}>
+                  {finished
+                    ? `Terminado · duró ${weeksBetween(b.createdAt, b.finishedAt!)} semanas · ${brews} brew${brews !== 1 ? "s" : ""}`
+                    : `Activo · ${b.roaster || "sin tostador"} · ${brews} brew${brews !== 1 ? "s" : ""}`}
+                </div>
+              </div>
+              <span style={{ fontSize: fluid(11.5), color: "var(--fg-subtle)", fontVariantNumeric: "tabular-nums" }}>{fmtDmY(date.slice(0, 10))}</span>
+              <IChevR size={15} />
+            </div>
+          ))}
+        </div>
+      )}
+
+      <button
+        className="btn ghost"
+        style={{ alignSelf: "flex-start", fontSize: fluid(12), padding: `${fluid(4)} ${fluid(8)}` }}
+        onClick={() => setShowCompare((v) => !v)}
+      >
+        {showCompare ? "▾" : "▸"} Comparar pours por receta
+      </button>
+      {showCompare && <BrewCompareByRecipe sessions={sessions} />}
+    </div>
+  );
+}
+
+function weeksBetween(startIso: string, endIso: string): number {
+  const ms = new Date(endIso).getTime() - new Date(startIso).getTime();
+  return Math.max(0, Math.round(ms / (7 * 86_400_000)));
+}
+
+function PlaceholderStatTile({ label }: { label: string }) {
+  return (
+    <div style={{ background: "var(--bg-elev)", border: "1px dashed var(--line-strong)", borderRadius: fluid(13), padding: fluid(16), opacity: 0.65 }}>
+      <div style={{ fontSize: fluid(26), fontWeight: 600, letterSpacing: "-0.02em", fontVariantNumeric: "tabular-nums", color: "var(--fg-subtle)" }}>—</div>
+      <div style={{ fontSize: fluid(11.5), color: "var(--fg-subtle)", marginTop: fluid(2) }}>{label} · próximamente</div>
+    </div>
+  );
+}
+
+/** La vista anterior de Historial: sesiones agrupadas por nombre de receta,
+ *  con comparación de curvas peso/flujo superpuestas. Se conserva completa,
+ *  ahora colapsada debajo del Registro por grano. */
+function BrewCompareByRecipe({ sessions }: { sessions: BrewSession[] }) {
   const deleteSession = useDeleteBrewSession();
   const [viewingSessions, setViewingSessions] = useState<BrewSession[] | null>(null);
   const [chartSessionIds, setChartSessionIds] = useState<string[]>([]);
@@ -687,73 +988,273 @@ function BrewHistorialTab() {
   );
 }
 
-// ---------- Granos tab ----------
+// ---------- Inventario tab ----------
 
-function GranosTab({
-  beans, onEdit, onDeleteRequest, onCreateTask, onMarkFinished, onConsume, onReactivate, onAnalizar, onAskAboutBrew,
+function InventarioTab({
+  beans, sessions, wishlistItems, onOpenDetail, onMarkFinished,
+  onCreateWishlistItem, onEditWishlistItem, onDeleteWishlistItem, onComprarWishlistItem,
 }: {
   beans: CoffeeBean[];
-  onEdit: (b: CoffeeBean) => void;
-  onDeleteRequest: (id: string) => void;
-  onCreateTask: (b: CoffeeBean) => void;
+  sessions: BrewSession[];
+  wishlistItems: CoffeeWishlistItem[];
+  onOpenDetail: (b: CoffeeBean) => void;
   onMarkFinished: (b: CoffeeBean) => void;
-  onConsume: (b: CoffeeBean) => void;
-  onReactivate: (b: CoffeeBean) => void;
-  onAnalizar: (b: CoffeeBean) => void;
-  onAskAboutBrew: (b: CoffeeBean) => void;
+  onCreateWishlistItem: () => void;
+  onEditWishlistItem: (w: CoffeeWishlistItem) => void;
+  onDeleteWishlistItem: (id: string) => void;
+  onComprarWishlistItem: (w: CoffeeWishlistItem) => void;
 }) {
   const active = beans.filter((b) => !b.finishedAt);
   const finished = beans.filter((b) => b.finishedAt);
   const [showFinished, setShowFinished] = useState(false);
-  const needsOrder = active.length <= 2;
-  if (beans.length === 0) {
-    return (
-      <div style={{ textAlign: "center", padding: "60px 20px", color: "var(--fg-muted)" }}>
-        <div style={{ fontSize: 32, marginBottom: 12, opacity: 0.4 }}>☕</div>
-        <p style={{ margin: "0 0 6px", fontSize: 14, fontWeight: 500, color: "var(--fg)" }}>Sin granos registrados</p>
-        <p style={{ margin: 0, fontSize: 13 }}>Registrá tus bolsas de café para trackear frescura y cantidad.</p>
-      </div>
-    );
-  }
+  const lowStock = active.filter((b) => b.weightGrams > 0 && b.weightGrams <= LOW_STOCK_G);
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      {needsOrder && (
-        <div style={{ fontSize: 12, color: "var(--danger)", fontWeight: 500, padding: "6px 10px", background: "color-mix(in oklch, var(--danger) 10%, var(--bg))", borderRadius: 8, border: "1px solid color-mix(in oklch, var(--danger) 30%, transparent)" }}>
-          ⚠ {active.length === 0 ? "Sin granos activos" : active.length === 1 ? "Queda solo 1 grano" : "Quedan solo 2 granos"} — pedí más pronto
+    <div style={{ display: "flex", flexDirection: "column", gap: fluid(18) }}>
+      {beans.length === 0 ? (
+        <div style={{ textAlign: "center", padding: `${fluid(40)} ${fluid(20)}`, color: "var(--fg-muted)" }}>
+          <div style={{ fontSize: fluid(32), marginBottom: fluid(12), opacity: 0.4 }}>☕</div>
+          <p style={{ margin: `0 0 ${fluid(6)}`, fontSize: fluid(14), fontWeight: 500, color: "var(--fg)" }}>Sin granos registrados</p>
+          <p style={{ margin: 0, fontSize: fluid(13) }}>Registrá tus bolsas de café para trackear frescura y cantidad.</p>
         </div>
-      )}
-      {active.map((b) => (
-        <BeanCard key={b.id} bean={b} onEdit={onEdit} onDelete={onDeleteRequest} onCreateTask={onCreateTask}
-          needsOrder={needsOrder} onMarkFinished={onMarkFinished} onConsume={onConsume} onReactivate={onReactivate} onAnalizar={onAnalizar} onAskAboutBrew={onAskAboutBrew} />
-      ))}
-      {active.length === 0 && (
-        <div style={{ fontSize: 13, color: "var(--fg-muted)", padding: "8px 4px" }}>No tenés cafés activos.</div>
+      ) : (
+        <>
+          <div style={{ display: "flex", alignItems: "center", gap: fluid(10) }}>
+            <div style={{ fontSize: fluid(11), textTransform: "uppercase", letterSpacing: ".06em", fontWeight: 700, color: "var(--fg-muted)", flex: 1 }}>
+              En casa · {active.length} grano{active.length !== 1 ? "s" : ""}
+            </div>
+            {lowStock.length > 0 && (
+              <span style={{
+                fontSize: fluid(11), fontWeight: 600, color: "var(--warn)",
+                background: "color-mix(in oklch, var(--warn) 13%, var(--bg))", padding: `${fluid(2)} ${fluid(9)}`, borderRadius: 999,
+              }}>
+                {lowStock.length} con poco stock
+              </span>
+            )}
+          </div>
+
+          {active.length === 0 ? (
+            <div style={{ fontSize: fluid(13), color: "var(--fg-muted)" }}>No tenés cafés activos.</div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill, minmax(${fluid(230)}, 1fr))`, gap: fluid(14) }}>
+              {active.map((b) => (
+                <BeanTile
+                  key={b.id}
+                  bean={b}
+                  lastBrew={lastSessionFor(sessions, b.id)}
+                  onOpen={() => onOpenDetail(b)}
+                  onMarkFinished={() => onMarkFinished(b)}
+                />
+              ))}
+            </div>
+          )}
+
+          {finished.length > 0 && (
+            <>
+              <button className="btn ghost" style={{ alignSelf: "flex-start", fontSize: fluid(12), padding: `${fluid(4)} ${fluid(8)}`, marginTop: fluid(8) }}
+                onClick={() => setShowFinished((v) => !v)}>
+                {showFinished ? "▾" : "▸"} No tengo más ({finished.length})
+              </button>
+              {showFinished && (
+                <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill, minmax(${fluid(230)}, 1fr))`, gap: fluid(14) }}>
+                  {finished.map((b) => (
+                    <BeanTile
+                      key={b.id}
+                      bean={b}
+                      lastBrew={lastSessionFor(sessions, b.id)}
+                      onOpen={() => onOpenDetail(b)}
+                      onMarkFinished={() => onMarkFinished(b)}
+                      finished
+                    />
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </>
       )}
 
-      {finished.length > 0 && (
-        <>
-          <button className="btn ghost" style={{ alignSelf: "flex-start", fontSize: 12, padding: "4px 8px", marginTop: 8 }}
-            onClick={() => setShowFinished((v) => !v)}>
-            {showFinished ? "▾" : "▸"} No tengo más ({finished.length})
-          </button>
-          {showFinished && finished.map((b) => (
-            <BeanCard key={b.id} bean={b} onEdit={onEdit} onDelete={onDeleteRequest} onCreateTask={onCreateTask}
-              needsOrder={false} onMarkFinished={onMarkFinished} onConsume={onConsume} onReactivate={onReactivate} onAnalizar={onAnalizar} onAskAboutBrew={onAskAboutBrew} />
+      <WishlistSection
+        items={wishlistItems}
+        onCreate={onCreateWishlistItem}
+        onEdit={onEditWishlistItem}
+        onDelete={onDeleteWishlistItem}
+        onComprar={onComprarWishlistItem}
+      />
+    </div>
+  );
+}
+
+function lastSessionFor(sessions: BrewSession[], beanId: string): BrewSession | null {
+  const bs = sessions.filter((s) => s.beanId === beanId);
+  if (bs.length === 0) return null;
+  return bs.reduce((a, s) => (s.createdAt > a.createdAt ? s : a));
+}
+
+function BeanTile({
+  bean: b, lastBrew, onOpen, onMarkFinished, finished,
+}: {
+  bean: CoffeeBean;
+  lastBrew: BrewSession | null;
+  onOpen: () => void;
+  onMarkFinished: () => void;
+  finished?: boolean;
+}) {
+  const asOf = finished && b.finishedAt ? b.finishedAt.slice(0, 10) : todayYmd();
+  const status = freshnessStatus(b.roastedOn, asOf);
+  const color = FRESHNESS_COLOR[status];
+  const days = daysOld(b.roastedOn, asOf);
+  const bagSize = b.initialWeightGrams && b.initialWeightGrams > 0 ? b.initialWeightGrams : REFERENCE_BAG_G;
+  const pct = Math.max(0, Math.min(100, Math.round((b.weightGrams / bagSize) * 100)));
+  const lowStock = !finished && b.weightGrams > 0 && b.weightGrams <= LOW_STOCK_G;
+
+  return (
+    <div
+      role="button"
+      onClick={onOpen}
+      style={{
+        background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: fluid(13), padding: fluid(16),
+        display: "flex", flexDirection: "column", gap: fluid(12), boxShadow: "var(--shadow-sm)", cursor: "pointer",
+        opacity: finished ? 0.6 : 1,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "flex-start", gap: fluid(10) }}>
+        <div style={{
+          width: fluid(38), height: fluid(38), borderRadius: fluid(10), flexShrink: 0, fontSize: fluid(19),
+          display: "grid", placeItems: "center",
+          background: "color-mix(in oklch, var(--c-peach-fg) 14%, var(--bg))",
+        }}>☕</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: fluid(14), fontWeight: 600, letterSpacing: "-0.01em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {b.name}
+          </div>
+          <div style={{ fontSize: fluid(11.5), color: "var(--fg-subtle)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {[b.roaster, b.process].filter(Boolean).join(" · ") || "—"}
+          </div>
+        </div>
+      </div>
+
+      {/* País y varietal en dos líneas fijas (una siempre reservada aun si falta el dato)
+          para que la barra de stock quede a la misma altura en toda la grilla. */}
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: fluid(4) }}>
+        {([b.country, b.varietal] as const).map((t, i) => (
+          <span key={i} style={{
+            fontSize: fluid(10.5), fontWeight: 600, color: "oklch(0.42 0.06 60)", background: "var(--bg-sunken)",
+            border: "1px solid var(--line)", padding: `${fluid(2)} ${fluid(8)}`, borderRadius: 999,
+            visibility: t ? "visible" : "hidden",
+          }}>{t || "—"}</span>
+        ))}
+      </div>
+
+      {!finished && (
+        <div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: fluid(11.5), marginBottom: fluid(5) }}>
+            <span style={{ color: "var(--fg-muted)" }}>Quedan</span>
+            <span style={{ fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{b.weightGrams}g</span>
+          </div>
+          <div style={{ height: fluid(6), borderRadius: 99, background: "var(--bg-sunken)", overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${pct}%`, background: lowStock ? "var(--warn)" : "var(--ok)", borderRadius: 99 }} />
+          </div>
+        </div>
+      )}
+
+      <div style={{ display: "flex", alignItems: "center", gap: fluid(6), fontSize: fluid(11.5), color, fontWeight: 600 }}>
+        <span style={{ width: fluid(7), height: fluid(7), borderRadius: "50%", background: color }} />
+        {finished
+          ? `Terminado${b.finishedAt ? ` · ${fmtDmY(b.finishedAt.slice(0, 10))}` : ""}`
+          : `${FRESHNESS_LABEL[status]}${days != null ? ` (${days}d)` : ""}`}
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: fluid(8), marginTop: "auto", paddingTop: fluid(8), borderTop: "1px solid var(--line)" }}>
+        <span style={{ fontSize: fluid(11.5), color: "var(--fg-subtle)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {lastBrew ? (lastBrew.recipeName || "Brew sin receta") : "Sin brews aún"}
+        </span>
+        {!finished && (
+          <span
+            role="button"
+            onClick={(e) => { e.stopPropagation(); onMarkFinished(); }}
+            style={{ fontSize: fluid(11.5), color: "var(--fg-muted)", fontWeight: 600, cursor: "pointer", flexShrink: 0 }}
+          >
+            Marcar terminado
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function WishlistSection({
+  items, onCreate, onEdit, onDelete, onComprar,
+}: {
+  items: CoffeeWishlistItem[];
+  onCreate: () => void;
+  onEdit: (w: CoffeeWishlistItem) => void;
+  onDelete: (id: string) => void;
+  onComprar: (w: CoffeeWishlistItem) => void;
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: fluid(12), marginTop: fluid(4) }}>
+      <div style={{ display: "flex", alignItems: "center", gap: fluid(10) }}>
+        <div style={{ fontSize: fluid(11), textTransform: "uppercase", letterSpacing: ".06em", fontWeight: 700, color: "var(--fg-muted)", flex: 1 }}>
+          Lista de deseados · {items.length}
+        </div>
+        <button className="btn" style={{ fontSize: fluid(12), display: "flex", alignItems: "center", gap: fluid(6) }} onClick={onCreate}>
+          <IPlus size={12} /> Agregar grano a la lista
+        </button>
+      </div>
+      {items.length === 0 ? (
+        <div style={{ fontSize: fluid(13), color: "var(--fg-muted)" }}>Sin granos en la lista de deseados.</div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill, minmax(${fluid(220)}, 1fr))`, gap: fluid(14) }}>
+          {items.map((w) => (
+            <div key={w.id} style={{
+              background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: fluid(13), padding: `${fluid(14)} ${fluid(16)}`,
+              display: "flex", flexDirection: "column", gap: fluid(10), boxShadow: "var(--shadow-sm)",
+            }}>
+              <div style={{ display: "flex", alignItems: "flex-start", gap: fluid(10) }}>
+                <div style={{ width: fluid(34), height: fluid(34), borderRadius: fluid(9), background: "color-mix(in oklch, var(--c-peach-fg) 14%, var(--bg))", display: "grid", placeItems: "center", fontSize: fluid(16), flexShrink: 0 }}>☕</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: fluid(13.5), fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{w.name}</div>
+                  <div style={{ fontSize: fluid(11.5), color: "var(--fg-subtle)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {[w.roaster, w.process].filter(Boolean).join(" · ") || "—"}
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 2, flexShrink: 0 }}>
+                  <button className="icon-btn" title="Editar" onClick={() => onEdit(w)}><EditIcon /></button>
+                  <button className="icon-btn" title="Eliminar" style={{ color: "var(--danger)" }} onClick={() => onDelete(w.id)}><ITrash size={13} /></button>
+                </div>
+              </div>
+              {w.notes && (
+                <div style={{ fontSize: fluid(11.5), color: "var(--fg-muted)", lineHeight: 1.4 }}>{w.notes}</div>
+              )}
+              <div style={{ display: "flex", alignItems: "center", gap: fluid(8) }}>
+                <span style={{ fontSize: fluid(15), fontWeight: 600, letterSpacing: "-0.01em" }}>
+                  {w.priceKr != null ? fmtMoney(w.priceKr) : "kr —"}
+                </span>
+                <span style={{ flex: 1 }} />
+                <button className="btn primary" style={{ fontSize: fluid(11.5), padding: `${fluid(6)} ${fluid(11)}` }} onClick={() => onComprar(w)}>
+                  + Comprar
+                </button>
+              </div>
+            </div>
           ))}
-        </>
+        </div>
       )}
     </div>
   );
 }
 
-function BeanCard({
-  bean: b, onEdit, onDelete, onCreateTask, needsOrder, onMarkFinished, onConsume, onReactivate, onAnalizar, onAskAboutBrew,
+// ---------- Bean detail drawer ----------
+
+function BeanDetailDrawer({
+  bean: b, sessions, onClose, onEdit, onDeleteRequest, onCreateTask, onMarkFinished, onConsume, onReactivate, onAnalizar, onAskAboutBrew,
 }: {
   bean: CoffeeBean;
+  sessions: BrewSession[];
+  onClose: () => void;
   onEdit: (b: CoffeeBean) => void;
-  onDelete: (id: string) => void;
+  onDeleteRequest: (id: string) => void;
   onCreateTask: (b: CoffeeBean) => void;
-  needsOrder: boolean;
   onMarkFinished: (b: CoffeeBean) => void;
   onConsume: (b: CoffeeBean) => void;
   onReactivate: (b: CoffeeBean) => void;
@@ -765,141 +1266,172 @@ function BeanCard({
   const status = freshnessStatus(b.roastedOn, asOf);
   const days = daysOld(b.roastedOn, asOf);
   const color = FRESHNESS_COLOR[status];
+  const brews = [...sessions].sort((a, s) => (a.createdAt < s.createdAt ? 1 : -1));
 
   return (
-    <div style={{
-      background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: 10, padding: "12px 14px",
-      opacity: isFinished ? 0.6 : 1,
-    }}>
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
-        {/* freshness dot */}
-        <span style={{
-          width: 10, height: 10, borderRadius: "50%", background: color,
-          flexShrink: 0, marginTop: 4,
-        }} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          {/* title row */}
-          <div style={{ display: "flex", alignItems: "baseline", gap: 6, flexWrap: "wrap" }}>
-            <span style={{ fontWeight: 600, fontSize: 14 }}>{b.name}</span>
-            {b.roaster && <span style={{ fontSize: 12, color: "var(--fg-muted)" }}>{b.roaster}</span>}
-            {b.country && <span style={{ fontSize: 11, color: "var(--fg-subtle)" }}>· {b.country}</span>}
-            {b.varietal && <span style={{ fontSize: 11, color: "var(--fg-subtle)" }}>· {b.varietal}</span>}
+    <div
+      onClick={onClose}
+      style={{ position: "fixed", inset: 0, zIndex: 150, background: "rgba(20,20,20,0.28)", display: "flex", justifyContent: "flex-end" }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: fluid(420), maxWidth: "92vw", height: "100%", background: "var(--bg-elev)", borderLeft: "1px solid var(--line)",
+          boxShadow: "-16px 0 48px -12px rgba(20,20,20,0.22)", display: "flex", flexDirection: "column",
+        }}
+      >
+        <div style={{ flexShrink: 0, padding: `${fluid(18)} ${fluid(20)}`, borderBottom: "1px solid var(--line)", display: "flex", alignItems: "flex-start", gap: fluid(12) }}>
+          <div style={{
+            width: fluid(42), height: fluid(42), borderRadius: fluid(11), flexShrink: 0, fontSize: fluid(21),
+            display: "grid", placeItems: "center",
+            background: "color-mix(in oklch, var(--c-peach-fg) 14%, var(--bg))",
+          }}>☕</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: fluid(17), fontWeight: 600, letterSpacing: "-0.01em" }}>{b.name}</div>
+            <div style={{ fontSize: fluid(12), color: "var(--fg-subtle)" }}>
+              {[b.roaster, b.process, isFinished ? "terminado" : "en casa"].filter(Boolean).join(" · ")}
+            </div>
           </div>
+          <button className="icon-btn" onClick={onClose}><IX size={17} /></button>
+        </div>
 
-          {/* meta row */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 12, color, fontWeight: 500 }}>
-              {FRESHNESS_LABEL[status]}{days !== null ? ` (${days}d)` : ""}
+        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: `${fluid(18)} ${fluid(20)}`, display: "flex", flexDirection: "column", gap: fluid(16) }}>
+          <div style={{ display: "flex", alignItems: "center", gap: fluid(8), flexWrap: "wrap" }}>
+            <span style={{ display: "flex", alignItems: "center", gap: fluid(6), fontSize: fluid(12.5), color, fontWeight: 600 }}>
+              <span style={{ width: fluid(7), height: fluid(7), borderRadius: "50%", background: color }} />
+              {FRESHNESS_LABEL[status]}{days != null ? ` (${days}d)` : ""}
             </span>
-            {b.roastedOn && (
-              <span style={{ fontSize: 11, color: "var(--fg-subtle)" }}>
-                tostado {fmtDmY(b.roastedOn)}
-              </span>
-            )}
-            {b.process && <span style={{ fontSize: 11, color: "var(--fg-muted)" }}>{b.process}</span>}
-            {b.producer && <span style={{ fontSize: 11, color: "var(--fg-muted)" }}>{b.producer}</span>}
+            {!isFinished && <span style={{ fontSize: fluid(12.5), color: "var(--fg-muted)" }}>· {b.weightGrams}g restantes</span>}
+            {b.roastedOn && <span style={{ fontSize: fluid(11.5), color: "var(--fg-subtle)" }}>· tostado {fmtDmY(b.roastedOn)}</span>}
           </div>
 
-          {/* weight + acciones */}
-          <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            {!isFinished && b.weightGrams > 0 && (
-              <span style={{ fontSize: 11, color: "var(--fg-muted)" }}>{b.weightGrams}g restantes</span>
-            )}
-            {isFinished && (
-              <span style={{ fontSize: 11, color: "var(--fg-subtle)", fontWeight: 500 }}>
-                terminado{b.finishedAt ? ` ${fmtDmY(ymd(new Date(b.finishedAt)))}` : ""}
-              </span>
-            )}
-            {isFinished && b.rating != null && (
-              <span style={{ fontSize: 11, color: "var(--accent)", fontWeight: 600 }}>
-                ⭐ {b.rating}/10
-              </span>
-            )}
-            {isFinished && b.flavorTags.length > 0 && b.flavorTags.map((t) => (
-              <span
-                key={t}
-                style={{
-                  fontSize: 10.5, padding: "1px 7px", borderRadius: 999,
-                  background: "var(--bg-sunken)", color: "var(--fg-muted)",
-                }}
-              >
-                {t}
-              </span>
-            ))}
-            {!isFinished && needsOrder && (
-              <button className="btn ghost" style={{ fontSize: 11, padding: "2px 8px", color: "var(--accent)" }}
-                onClick={() => onCreateTask(b)}>
-                Crear tarea pedir
-              </button>
-            )}
-            {!isFinished && (
-              <button className="btn ghost" style={{ fontSize: 11, padding: "2px 8px" }}
-                onClick={() => onConsume(b)}>
-                Descontar consumo
-              </button>
-            )}
-            {!isFinished && (
-              <button className="btn ghost" style={{ fontSize: 11, padding: "2px 8px" }}
-                onClick={() => onMarkFinished(b)}>
-                Marcar terminado
-              </button>
-            )}
-            {!isFinished && !isMobile && (
-              <button className="btn ghost" title="Abrir Claude en una terminal para analizar este cafe"
-                style={{ fontSize: 11, padding: "2px 8px", color: "var(--accent)", fontWeight: 600 }}
-                onClick={() => onAnalizar(b)}>
-                ☕ Analizar
-              </button>
-            )}
-            {!isFinished && !isMobile && (
-              <button className="btn ghost" title="Preguntarle a Claude sobre un brew que no salio bien"
-                style={{ fontSize: 11, padding: "2px 8px", color: "var(--accent)", fontWeight: 600 }}
-                onClick={() => onAskAboutBrew(b)}>
-                💬 Preguntar
-              </button>
-            )}
-            {isFinished && (
-              <button className="btn ghost" style={{ fontSize: 11, padding: "2px 8px", color: "var(--accent)" }}
-                onClick={() => onReactivate(b)}>
-                Reactivar
-              </button>
-            )}
-          </div>
+          {isFinished && b.rating != null && (
+            <div style={{ fontSize: fluid(12.5), color: "var(--accent)", fontWeight: 600 }}>⭐ {b.rating}/10</div>
+          )}
+          {isFinished && b.flavorTags.length > 0 && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: fluid(5) }}>
+              {b.flavorTags.map((t) => (
+                <span key={t} style={{ fontSize: fluid(10.5), padding: `1px ${fluid(7)}`, borderRadius: 999, background: "var(--bg-sunken)", color: "var(--fg-muted)" }}>{t}</span>
+              ))}
+            </div>
+          )}
 
-          {/* diario de cata */}
           {b.cataInicial && (
-            <div style={{ marginTop: 8, fontSize: 12, color: "var(--fg-muted)" }}>
-              <span style={{ color: "var(--fg-subtle)", fontWeight: 500 }}>Cata inicial: </span>
-              {b.cataInicial}
+            <div style={{ fontSize: fluid(12.5), color: "var(--fg-muted)" }}>
+              <span style={{ color: "var(--fg-subtle)", fontWeight: 500 }}>Cata inicial: </span>{b.cataInicial}
             </div>
           )}
           {b.notaFinal && (
-            <div style={{ marginTop: 4, fontSize: 12, color: "var(--fg-muted)" }}>
-              <span style={{ color: "var(--fg-subtle)", fontWeight: 500 }}>Nota final: </span>
-              {b.notaFinal}
+            <div style={{ fontSize: fluid(12.5), color: "var(--fg-muted)" }}>
+              <span style={{ color: "var(--fg-subtle)", fontWeight: 500 }}>Nota final: </span>{b.notaFinal}
             </div>
           )}
           {b.lastTweak && (b.lastTweak.notes || b.lastTweak.grindSize || b.lastTweak.doseGrams) && (
-            <div style={{ marginTop: 4, fontSize: 11, color: "var(--fg-subtle)" }}>
-              Ultimo ajuste:
+            <div style={{ fontSize: fluid(11.5), color: "var(--fg-subtle)" }}>
+              Último ajuste:
               {b.lastTweak.grindSize ? ` molienda ${b.lastTweak.grindSize}` : ""}
               {b.lastTweak.doseGrams ? ` · ${b.lastTweak.doseGrams}g` : ""}
               {b.lastTweak.tempCelsius ? ` · ${b.lastTweak.tempCelsius}C` : ""}
               {b.lastTweak.notes ? ` · ${b.lastTweak.notes}` : ""}
             </div>
           )}
-        </div>
 
-        {/* actions */}
-        <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-          <button className="icon-btn" title="Editar" onClick={() => onEdit(b)}>
-            <EditIcon />
-          </button>
-          <button className="icon-btn" title="Eliminar" style={{ color: "var(--danger)" }} onClick={() => onDelete(b.id)}>
-            <ITrash size={14} />
-          </button>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: fluid(6) }}>
+            {!isFinished && b.weightGrams <= LOW_STOCK_G && (
+              <button className="btn ghost" style={{ fontSize: fluid(11.5), color: "var(--accent)" }} onClick={() => onCreateTask(b)}>
+                Crear tarea pedir
+              </button>
+            )}
+            {!isFinished && (
+              <button className="btn ghost" style={{ fontSize: fluid(11.5) }} onClick={() => onConsume(b)}>
+                Descontar consumo
+              </button>
+            )}
+            {!isFinished && (
+              <button className="btn ghost" style={{ fontSize: fluid(11.5) }} onClick={() => onMarkFinished(b)}>
+                Marcar terminado
+              </button>
+            )}
+            {isFinished && (
+              <button className="btn ghost" style={{ fontSize: fluid(11.5), color: "var(--accent)" }} onClick={() => onReactivate(b)}>
+                Reactivar
+              </button>
+            )}
+            {!isFinished && !isMobile && (
+              <button className="btn ghost" title="Abrir Claude en una terminal para analizar este cafe"
+                style={{ fontSize: fluid(11.5), color: "var(--accent)", fontWeight: 600 }} onClick={() => onAnalizar(b)}>
+                ☕ Analizar
+              </button>
+            )}
+            {!isFinished && !isMobile && (
+              <button className="btn ghost" title="Preguntarle a Claude sobre un brew que no salio bien"
+                style={{ fontSize: fluid(11.5), color: "var(--accent)", fontWeight: 600 }} onClick={() => onAskAboutBrew(b)}>
+                💬 Preguntar
+              </button>
+            )}
+            <button className="btn ghost" style={{ fontSize: fluid(11.5) }} onClick={() => onEdit(b)}>Editar</button>
+            <button className="btn ghost" style={{ fontSize: fluid(11.5), color: "var(--danger)" }} onClick={() => onDeleteRequest(b.id)}>Eliminar</button>
+          </div>
+
+          <div style={{ fontSize: fluid(11), textTransform: "uppercase", letterSpacing: ".06em", fontWeight: 700, color: "var(--fg-muted)" }}>
+            Brews · {brews.length}
+          </div>
+          {brews.length === 0 ? (
+            <div style={{ fontSize: fluid(12.5), color: "var(--fg-subtle)" }}>Sin brews registrados para este grano.</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: fluid(12) }}>
+              {brews.map((s) => <BrewCard key={s.id} session={s} />)}
+            </div>
+          )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function BrewCard({ session: s }: { session: BrewSession }) {
+  const [open, setOpen] = useState(false);
+  const [points, setPoints] = useState<BrewDatapoint[] | null>(null);
+  const ratio = s.doseGrams > 0 ? (s.totalWaterGrams / s.doseGrams).toFixed(1) : "—";
+
+  async function toggleGraph() {
+    if (!open && points == null) {
+      const { repo } = await import("../lib/repo");
+      setPoints(await repo.getBrewDatapoints(s.id));
+    }
+    setOpen((v) => !v);
+  }
+
+  const maxWeight = Math.max(...(points ?? []).map((p) => p.weightG ?? 0), 10);
+  const maxFlow = Math.max(...(points ?? []).map((p) => p.flowGs ?? 0), 1);
+  const maxTimeSec = Math.max(...(points ?? []).map((p) => p.timerMs / 1000), 60);
+
+  return (
+    <div style={{ background: "var(--bg-sunken)", border: "1px solid var(--line)", borderRadius: fluid(11), padding: `${fluid(13)} ${fluid(14)}`, display: "flex", flexDirection: "column", gap: fluid(9) }}>
+      <div style={{ display: "flex", alignItems: "center", gap: fluid(8) }}>
+        <span style={{ fontSize: fluid(13), fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {s.recipeName || "Sin receta"}
+        </span>
+        <span style={{ fontSize: fluid(11.5), color: "var(--fg-subtle)", fontVariantNumeric: "tabular-nums" }}>{fmtDate(s.createdAt)}</span>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: fluid(6) }}>
+        <RecipeStatBox value={`1:${ratio}`} label="Ratio" />
+        <RecipeStatBox value={`${s.doseGrams.toFixed(1)}g`} label="Café" />
+        <RecipeStatBox value={`${s.totalWaterGrams.toFixed(0)}g`} label="Agua" />
+        <RecipeStatBox value={fmtDuration(s.durationMs)} label="Tiempo" />
+      </div>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: fluid(10) }}>
+        <div style={{ fontSize: fluid(12), color: "var(--fg-muted)", lineHeight: 1.5, flex: 1 }}>{s.notes || "Sin notas"}</div>
+        <button className="btn" style={{ fontSize: fluid(11), padding: `${fluid(5)} ${fluid(10)}`, flexShrink: 0 }} onClick={() => void toggleGraph()}>
+          {open ? "Ocultar gráfico" : "Ver gráfico"}
+        </button>
+      </div>
+      {open && points && points.length > 0 && (
+        <BrewOverlayChart sessions={[s]} dataBySession={{ [s.id]: points }} maxWeight={maxWeight} maxFlow={maxFlow} maxTimeSec={maxTimeSec} />
+      )}
+      {open && points && points.length === 0 && (
+        <div style={{ fontSize: fluid(11.5), color: "var(--fg-subtle)" }}>Sin datos de curva para este brew.</div>
+      )}
     </div>
   );
 }
@@ -907,32 +1439,45 @@ function BeanCard({
 // ---------- Recetas tab ----------
 
 function RecetasTab({
-  recipes, onEdit, onDeleteRequest,
+  recipes, sessions, onEdit, onDeleteRequest,
 }: {
   recipes: CoffeeRecipe[];
+  sessions: BrewSession[];
   onEdit: (r: CoffeeRecipe) => void;
   onDeleteRequest: (id: string) => void;
 }) {
   if (recipes.length === 0) {
     return (
-      <div style={{ textAlign: "center", padding: "60px 20px", color: "var(--fg-muted)" }}>
-        <div style={{ fontSize: 32, marginBottom: 12, opacity: 0.4 }}>📋</div>
-        <p style={{ margin: "0 0 6px", fontSize: 14, fontWeight: 500, color: "var(--fg)" }}>Sin recetas</p>
-        <p style={{ margin: 0, fontSize: 13 }}>Guardá tus recetas de café con pasos, tiempos y cantidades.</p>
+      <div style={{ textAlign: "center", padding: `${fluid(60)} ${fluid(20)}`, color: "var(--fg-muted)" }}>
+        <div style={{ fontSize: fluid(32), marginBottom: fluid(12), opacity: 0.4 }}>📖</div>
+        <p style={{ margin: `0 0 ${fluid(6)}`, fontSize: fluid(14), fontWeight: 500, color: "var(--fg)" }}>Sin recetas</p>
+        <p style={{ margin: 0, fontSize: fluid(13) }}>Guardá tus recetas de café con pasos, tiempos y cantidades.</p>
       </div>
     );
   }
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      {recipes.map((r) => (
-        <RecipeCard key={r.id} recipe={r} onEdit={onEdit} onDelete={onDeleteRequest} />
-      ))}
+    <div style={{ display: "flex", flexDirection: "column", gap: fluid(18) }}>
+      <div style={{ fontSize: fluid(11), textTransform: "uppercase", letterSpacing: ".06em", fontWeight: 700, color: "var(--fg-muted)" }}>
+        Tus recetas de preparación · {recipes.length}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill, minmax(${fluid(320)}, 1fr))`, gap: fluid(14) }}>
+        {recipes.map((r) => (
+          <RecipeTile
+            key={r.id}
+            recipe={r}
+            timesUsed={sessions.filter((s) => s.recipeName === r.name).length}
+            onEdit={onEdit}
+            onDelete={onDeleteRequest}
+          />
+        ))}
+      </div>
     </div>
   );
 }
 
-function RecipeCard({ recipe: r, onEdit, onDelete }: {
+function RecipeTile({ recipe: r, timesUsed, onEdit, onDelete }: {
   recipe: CoffeeRecipe;
+  timesUsed: number;
   onEdit: (r: CoffeeRecipe) => void;
   onDelete: (id: string) => void;
 }) {
@@ -940,80 +1485,80 @@ function RecipeCard({ recipe: r, onEdit, onDelete }: {
   const totalWater = r.steps.reduce((s, step) => s + (step.waterGrams ?? 0), 0);
 
   return (
-    <div style={{ background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: 10, overflow: "hidden" }}>
-      <div style={{ padding: "12px 14px", display: "flex", alignItems: "flex-start", gap: 10 }}>
+    <div style={{ background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: fluid(13), padding: `${fluid(16)} ${fluid(18)}`, display: "flex", flexDirection: "column", gap: fluid(13), boxShadow: "var(--shadow-sm)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: fluid(11) }}>
+        <div style={{ width: fluid(40), height: fluid(40), borderRadius: fluid(11), background: "color-mix(in oklch, var(--accent) 13%, var(--bg))", display: "grid", placeItems: "center", fontSize: fluid(20), flexShrink: 0 }}>☕</div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
-            <span style={{ fontWeight: 600, fontSize: 14 }}>{r.name}</span>
-            {r.coffeeType && (
-              <span style={{
-                fontSize: 10.5, fontWeight: 600, padding: "2px 7px", borderRadius: 5,
-                background: "var(--bg-sunken)", color: "var(--accent)",
-              }}>{r.coffeeType}</span>
-            )}
-          </div>
-          <div style={{ display: "flex", gap: 14, marginTop: 5, flexWrap: "wrap" }}>
-            <Stat label="ratio" value={`1:${r.ratio}`} />
-            <Stat label="temp" value={`${r.tempCelsius}°C`} />
-            {r.grindSize && <Stat label="molienda" value={r.grindSize} />}
-            {totalWater > 0 && <Stat label="agua total" value={`${totalWater}g`} />}
-          </div>
+          <div style={{ fontSize: fluid(15), fontWeight: 600, letterSpacing: "-0.01em" }}>{r.name}</div>
+          <div style={{ fontSize: fluid(11.5), color: "var(--fg-subtle)" }}>{r.coffeeType || "Sin tipo"}</div>
         </div>
-        <div style={{ display: "flex", gap: 4, alignItems: "center", flexShrink: 0 }}>
-          {r.steps.length > 0 && (
-            <button className="icon-btn" onClick={() => setExpanded(!expanded)} title={expanded ? "Ocultar pasos" : "Ver pasos"}>
-              {expanded ? <IChevU size={14} /> : <IChevD size={14} />}
-            </button>
-          )}
+        <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
           <button className="icon-btn" title="Editar" onClick={() => onEdit(r)}><EditIcon /></button>
           <button className="icon-btn" title="Eliminar" style={{ color: "var(--danger)" }} onClick={() => onDelete(r.id)}><ITrash size={14} /></button>
         </div>
       </div>
 
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: fluid(8) }}>
+        <RecipeStatBox value={`1:${r.ratio}`} label="Ratio" />
+        <RecipeStatBox value={`${r.tempCelsius}°`} label="Temp" />
+        <RecipeStatBox value={r.grindSize || "—"} label="Molienda" />
+        <RecipeStatBox value={totalWater > 0 ? `${totalWater}g` : "—"} label="Agua" />
+      </div>
+
+      <div style={{ fontSize: fluid(12), color: "var(--fg-muted)", lineHeight: 1.5 }}>{r.notes || "Sin notas"}</div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: fluid(8), marginTop: "auto", paddingTop: fluid(11), borderTop: "1px solid var(--line)" }}>
+        <span style={{ fontSize: fluid(11.5), color: "var(--fg-subtle)", flex: 1 }}>
+          Usada {timesUsed} vez{timesUsed !== 1 ? "es" : ""}
+        </span>
+        {r.steps.length > 0 && (
+          <button className="btn ghost" style={{ fontSize: fluid(12), padding: `${fluid(6)} ${fluid(13)}`, display: "flex", alignItems: "center", gap: 4 }}
+            onClick={() => setExpanded((v) => !v)}>
+            {expanded ? <IChevU size={12} /> : <IChevD size={12} />} Pasos
+          </button>
+        )}
+      </div>
+
       {expanded && r.steps.length > 0 && (
-        <div style={{ borderTop: "1px solid var(--line)", padding: "10px 14px 12px" }}>
-          <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase", color: "var(--fg-subtle)", marginBottom: 6 }}>Pasos</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            {r.steps.map((step, i) => (
-              <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13 }}>
-                <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--accent)", width: 36, flexShrink: 0 }}>
-                  {fmtTime(step.timeSeconds)}
+        <div style={{ borderTop: "1px solid var(--line)", paddingTop: fluid(10), display: "flex", flexDirection: "column", gap: fluid(4) }}>
+          {r.steps.map((step, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: fluid(10), fontSize: fluid(13) }}>
+              <span style={{ fontFamily: "var(--font-mono)", fontSize: fluid(12), color: "var(--accent)", width: fluid(36), flexShrink: 0 }}>
+                {fmtTime(step.timeSeconds)}
+              </span>
+              <span style={{
+                fontSize: fluid(10), fontWeight: 700, padding: `1px ${fluid(5)}`, borderRadius: 4, flexShrink: 0,
+                background: step.type === "pour" ? "color-mix(in srgb, var(--accent) 15%, transparent)" : "var(--bg-sunken)",
+                color: step.type === "pour" ? "var(--accent)" : "var(--fg-subtle)",
+              }}>
+                {step.type === "pour" ? "pour" : "acción"}
+              </span>
+              <span style={{ color: "var(--fg)", flex: 1 }}>{step.description}</span>
+              {step.type === "pour" && step.waterRatio != null && (
+                <span style={{ fontSize: fluid(12), color: "var(--fg-muted)", flexShrink: 0 }}>
+                  {(step.waterMode ?? "x_cafe") === "pct_agua" ? `${step.waterRatio}%` : `×${step.waterRatio}`}
                 </span>
-                <span style={{
-                  fontSize: 10, fontWeight: 700, padding: "1px 5px", borderRadius: 4, flexShrink: 0,
-                  background: step.type === "pour" ? "color-mix(in srgb, var(--accent) 15%, transparent)" : "var(--bg-sunken)",
-                  color: step.type === "pour" ? "var(--accent)" : "var(--fg-subtle)",
-                }}>
-                  {step.type === "pour" ? "pour" : "acción"}
-                </span>
-                <span style={{ color: "var(--fg)", flex: 1 }}>{step.description}</span>
-                {step.type === "pour" && step.waterRatio != null && (
-                  <span style={{ fontSize: 12, color: "var(--fg-muted)", flexShrink: 0 }}>
-                    {(step.waterMode ?? "x_cafe") === "pct_agua" ? `${step.waterRatio}%` : `×${step.waterRatio}`}
-                  </span>
-                )}
-                {step.type === "pour" && step.waterRatio == null && (step.waterGrams ?? 0) > 0 && (
-                  <span style={{ fontSize: 12, color: "var(--fg-muted)", flexShrink: 0 }}>{step.waterGrams}g</span>
-                )}
-                {step.type === "pour" && step.flowTarget != null && (
-                  <span style={{ fontSize: 11, color: "var(--fg-subtle)", flexShrink: 0 }}>{step.flowTarget} g/s</span>
-                )}
-              </div>
-            ))}
-          </div>
-          {r.notes && <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--fg-muted)", fontStyle: "italic" }}>{r.notes}</p>}
+              )}
+              {step.type === "pour" && step.waterRatio == null && (step.waterGrams ?? 0) > 0 && (
+                <span style={{ fontSize: fluid(12), color: "var(--fg-muted)", flexShrink: 0 }}>{step.waterGrams}g</span>
+              )}
+              {step.type === "pour" && step.flowTarget != null && (
+                <span style={{ fontSize: fluid(11), color: "var(--fg-subtle)", flexShrink: 0 }}>{step.flowTarget} g/s</span>
+              )}
+            </div>
+          ))}
         </div>
       )}
     </div>
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function RecipeStatBox({ value, label }: { value: string; label: string }) {
   return (
-    <span style={{ fontSize: 12, color: "var(--fg-muted)" }}>
-      <span style={{ color: "var(--fg-subtle)", marginRight: 3 }}>{label}</span>
-      <span style={{ fontWeight: 500, color: "var(--fg)" }}>{value}</span>
-    </span>
+    <div style={{ background: "var(--bg-sunken)", borderRadius: fluid(9), padding: `${fluid(9)} ${fluid(6)}`, textAlign: "center" }}>
+      <div style={{ fontSize: fluid(14), fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{value}</div>
+      <div style={{ fontSize: fluid(9.5), textTransform: "uppercase", letterSpacing: ".05em", color: "var(--fg-subtle)", marginTop: fluid(2) }}>{label}</div>
+    </div>
   );
 }
 
@@ -1071,6 +1616,45 @@ function BeanModal({ form, isEdit, saving, error, onChange, onSave, onClose }: {
         <Field label="Nota final (a dónde llegaste)">
           <textarea className="input" value={form.notaFinal} rows={2} style={{ resize: "vertical" }}
             onChange={(e) => onChange("notaFinal", e.target.value)} placeholder="al terminarlo: lograste algo parecido?…" />
+        </Field>
+      </div>
+      <ModalFooter saving={saving} isEdit={isEdit} onSave={onSave} onClose={onClose} saveLabel="grano" />
+    </Modal>
+  );
+}
+
+// ---------- Wishlist modal ----------
+
+function WishlistModal({ form, isEdit, saving, error, onChange, onSave, onClose }: {
+  form: WishlistFormState;
+  isEdit: boolean;
+  saving: boolean;
+  error: string | null;
+  onChange: (k: keyof WishlistFormState, v: string) => void;
+  onSave: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <Modal title={isEdit ? "Editar grano de la lista" : "Agregar grano a la lista"} onClose={onClose}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {error && <div style={{ color: "var(--danger)", fontSize: 13, padding: "6px 10px", background: "color-mix(in srgb, var(--danger) 12%, transparent)", borderRadius: 6 }}>{error}</div>}
+        <Field label="Nombre *">
+          <input className="input" value={form.name} autoFocus onChange={(e) => onChange("name", e.target.value)} placeholder="ej. Colombia Huila" />
+        </Field>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <Field label="Tostador">
+            <input className="input" value={form.roaster} onChange={(e) => onChange("roaster", e.target.value)} placeholder="ej. Café Rituals" />
+          </Field>
+          <Field label="Proceso">
+            <input className="input" value={form.process} onChange={(e) => onChange("process", e.target.value)} placeholder="ej. Lavado" />
+          </Field>
+        </div>
+        <Field label="Precio (kr)">
+          <input className="input" type="number" min="0" step="1" value={form.priceKr} onChange={(e) => onChange("priceKr", e.target.value)} placeholder="ej. 165" />
+        </Field>
+        <Field label="Notas">
+          <textarea className="input" value={form.notes} rows={2} style={{ resize: "vertical" }}
+            onChange={(e) => onChange("notes", e.target.value)} placeholder="notas libres…" />
         </Field>
       </div>
       <ModalFooter saving={saving} isEdit={isEdit} onSave={onSave} onClose={onClose} saveLabel="grano" />

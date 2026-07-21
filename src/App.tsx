@@ -109,11 +109,11 @@ function App() {
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
   );
 
-  // Home is the one screen rebuilt to the 1280×720 design frame; scale its chrome
-  // (rail + topbar) together with its content so they stay coherent at 2K. Other
-  // views keep --home-s at 1 (their fixed-px chrome is unchanged).
+  // Home and Café are the two screens rebuilt to the 1280×720 design frame; scale
+  // their chrome (rail + topbar) together with their content so they stay coherent
+  // at 2K. Other views keep --home-s at 1 (their fixed-px chrome is unchanged).
   const frameScale = useFrameScale();
-  const homeScale = view === "home" ? frameScale : 1;
+  const homeScale = view === "home" || view === "cafe" ? frameScale : 1;
 
   const [activeTask, setActiveTask] = useState<Task | null>(null);
 
@@ -268,8 +268,8 @@ function App() {
       <div className="app" style={{ ["--home-s" as string]: homeScale } as CSSProperties}>
         <Sidebar />
         <div className="main">
-          <Topbar />
-          {view !== "home" && (stripOpen ? (
+          {view !== "home" && view !== "cafe" && <Topbar />}
+          {view !== "home" && view !== "cafe" && (stripOpen ? (
             <div style={{ position: "relative" }}>
               <TaskStrip onAddNew={onAddNew} onOpen={onOpenTask} onToggleDone={onToggleDone} />
               <button

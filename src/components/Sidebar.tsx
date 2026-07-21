@@ -10,7 +10,6 @@ import {
   useTasks,
   useExpenseCategories,
   useIngredientCategories,
-  useCoffeeRecipes,
 } from "../lib/queries";
 import { IBolt, ICal, IList, IPlus, ISearch } from "./icons";
 import { MiniMonth } from "./MiniMonth";
@@ -18,7 +17,6 @@ import { useFrameScale } from "../lib/uiScale";
 
 const SIDEBAR_CATEGORIES_LIMIT = 5;
 
-const emojiIcon = { width: 14, textAlign: "center", fontSize: 13, lineHeight: 1 } as const;
 const krIcon = {
   width: 14,
   textAlign: "center",
@@ -64,7 +62,7 @@ export function Sidebar() {
   return (
     <>
       <Rail activeArea={activeArea} view={view} setView={setView} />
-      {activeArea !== "home" && <SidePanel activeArea={activeArea} />}
+      {activeArea !== "home" && activeArea !== "cafe" && <SidePanel activeArea={activeArea} />}
     </>
   );
 }
@@ -73,7 +71,7 @@ export function Sidebar() {
 
 function Rail({ activeArea, view, setView }: { activeArea: Area | null; view: View; setView: (v: View) => void }) {
   const frameScale = useFrameScale();
-  const s = view === "home" ? frameScale : 1;
+  const s = view === "home" || view === "cafe" ? frameScale : 1;
   const px = (n: number) => Math.round(n * s);
   return (
     <aside className="rail">
@@ -169,13 +167,11 @@ function SidePanel({ activeArea }: { activeArea: Area | null }) {
   const categoriesQ = useCategories();
   const expenseCategoriesQ = useExpenseCategories();
   const ingredientCategoriesQ = useIngredientCategories();
-  const coffeeRecipesQ = useCoffeeRecipes();
   const tasks = tasksQ.data ?? [];
   const projects = projectsQ.data ?? [];
   const categories = categoriesQ.data ?? [];
   const expenseCategories = expenseCategoriesQ.data ?? [];
   const ingredientCategories = ingredientCategoriesQ.data ?? [];
-  const coffeeRecipes = coffeeRecipesQ.data ?? [];
 
   const {
     view,
@@ -320,23 +316,6 @@ function SidePanel({ activeArea }: { activeArea: Area | null }) {
           </>
         )}
 
-        {activeArea === "cafe" && (
-          <>
-            <div className="sidebar-section" style={{ paddingTop: 8 }}>
-              <div className="sidebar-section-title">Recetas</div>
-            </div>
-            <div className="nav-list" style={{ paddingBottom: 12 }}>
-              {coffeeRecipes.filter((r) => !r.baseRecipeId).map((r) => (
-                <div key={r.id} className="nav-item" style={{ cursor: "default" }}>
-                  <span style={emojiIcon}>☕</span>
-                  <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {r.name}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
       </div>
     </aside>
   );

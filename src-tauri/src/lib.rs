@@ -774,6 +774,18 @@ pub fn run() {
             sql: include_str!("../migrations/0040_coffee_bean_rating.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 41,
+            description: "coffee_beans: add initial_weight_grams (bag size at load/reactivate, for stock bar)",
+            sql: include_str!("../migrations/0041_coffee_bean_initial_weight.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 42,
+            description: "coffee_wishlist_items: café wishlist (name, roaster, process, price)",
+            sql: include_str!("../migrations/0042_coffee_wishlist.sql"),
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()

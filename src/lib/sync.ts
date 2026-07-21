@@ -32,6 +32,7 @@ type Entity =
   | "net_worth_snapshots"
   | "coffee_beans"
   | "coffee_recipes"
+  | "coffee_wishlist_items"
   | "brew_sessions"
   | "events"
   | "expense_line_items"
@@ -236,6 +237,7 @@ export async function pullDeltas(userId: string, qc: QueryClient): Promise<void>
     any = (await pullEntity(userId, "net_worth_snapshots")) || any;
     try { any = (await pullEntity(userId, "coffee_beans")) || any; } catch (e) { console.warn("coffee_beans pull skipped:", e); }
     try { any = (await pullEntity(userId, "coffee_recipes")) || any; } catch (e) { console.warn("coffee_recipes pull skipped:", e); }
+    try { any = (await pullEntity(userId, "coffee_wishlist_items")) || any; } catch (e) { console.warn("coffee_wishlist_items pull skipped:", e); }
     try { any = (await pullEntity(userId, "brew_sessions")) || any; } catch (e) { console.warn("brew_sessions pull skipped:", e); }
     try { any = (await pullEntity(userId, "events")) || any; } catch (e) { console.warn("events pull skipped:", e); }
     try { any = (await pullEntity(userId, "expense_line_items")) || any; } catch (e) { console.warn("expense_line_items pull skipped:", e); }
@@ -267,6 +269,7 @@ export async function pullDeltas(userId: string, qc: QueryClient): Promise<void>
       qc.invalidateQueries({ queryKey: ["net_worth_snapshots"] });
       qc.invalidateQueries({ queryKey: ["coffee_beans"] });
       qc.invalidateQueries({ queryKey: ["coffee_recipes"] });
+      qc.invalidateQueries({ queryKey: ["coffee_wishlist_items"] });
       qc.invalidateQueries({ queryKey: ["brew_sessions"] });
       qc.invalidateQueries({ queryKey: ["brew_datapoints"] });
     }
@@ -601,6 +604,16 @@ async function upsertLocal(
         row.rating ?? null,
         typeof row.flavor_tags === "string" ? row.flavor_tags : JSON.stringify(row.flavor_tags ?? []),
         row.created_at, row.updated_at, row.deleted_at, row.version,
+      ],
+    );
+  } else if (entity === "coffee_wishlist_items") {
+    await db.execute(
+      `INSERT OR REPLACE INTO coffee_wishlist_items
+        (id, user_id, name, roaster, process, price_kr, notes, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        row.id, row.user_id, row.name, row.roaster ?? "", row.process ?? "", row.price_kr ?? null,
+        row.notes ?? "", row.created_at, row.updated_at, row.deleted_at, row.version,
       ],
     );
   } else if (entity === "coffee_recipes") {

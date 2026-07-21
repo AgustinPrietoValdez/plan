@@ -11,6 +11,7 @@ import type {
   CoffeeRecipe,
   CoffeeRecipeStep,
   CoffeeTweak,
+  CoffeeWishlistItem,
   ComprasSettings,
   Expense,
   ExpenseCategory,
@@ -59,6 +60,8 @@ import type {
   CoffeeBeanPatch,
   CoffeeRecipeCreate,
   CoffeeRecipePatch,
+  CoffeeWishlistItemCreate,
+  CoffeeWishlistItemPatch,
   EventCreate,
   ExpenseCategoryCreate,
   ExpenseCreate,
@@ -236,6 +239,7 @@ async function enqueue(
     | "expense_line_items"
     | "coffee_beans"
     | "coffee_recipes"
+    | "coffee_wishlist_items"
     | "brew_sessions"
     | "automations",
   entityId: string,
@@ -2738,6 +2742,10 @@ export const localRepo: Repo = {
       producer: input.producer ?? "",
       roastedOn: input.roastedOn ?? null,
       weightGrams: input.weightGrams ?? 0,
+      // El peso cargado al crear el grano ES el tamaño de la bolsa — se usa como
+      // referencia fija para la barra de stock (issue: no todas las bolsas son
+      // iguales, no asumir una referencia global). Solo cambia en reactivarCoffeeBean.
+      initialWeightGrams: input.weightGrams ?? 0,
       notes: input.notes ?? "",
       cataInicial: input.cataInicial ?? "",
       notaFinal: input.notaFinal ?? "",
@@ -2753,10 +2761,10 @@ export const localRepo: Repo = {
     await db.execute(
       `INSERT INTO coffee_beans
         (id, user_id, name, roaster, varietal, country, process, producer, roasted_on,
-         weight_grams, notes, cata_inicial, nota_final, last_tweak, finished_at, rating, flavor_tags, created_at, updated_at, deleted_at, version)
+         weight_grams, initial_weight_grams, notes, cata_inicial, nota_final, last_tweak, finished_at, rating, flavor_tags, created_at, updated_at, deleted_at, version)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [bean.id, userId, bean.name, bean.roaster, bean.varietal, bean.country, bean.process,
-       bean.producer, bean.roastedOn, bean.weightGrams, bean.notes,
+       bean.producer, bean.roastedOn, bean.weightGrams, bean.initialWeightGrams, bean.notes,
        bean.cataInicial, bean.notaFinal, bean.lastTweak ? JSON.stringify(bean.lastTweak) : "",
        bean.finishedAt, bean.rating, JSON.stringify(bean.flavorTags),
        bean.createdAt, bean.updatedAt, null, 1],
@@ -2780,13 +2788,13 @@ export const localRepo: Repo = {
     };
     await db.execute(
       `UPDATE coffee_beans SET name = ?, roaster = ?, varietal = ?, country = ?, process = ?,
-         producer = ?, roasted_on = ?, weight_grams = ?, notes = ?,
+         producer = ?, roasted_on = ?, weight_grams = ?, initial_weight_grams = ?, notes = ?,
          cata_inicial = ?, nota_final = ?, last_tweak = ?, finished_at = ?,
          rating = ?, flavor_tags = ?,
          updated_at = ?, deleted_at = ?, version = ?
        WHERE id = ? AND user_id = ?`,
       [updated.name, updated.roaster, updated.varietal, updated.country, updated.process,
-       updated.producer, updated.roastedOn, updated.weightGrams,
+       updated.producer, updated.roastedOn, updated.weightGrams, updated.initialWeightGrams,
        updated.notes, updated.cataInicial, updated.notaFinal,
        updated.lastTweak ? JSON.stringify(updated.lastTweak) : "",
        updated.finishedAt, updated.rating, JSON.stringify(updated.flavorTags),
@@ -2822,6 +2830,79 @@ export const localRepo: Repo = {
       [ts, ts, id, userId],
     );
     await enqueue(userId, "delete", "coffee_beans", id, null);
+  },
+
+  // ---------- coffee wishlist items ----------
+  async listCoffeeWishlistItems() {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const rows = await db.select<DbCoffeeWishlistItemRow[]>(
+      "SELECT * FROM coffee_wishlist_items WHERE user_id = ? AND deleted_at IS NULL ORDER BY created_at ASC",
+      [userId],
+    );
+    return rows.map(fromDbCoffeeWishlistItem);
+  },
+
+  async createCoffeeWishlistItem(input: CoffeeWishlistItemCreate) {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const ts = now();
+    const item: CoffeeWishlistItem = {
+      id: newId(),
+      name: input.name,
+      roaster: input.roaster ?? "",
+      process: input.process ?? "",
+      priceKr: input.priceKr ?? null,
+      notes: input.notes ?? "",
+      createdAt: ts,
+      updatedAt: ts,
+      deletedAt: null,
+      version: 1,
+    };
+    await db.execute(
+      `INSERT INTO coffee_wishlist_items
+        (id, user_id, name, roaster, process, price_kr, notes, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [item.id, userId, item.name, item.roaster, item.process, item.priceKr, item.notes,
+       item.createdAt, item.updatedAt, null, 1],
+    );
+    await enqueue(userId, "insert", "coffee_wishlist_items", item.id, coffeeWishlistItemToWire(item, userId));
+    return item;
+  },
+
+  async patchCoffeeWishlistItem(id: string, patch: CoffeeWishlistItemPatch) {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const rows = await db.select<DbCoffeeWishlistItemRow[]>(
+      "SELECT * FROM coffee_wishlist_items WHERE id = ? AND user_id = ? AND deleted_at IS NULL LIMIT 1",
+      [id, userId],
+    );
+    if (!rows[0]) throw new Error(`CoffeeWishlistItem ${id} not found`);
+    const existing = fromDbCoffeeWishlistItem(rows[0]);
+    const updated: CoffeeWishlistItem = {
+      ...existing, ...patch, id: existing.id, createdAt: existing.createdAt,
+      updatedAt: now(), version: existing.version + 1,
+    };
+    await db.execute(
+      `UPDATE coffee_wishlist_items SET name = ?, roaster = ?, process = ?, price_kr = ?, notes = ?,
+         updated_at = ?, deleted_at = ?, version = ?
+       WHERE id = ? AND user_id = ?`,
+      [updated.name, updated.roaster, updated.process, updated.priceKr, updated.notes,
+       updated.updatedAt, updated.deletedAt, updated.version, id, userId],
+    );
+    await enqueue(userId, "update", "coffee_wishlist_items", id, coffeeWishlistItemToWire(updated, userId));
+    return updated;
+  },
+
+  async deleteCoffeeWishlistItem(id: string) {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const ts = now();
+    await db.execute(
+      "UPDATE coffee_wishlist_items SET deleted_at = ?, updated_at = ?, version = version + 1 WHERE id = ? AND user_id = ?",
+      [ts, ts, id, userId],
+    );
+    await enqueue(userId, "delete", "coffee_wishlist_items", id, null);
   },
 
   // ---------- coffee recipes ----------
@@ -4314,6 +4395,7 @@ interface DbCoffeeBeanRow {
   producer: string;
   roasted_on: string | null;
   weight_grams: number;
+  initial_weight_grams: number | null;
   notes: string;
   cata_inicial: string;
   nota_final: string;
@@ -4338,6 +4420,7 @@ function fromDbCoffeeBean(r: DbCoffeeBeanRow): CoffeeBean {
     producer: r.producer,
     roastedOn: r.roasted_on,
     weightGrams: r.weight_grams,
+    initialWeightGrams: r.initial_weight_grams ?? null,
     notes: r.notes,
     cataInicial: r.cata_inicial ?? "",
     notaFinal: r.nota_final ?? "",
@@ -4356,10 +4439,47 @@ function coffeeBeanToWire(b: CoffeeBean, userId: string) {
   return {
     id: b.id, user_id: userId, name: b.name, roaster: b.roaster, varietal: b.varietal,
     country: b.country, process: b.process, producer: b.producer, roasted_on: b.roastedOn,
-    weight_grams: b.weightGrams, notes: b.notes,
+    weight_grams: b.weightGrams, initial_weight_grams: b.initialWeightGrams, notes: b.notes,
     cata_inicial: b.cataInicial, nota_final: b.notaFinal, last_tweak: b.lastTweak,
     finished_at: b.finishedAt, rating: b.rating, flavor_tags: b.flavorTags,
     created_at: b.createdAt, updated_at: b.updatedAt, deleted_at: b.deletedAt, version: b.version,
+  };
+}
+
+interface DbCoffeeWishlistItemRow {
+  id: string;
+  user_id: string;
+  name: string;
+  roaster: string;
+  process: string;
+  price_kr: number | null;
+  notes: string;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+  version: number;
+}
+
+function fromDbCoffeeWishlistItem(r: DbCoffeeWishlistItemRow): CoffeeWishlistItem {
+  return {
+    id: r.id,
+    name: r.name,
+    roaster: r.roaster,
+    process: r.process,
+    priceKr: r.price_kr ?? null,
+    notes: r.notes,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    deletedAt: r.deleted_at,
+    version: r.version,
+  };
+}
+
+function coffeeWishlistItemToWire(w: CoffeeWishlistItem, userId: string) {
+  return {
+    id: w.id, user_id: userId, name: w.name, roaster: w.roaster, process: w.process,
+    price_kr: w.priceKr, notes: w.notes,
+    created_at: w.createdAt, updated_at: w.updatedAt, deleted_at: w.deletedAt, version: w.version,
   };
 }
 

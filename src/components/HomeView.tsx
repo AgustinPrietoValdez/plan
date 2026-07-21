@@ -161,15 +161,18 @@ export function HomeView() {
   return (
     <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: fluid(16), padding: fluid(20), overflow: "hidden", ["--s" as string]: s } as React.CSSProperties}>
       {/* Saludo + resumen + stat cards */}
-      <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: fluid(16), flexShrink: 0 }}>
-        <div>
-          <div style={{ fontSize: fluid(22), fontWeight: 600, letterSpacing: "-0.02em", lineHeight: 1.15 }}>
-            Buen {greetingDay}, Agus
-          </div>
-          <div style={{ fontSize: fluid(13), color: "var(--fg-muted)", marginTop: 2 }}>
-            Tenés <b style={{ color: "var(--fg)" }}>{pendingCount} {pendingCount === 1 ? "tarea" : "tareas"}</b> y{" "}
-            <b style={{ color: "var(--fg)" }}>{todayEventsCount} {todayEventsCount === 1 ? "evento" : "eventos"}</b> hoy
-            {" · "}{expiringSoon.length} ingredientes por vencer esta semana
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: fluid(16), flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: fluid(12) }}>
+          <IconBadge tone="var(--accent)" size={fluid(38)}><span style={{ fontSize: fluid(19) }}>🏠</span></IconBadge>
+          <div>
+            <div style={{ fontSize: fluid(22), fontWeight: 600, letterSpacing: "-0.02em", lineHeight: 1.15 }}>
+              Buen {greetingDay}, Agus
+            </div>
+            <div style={{ fontSize: fluid(13), color: "var(--fg-muted)", marginTop: 2 }}>
+              Tenés <b style={{ color: "var(--fg)" }}>{pendingCount} {pendingCount === 1 ? "tarea" : "tareas"}</b> y{" "}
+              <b style={{ color: "var(--fg)" }}>{todayEventsCount} {todayEventsCount === 1 ? "evento" : "eventos"}</b> hoy
+              {" · "}{expiringSoon.length} ingredientes por vencer esta semana
+            </div>
           </div>
         </div>
         <div style={{ display: "flex", gap: fluid(10), flexShrink: 0 }}>

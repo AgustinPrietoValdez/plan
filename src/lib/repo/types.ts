@@ -10,6 +10,7 @@ import type {
   CoffeeBean,
   CoffeeRecipe,
   CoffeeTweak,
+  CoffeeWishlistItem,
   ComprasSettings,
   Expense,
   ExpenseCategory,
@@ -167,6 +168,14 @@ export type CoffeeBeanCreate = Pick<CoffeeBean, "name"> & {
   finishedAt?: string | null;
 };
 export type CoffeeBeanPatch = Partial<Omit<CoffeeBean, "id" | "createdAt" | "version">>;
+
+export type CoffeeWishlistItemCreate = Pick<CoffeeWishlistItem, "name"> & {
+  roaster?: string;
+  process?: string;
+  priceKr?: number | null;
+  notes?: string;
+};
+export type CoffeeWishlistItemPatch = Partial<Omit<CoffeeWishlistItem, "id" | "createdAt" | "version">>;
 
 export type CoffeeRecipeCreate = Pick<CoffeeRecipe, "name"> & {
   coffeeType?: string;
@@ -386,6 +395,11 @@ export interface Repo {
   patchCoffeeBean(id: string, patch: CoffeeBeanPatch): Promise<CoffeeBean>;
   consumeCoffeeBean(id: string, grams: number): Promise<CoffeeBean>;
   deleteCoffeeBean(id: string): Promise<void>;
+
+  listCoffeeWishlistItems(): Promise<CoffeeWishlistItem[]>;
+  createCoffeeWishlistItem(input: CoffeeWishlistItemCreate): Promise<CoffeeWishlistItem>;
+  patchCoffeeWishlistItem(id: string, patch: CoffeeWishlistItemPatch): Promise<CoffeeWishlistItem>;
+  deleteCoffeeWishlistItem(id: string): Promise<void>;
 
   listCoffeeRecipes(): Promise<CoffeeRecipe[]>;
   createCoffeeRecipe(input: CoffeeRecipeCreate): Promise<CoffeeRecipe>;

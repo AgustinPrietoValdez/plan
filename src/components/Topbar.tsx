@@ -10,7 +10,7 @@ import {
   todayYmd,
   ymd,
 } from "../lib/date";
-import { useApp, AREA_OF_VIEW, COMPRAS_TABS, CAFE_TABS, FINANZAS_TABS } from "../lib/store";
+import { useApp, AREA_OF_VIEW, COMPRAS_TABS, FINANZAS_TABS } from "../lib/store";
 import { useProjects } from "../lib/queries";
 import { IChevL, IChevR, IFilter } from "./icons";
 
@@ -23,10 +23,8 @@ export function Topbar() {
     setSelectedDay,
     viewProjectId,
     comprasTab,
-    cafeTab,
     finanzasTab,
     setComprasTab,
-    setCafeTab,
     setFinanzasTab,
   } = useApp();
   const area = AREA_OF_VIEW[view];
@@ -89,7 +87,7 @@ export function Topbar() {
     sub = "Ingredientes, recetas y listas";
   } else if (view === "cafe") {
     title = "Café";
-    sub = "Granos, recetas e historial";
+    sub = "Tu bodega de granos, deseados y consumo";
   } else if (view === "budget") {
     title = "Finanzas";
     sub = "Cuentas, presupuesto y ahorro";
@@ -120,56 +118,50 @@ export function Topbar() {
 
       <div className="topbar-spacer" />
 
-      <div className="seg">
-        {area === "calendario" ? (
-          <>
-            <button className={view === "day" ? "active" : ""} onClick={() => setView("day")}>
-              Day
-            </button>
-            <button className={view === "week" ? "active" : ""} onClick={() => setView("week")}>
-              Week
-            </button>
-            <button className={view === "month" ? "active" : ""} onClick={() => setView("month")}>
-              Month
-            </button>
-            <button className={view === "project" ? "active" : ""} onClick={() => setView("project")}>
-              Project
-            </button>
-          </>
-        ) : area === "compras" ? (
-          COMPRAS_TABS.map((t) => (
-            <button
-              key={t.id}
-              className={comprasTab === t.id ? "active" : ""}
-              onClick={() => { if (t.ready) setComprasTab(t.id); }}
-              title={t.ready ? undefined : "Próximamente"}
-              style={t.ready ? undefined : { opacity: 0.55 }}
-            >
-              {t.label}
-            </button>
-          ))
-        ) : area === "cafe" ? (
-          CAFE_TABS.map((t) => (
-            <button
-              key={t.id}
-              className={cafeTab === t.id ? "active" : ""}
-              onClick={() => setCafeTab(t.id)}
-            >
-              {t.label}
-            </button>
-          ))
-        ) : area === "presupuesto" ? (
-          FINANZAS_TABS.map((t) => (
-            <button
-              key={t.id}
-              className={finanzasTab === t.id ? "active" : ""}
-              onClick={() => setFinanzasTab(t.id)}
-            >
-              {t.label}
-            </button>
-          ))
-        ) : null}
-      </div>
+      {/* Café's Inventario/Historial/Recetas switcher lives inside CafeView itself,
+          right under its own header — matching the mockup — not up here. */}
+      {area !== "cafe" && (
+        <div className="seg">
+          {area === "calendario" ? (
+            <>
+              <button className={view === "day" ? "active" : ""} onClick={() => setView("day")}>
+                Day
+              </button>
+              <button className={view === "week" ? "active" : ""} onClick={() => setView("week")}>
+                Week
+              </button>
+              <button className={view === "month" ? "active" : ""} onClick={() => setView("month")}>
+                Month
+              </button>
+              <button className={view === "project" ? "active" : ""} onClick={() => setView("project")}>
+                Project
+              </button>
+            </>
+          ) : area === "compras" ? (
+            COMPRAS_TABS.map((t) => (
+              <button
+                key={t.id}
+                className={comprasTab === t.id ? "active" : ""}
+                onClick={() => { if (t.ready) setComprasTab(t.id); }}
+                title={t.ready ? undefined : "Próximamente"}
+                style={t.ready ? undefined : { opacity: 0.55 }}
+              >
+                {t.label}
+              </button>
+            ))
+          ) : area === "presupuesto" ? (
+            FINANZAS_TABS.map((t) => (
+              <button
+                key={t.id}
+                className={finanzasTab === t.id ? "active" : ""}
+                onClick={() => setFinanzasTab(t.id)}
+              >
+                {t.label}
+              </button>
+            ))
+          ) : null}
+        </div>
+      )}
 
       {isCalendarView && (
         <button className="btn">

@@ -266,7 +266,8 @@
   box-shadow: var(--shadow-sm);
 }
 .seg button {
-  padding: 5px 10px; font-size: 12px; font-weight: 500; color: var(--fg-muted);
+  padding: calc(var(--home-s, 1) * 5px) calc(var(--home-s, 1) * 10px);
+  font-size: calc(var(--home-s, 1) * 12px); font-weight: 500; color: var(--fg-muted);
   border-right: 1px solid var(--line);
 }
 .seg button:last-child { border-right: 0; }

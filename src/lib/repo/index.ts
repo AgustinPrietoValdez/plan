@@ -14,6 +14,8 @@ export type {
   CoffeeBeanPatch,
   CoffeeRecipeCreate,
   CoffeeRecipePatch,
+  CoffeeWishlistItemCreate,
+  CoffeeWishlistItemPatch,
   CategoryCreate,
   EventCreate,
   EventPatch,

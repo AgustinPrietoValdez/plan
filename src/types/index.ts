@@ -352,6 +352,7 @@ export interface CoffeeBean {
   producer: string;
   roastedOn: string | null;
   weightGrams: number;
+  initialWeightGrams: number | null; // peso al cargar el grano (o al reactivarlo) — inmutable salvo eso; null en granos viejos pre-migración
   notes: string;
   cataInicial: string; // que busco en este cafe (al abrir el grano)
   notaFinal: string; // a donde llegue (al terminarlo)
@@ -359,6 +360,19 @@ export interface CoffeeBean {
   finishedAt: string | null; // null = activo; ISO = terminado (no tengo mas)
   rating: number | null; // 1-10, cargado al marcar terminado
   flavorTags: string[]; // tags de sabor, cargados al marcar terminado
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+  version: number;
+}
+
+export interface CoffeeWishlistItem {
+  id: string;
+  name: string;
+  roaster: string;
+  process: string;
+  priceKr: number | null;
+  notes: string;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
