@@ -1005,8 +1005,6 @@ function InventarioTab({
   onComprarWishlistItem: (w: CoffeeWishlistItem) => void;
 }) {
   const active = beans.filter((b) => !b.finishedAt);
-  const finished = beans.filter((b) => b.finishedAt);
-  const [showFinished, setShowFinished] = useState(false);
   const lowStock = active.filter((b) => b.weightGrams > 0 && b.weightGrams <= LOW_STOCK_G);
 
   return (
@@ -1048,29 +1046,6 @@ function InventarioTab({
               ))}
             </div>
           )}
-
-          {finished.length > 0 && (
-            <>
-              <button className="btn ghost" style={{ alignSelf: "flex-start", fontSize: fluid(12), padding: `${fluid(4)} ${fluid(8)}`, marginTop: fluid(8) }}
-                onClick={() => setShowFinished((v) => !v)}>
-                {showFinished ? "▾" : "▸"} No tengo más ({finished.length})
-              </button>
-              {showFinished && (
-                <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill, minmax(${fluid(230)}, 1fr))`, gap: fluid(14) }}>
-                  {finished.map((b) => (
-                    <BeanTile
-                      key={b.id}
-                      bean={b}
-                      lastBrew={lastSessionFor(sessions, b.id)}
-                      onOpen={() => onOpenDetail(b)}
-                      onMarkFinished={() => onMarkFinished(b)}
-                      finished
-                    />
-                  ))}
-                </div>
-              )}
-            </>
-          )}
         </>
       )}
 
@@ -1092,21 +1067,20 @@ function lastSessionFor(sessions: BrewSession[], beanId: string): BrewSession | 
 }
 
 function BeanTile({
-  bean: b, lastBrew, onOpen, onMarkFinished, finished,
+  bean: b, lastBrew, onOpen, onMarkFinished,
 }: {
   bean: CoffeeBean;
   lastBrew: BrewSession | null;
   onOpen: () => void;
   onMarkFinished: () => void;
-  finished?: boolean;
 }) {
-  const asOf = finished && b.finishedAt ? b.finishedAt.slice(0, 10) : todayYmd();
+  const asOf = todayYmd();
   const status = freshnessStatus(b.roastedOn, asOf);
   const color = FRESHNESS_COLOR[status];
   const days = daysOld(b.roastedOn, asOf);
   const bagSize = b.initialWeightGrams && b.initialWeightGrams > 0 ? b.initialWeightGrams : REFERENCE_BAG_G;
   const pct = Math.max(0, Math.min(100, Math.round((b.weightGrams / bagSize) * 100)));
-  const lowStock = !finished && b.weightGrams > 0 && b.weightGrams <= LOW_STOCK_G;
+  const lowStock = b.weightGrams > 0 && b.weightGrams <= LOW_STOCK_G;
 
   return (
     <div
@@ -1115,7 +1089,6 @@ function BeanTile({
       style={{
         background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: fluid(13), padding: fluid(16),
         display: "flex", flexDirection: "column", gap: fluid(12), boxShadow: "var(--shadow-sm)", cursor: "pointer",
-        opacity: finished ? 0.6 : 1,
       }}
     >
       <div style={{ display: "flex", alignItems: "flex-start", gap: fluid(10) }}>
@@ -1146,38 +1119,32 @@ function BeanTile({
         ))}
       </div>
 
-      {!finished && (
-        <div>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: fluid(11.5), marginBottom: fluid(5) }}>
-            <span style={{ color: "var(--fg-muted)" }}>Quedan</span>
-            <span style={{ fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{b.weightGrams}g</span>
-          </div>
-          <div style={{ height: fluid(6), borderRadius: 99, background: "var(--bg-sunken)", overflow: "hidden" }}>
-            <div style={{ height: "100%", width: `${pct}%`, background: lowStock ? "var(--warn)" : "var(--ok)", borderRadius: 99 }} />
-          </div>
+      <div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: fluid(11.5), marginBottom: fluid(5) }}>
+          <span style={{ color: "var(--fg-muted)" }}>Quedan</span>
+          <span style={{ fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{b.weightGrams}g</span>
         </div>
-      )}
+        <div style={{ height: fluid(6), borderRadius: 99, background: "var(--bg-sunken)", overflow: "hidden" }}>
+          <div style={{ height: "100%", width: `${pct}%`, background: lowStock ? "var(--warn)" : "var(--ok)", borderRadius: 99 }} />
+        </div>
+      </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: fluid(6), fontSize: fluid(11.5), color, fontWeight: 600 }}>
         <span style={{ width: fluid(7), height: fluid(7), borderRadius: "50%", background: color }} />
-        {finished
-          ? `Terminado${b.finishedAt ? ` · ${fmtDmY(b.finishedAt.slice(0, 10))}` : ""}`
-          : `${FRESHNESS_LABEL[status]}${days != null ? ` (${days}d)` : ""}`}
+        {FRESHNESS_LABEL[status]}{days != null ? ` (${days}d)` : ""}
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: fluid(8), marginTop: "auto", paddingTop: fluid(8), borderTop: "1px solid var(--line)" }}>
         <span style={{ fontSize: fluid(11.5), color: "var(--fg-subtle)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {lastBrew ? (lastBrew.recipeName || "Brew sin receta") : "Sin brews aún"}
         </span>
-        {!finished && (
-          <span
-            role="button"
-            onClick={(e) => { e.stopPropagation(); onMarkFinished(); }}
-            style={{ fontSize: fluid(11.5), color: "var(--fg-muted)", fontWeight: 600, cursor: "pointer", flexShrink: 0 }}
-          >
-            Marcar terminado
-          </span>
-        )}
+        <span
+          role="button"
+          onClick={(e) => { e.stopPropagation(); onMarkFinished(); }}
+          style={{ fontSize: fluid(11.5), color: "var(--fg-muted)", fontWeight: 600, cursor: "pointer", flexShrink: 0 }}
+        >
+          Marcar terminado
+        </span>
       </div>
     </div>
   );

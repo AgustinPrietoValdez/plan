@@ -152,9 +152,14 @@ export function HomeView() {
   const greetingDay = DOW_LONG_ES[todayDate.getDay()].toLowerCase();
   // "Tu día" shows only 3 tasks/events; the rest fold into a "+N más" card-styled
   // link that opens the day view — a hard cap of 3, not a 5-row budget like the
-  // other lists.
-  const tasksShown = todayAll.length > 3 ? todayAll.slice(0, 3) : todayAll;
-  const tasksMore = todayAll.length > 3 ? todayAll.length - 3 : 0;
+  // other lists. Pending tasks always get priority for those 3 slots; done ones
+  // (tachadas) only fill leftover room. The "+N más" count reflects HIDDEN
+  // PENDING tasks only — a completed task never inflates it, since it isn't
+  // actionable work waiting to be done.
+  const tasksShown = pendingToday.length >= 3
+    ? pendingToday.slice(0, 3)
+    : [...pendingToday, ...doneToday.slice(0, 3 - pendingToday.length)];
+  const tasksMore = Math.max(0, pendingToday.length - 3);
   const eventsShown = upcomingEvents.length > 3 ? upcomingEvents.slice(0, 3) : upcomingEvents;
   const eventsMore = upcomingEvents.length > 3 ? upcomingEvents.length - 3 : 0;
 
