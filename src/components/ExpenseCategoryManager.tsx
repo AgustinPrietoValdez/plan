@@ -78,7 +78,7 @@ export function ExpenseCategoryManager({ onClose }: Props) {
 
   return (
     <div className="modal-backdrop" onMouseDown={onBackdropMouseDown}>
-      <div className="modal" style={{ width: 520 }} onMouseDown={(e) => e.stopPropagation()}>
+      <div className="modal" style={{ width: "calc(var(--home-s, 1) * 520px)" }} onMouseDown={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <span style={{ flex: 1, fontSize: 15, fontWeight: 600, letterSpacing: "-0.01em" }}>
             Spending categories

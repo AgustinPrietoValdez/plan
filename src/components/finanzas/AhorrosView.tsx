@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from "react";
 import { colorsForHue } from "../../lib/categoryColor";
 import { CURRENCY, fmtMoney, parseMoney } from "../../lib/money";
 import {
@@ -12,47 +12,59 @@ import {
 } from "../../lib/queries";
 import { useApp } from "../../lib/store";
 import type { Account, AccountTransfer, SavingsGoal } from "../../types";
-import { ICheck, IPlus, ITrash, IX } from "../icons";
+import { ICheck, ITrash, IX } from "../icons";
 
-// ── Small donut: % completo (goals con objetivo) o monto ahorrado (sin objetivo) ──
-const DONUT_SIZE = 60;
-const DONUT_CX = DONUT_SIZE / 2;
-const DONUT_R = 23;
-const DONUT_CIRC = 2 * Math.PI * DONUT_R;
+// Mismo frame de diseño 1280×720 (2× a 2560×1440) que Home/Café/Finanzas — `--s`
+// lo pone FinanzasView en la raíz y cascadea hasta acá.
+function fluid(base: number): string {
+  return `calc(var(--s, 2) * ${base}px)`;
+}
 
-function GoalDonut({ pct, label, color }: { pct: number | null; label: string; color: string }) {
-  const fill = pct !== null ? Math.min(100, Math.max(0, pct)) : 0;
-  const dashLen = (fill / 100) * DONUT_CIRC;
+// `className="input"` alone has no CSS — it's only styled when nested inside a
+// `.field` wrapper (see `.field .input` in components.css). These form controls
+// live directly in cards, not in `.field`s, so they need their own chrome.
+const fieldChrome = {
+  border: "1px solid var(--line)",
+  background: "var(--bg-elev)",
+  borderRadius: fluid(6),
+  outline: 0,
+};
+
+const sectionLabelStyle = {
+  fontSize: fluid(11),
+  textTransform: "uppercase" as const,
+  letterSpacing: ".05em",
+  fontWeight: 600,
+  color: "var(--fg-muted)",
+};
+
+// ── Small donut: % completo (goals con objetivo) ──────────────────────────────
+function GoalDonut({ pct, color }: { pct: number; color: string }) {
+  const CIRC = 2 * Math.PI * 22;
+  const dashLen = (Math.min(100, Math.max(0, pct)) / 100) * CIRC;
   return (
-    <div style={{ position: "relative", width: DONUT_SIZE, height: DONUT_SIZE, flex: "0 0 auto" }}>
-      <svg width={DONUT_SIZE} height={DONUT_SIZE} viewBox={`0 0 ${DONUT_SIZE} ${DONUT_SIZE}`} style={{ display: "block" }}>
-        <circle cx={DONUT_CX} cy={DONUT_CX} r={DONUT_R} fill="none" stroke="var(--bg-sunken)" strokeWidth={8} />
-        {pct !== null && fill > 0 && (
-          <circle
-            cx={DONUT_CX} cy={DONUT_CX} r={DONUT_R}
-            fill="none" stroke={color} strokeWidth={8}
-            strokeDasharray={`${dashLen} ${DONUT_CIRC - dashLen}`}
-            strokeDashoffset={DONUT_CIRC / 4}
-            strokeLinecap="round"
-            style={{ transition: "stroke-dasharray .3s" }}
-          />
-        )}
+    <div style={{ position: "relative", width: fluid(52), height: fluid(52), flex: "0 0 auto" }}>
+      <svg width={fluid(52)} height={fluid(52)} viewBox="0 0 56 56" style={{ display: "block" }}>
+        <circle cx={28} cy={28} r={22} fill="none" stroke="var(--bg-sunken)" strokeWidth={7} />
+        <circle
+          cx={28} cy={28} r={22} fill="none" stroke={color} strokeWidth={7}
+          strokeLinecap="round" strokeDasharray={`${dashLen.toFixed(2)} ${(CIRC - dashLen).toFixed(2)}`}
+          transform="rotate(-90 28 28)"
+        />
       </svg>
-      <div style={{ position: "absolute", inset: 2, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
-        <span style={{ fontSize: pct !== null ? 13 : 9.5, fontWeight: 700, color: "var(--fg)", textAlign: "center", lineHeight: 1.1, overflow: "hidden" }}>
-          {label}
-        </span>
+      <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", fontSize: fluid(11), fontWeight: 700 }}>
+        {pct}%
       </div>
     </div>
   );
 }
 
 // ── Pie: total ahorrado, partido por cuanto aporto cada goal activo ───────────
-const PIE_SIZE = 150;
+const PIE_SIZE = 130;
 const PIE_CX = PIE_SIZE / 2;
 const PIE_CY = PIE_SIZE / 2;
-const PIE_R_OUT = 72;
-const PIE_R_IN = 48;
+const PIE_R_OUT = 60;
+const PIE_R_IN = 40;
 
 function piePath(start: number, end: number, ro: number, ri: number): string {
   if (Math.abs(end - start) < 0.0001) return "";
@@ -86,13 +98,11 @@ function GoalsPie({ activeGoals, savedByGoalId }: { activeGoals: SavingsGoal[]; 
   const hoverSlice = hover != null ? arcs[hover] : null;
 
   return (
-    <div>
-      <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".05em", fontWeight: 600, color: "var(--fg-muted)", marginBottom: 8 }}>
-        Total ahorrado
-      </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+    <div style={{ background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: fluid(12), padding: fluid(16), boxShadow: "var(--shadow-sm)" }}>
+      <div style={{ ...sectionLabelStyle, marginBottom: fluid(8) }}>Total ahorrado</div>
+      <div style={{ display: "flex", alignItems: "center", gap: fluid(16) }}>
         <div style={{ position: "relative", flex: "0 0 auto" }}>
-          <svg width={PIE_SIZE} height={PIE_SIZE} style={{ display: "block" }}>
+          <svg width={fluid(PIE_SIZE)} height={fluid(PIE_SIZE)} viewBox={`0 0 ${PIE_SIZE} ${PIE_SIZE}`} style={{ display: "block" }}>
             {arcs.length === 0 ? (
               <circle cx={PIE_CX} cy={PIE_CY} r={(PIE_R_OUT + PIE_R_IN) / 2} fill="none" stroke="var(--bg-sunken)" strokeWidth={PIE_R_OUT - PIE_R_IN} />
             ) : (
@@ -111,24 +121,24 @@ function GoalsPie({ activeGoals, savedByGoalId }: { activeGoals: SavingsGoal[]; 
             )}
           </svg>
           <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", pointerEvents: "none", textAlign: "center" }}>
-            <div style={{ fontSize: 15, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
+            <div style={{ fontSize: fluid(15), fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
               {fmtMoney(hoverSlice ? hoverSlice.amount : total, { compact: true })}
             </div>
-            <div style={{ fontSize: 9, color: "var(--fg-subtle)", maxWidth: 70, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <div style={{ fontSize: fluid(9), color: "var(--fg-subtle)", maxWidth: fluid(70), overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {hoverSlice ? hoverSlice.goal.name : "ahorrado"}
             </div>
           </div>
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 3, flex: 1, minWidth: 0, maxHeight: PIE_SIZE, overflowY: "auto" }}>
-          {arcs.length === 0 && <span style={{ fontSize: 11.5, color: "var(--fg-subtle)" }}>Todavia no se ahorro nada este ciclo.</span>}
+        <div style={{ display: "flex", flexDirection: "column", gap: fluid(4), flex: 1, minWidth: 0, maxHeight: fluid(PIE_SIZE), overflowY: "auto" }}>
+          {arcs.length === 0 && <span style={{ fontSize: fluid(11.5), color: "var(--fg-subtle)" }}>Todavia no se ahorro nada este ciclo.</span>}
           {arcs.map((a, i) => (
             <div
               key={a.goal.id}
               onMouseEnter={() => setHover(i)}
               onMouseLeave={() => setHover(null)}
-              style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, padding: "2px 4px", borderRadius: 4, background: hover === i ? colorsForHue(a.hue).bg : "transparent" }}
+              style={{ display: "flex", alignItems: "center", gap: fluid(6), fontSize: fluid(11.5), padding: `2px ${fluid(4)}`, borderRadius: 4, background: hover === i ? colorsForHue(a.hue).bg : "transparent" }}
             >
-              <span style={{ width: 9, height: 9, borderRadius: 2, background: colorsForHue(a.hue).bg, flexShrink: 0 }} />
+              <span style={{ width: fluid(9), height: fluid(9), borderRadius: 2, background: colorsForHue(a.hue).bg, flexShrink: 0 }} />
               <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.goal.name}</span>
               <span style={{ fontVariantNumeric: "tabular-nums", color: "var(--fg-muted)" }}>{fmtMoney(a.amount, { compact: true })}</span>
             </div>
@@ -140,7 +150,7 @@ function GoalsPie({ activeGoals, savedByGoalId }: { activeGoals: SavingsGoal[]; 
 }
 
 // ── Recent savings-kind transfers ──────────────────────────────────────────────
-function MovementsList({ transfers, accounts, goals }: { transfers: AccountTransfer[]; accounts: Account[]; goals: SavingsGoal[] }) {
+function MovementsCard({ transfers, accounts, goals }: { transfers: AccountTransfer[]; accounts: Account[]; goals: SavingsGoal[] }) {
   const nameOf = (id: string | null) => (id ? accounts.find((a) => a.id === id)?.name ?? "—" : "—");
   const goalNameOf = (id: string | null) => (id ? goals.find((g) => g.id === id)?.name ?? null : null);
   const savingsTransfers = useMemo(
@@ -149,27 +159,23 @@ function MovementsList({ transfers, accounts, goals }: { transfers: AccountTrans
   );
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6, flex: 1, minWidth: 0 }}>
-      <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".05em", fontWeight: 600, color: "var(--fg-muted)" }}>
-        Movimientos de ahorro
-      </div>
+    <div style={{ background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: fluid(12), padding: fluid(16), boxShadow: "var(--shadow-sm)", display: "flex", flexDirection: "column", gap: fluid(4) }}>
+      <div style={{ ...sectionLabelStyle, marginBottom: fluid(4) }}>Movimientos de ahorro</div>
       {savingsTransfers.length === 0 ? (
-        <div style={{ padding: "16px 12px", textAlign: "center", fontSize: 12, color: "var(--fg-subtle)", border: "1px dashed var(--line)", borderRadius: 8 }}>
+        <div style={{ padding: `${fluid(16)} ${fluid(12)}`, textAlign: "center", fontSize: fluid(12), color: "var(--fg-subtle)", border: "1px dashed var(--line)", borderRadius: fluid(8) }}>
           Todavia no hay transferencias de ahorro.
         </div>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: PIE_SIZE, overflowY: "auto" }}>
-          {savingsTransfers.map((t) => (
-            <div key={t.id} style={{ display: "grid", gridTemplateColumns: "auto minmax(0,1fr) auto", gap: 8, alignItems: "center", fontSize: 11.5, padding: "3px 4px" }}>
-              <span style={{ color: "var(--fg-subtle)", fontVariantNumeric: "tabular-nums" }}>{t.transferredOn}</span>
-              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {nameOf(t.fromAccountId)} → {nameOf(t.toAccountId)}
-                {goalNameOf(t.goalId) && <span style={{ color: "var(--fg-subtle)" }}> · {goalNameOf(t.goalId)}</span>}
-              </span>
-              <span style={{ fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{fmtMoney(t.amount, { compact: true })}</span>
-            </div>
-          ))}
-        </div>
+        savingsTransfers.map((t) => (
+          <div key={t.id} style={{ display: "grid", gridTemplateColumns: "auto minmax(0,1fr) auto", gap: fluid(8), alignItems: "center", fontSize: fluid(11.5), padding: `${fluid(4)} ${fluid(2)}` }}>
+            <span style={{ color: "var(--fg-subtle)", fontVariantNumeric: "tabular-nums" }}>{t.transferredOn}</span>
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {nameOf(t.fromAccountId)} → {nameOf(t.toAccountId)}
+              {goalNameOf(t.goalId) && <span style={{ color: "var(--fg-subtle)" }}> · {goalNameOf(t.goalId)}</span>}
+            </span>
+            <span style={{ fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{fmtMoney(t.amount, { compact: true })}</span>
+          </div>
+        ))
       )}
     </div>
   );
@@ -231,17 +237,20 @@ function GoalCard({
       style={{
         background: "var(--bg-elev)",
         border: goal.priority ? "2px solid var(--danger)" : "1px solid var(--line)",
-        borderRadius: 10,
-        padding: "8px 10px",
+        borderRadius: fluid(10),
+        padding: `${fluid(11)} ${fluid(13)}`,
         display: "flex",
         flexDirection: "column",
         justifyContent: "space-between",
-        gap: 6,
-        minHeight: 160,
+        gap: fluid(8),
+        minHeight: fluid(150),
+        boxShadow: "var(--shadow-sm)",
         opacity: goal.active ? 1 : 0.65,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      {/* minHeight = tamaño del donut, para que "Activo" quede a la misma altura
+          tenga o no objetivo (donut) la card. */}
+      <div style={{ display: "flex", alignItems: "center", gap: fluid(8), minHeight: fluid(52) }}>
         {draggable && (
           <span
             draggable
@@ -252,13 +261,13 @@ function GoalCard({
             }}
             onDragEnd={onDragEndHandle}
             title="Arrastrar para reordenar"
-            style={{ cursor: "grab", color: "var(--fg-subtle)", fontSize: 15, lineHeight: 1, userSelect: "none", letterSpacing: "-2px" }}
+            style={{ cursor: "grab", color: "var(--fg-subtle)", fontSize: fluid(15), lineHeight: 1, userSelect: "none", letterSpacing: "-2px" }}
           >
             ⠿
           </span>
         )}
         {progressPct !== null && (
-          <GoalDonut pct={progressPct} label={`${progressPct}%`} color="var(--accent)" />
+          <GoalDonut pct={progressPct} color={goal.priority ? "var(--danger)" : "var(--accent)"} />
         )}
         {editingName ? (
           <input
@@ -271,24 +280,24 @@ function GoalCard({
               else if (e.key === "Escape") { setEditingName(false); setDraftName(goal.name); }
             }}
             className="input"
-            style={{ flex: 1, fontSize: 13, fontWeight: 500 }}
+            style={{ ...fieldChrome, flex: 1, fontSize: fluid(13), fontWeight: 500, padding: `${fluid(4)} ${fluid(7)}` }}
           />
         ) : (
           <button
             onClick={() => setEditingName(true)}
             title="Click para renombrar"
-            style={{ flex: "1 1 auto", minWidth: 0, textAlign: "left", fontSize: 13, fontWeight: 500, color: "var(--fg)", background: "none", border: 0, padding: 0, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+            style={{ flex: "1 1 auto", minWidth: 0, textAlign: "left", fontSize: fluid(13), fontWeight: 600, color: goal.priority ? "var(--danger)" : "var(--fg)", background: "none", border: 0, padding: 0, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
           >
             {goal.name}
           </button>
         )}
-        {goal.targetAmount !== null && (
-          <span style={{ flex: "0 0 auto", fontSize: 11, color: "var(--fg-subtle)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
-            {fmtMoney(saved, { compact: true })} / {fmtMoney(goal.targetAmount, { compact: true })}
-          </span>
-        )}
-        <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--fg-muted)", cursor: "pointer", whiteSpace: "nowrap" }}>
-          <input type="checkbox" checked={goal.active} onChange={(e) => onPatch({ active: e.target.checked })} />
+        <label style={{ display: "flex", alignItems: "center", gap: fluid(5), fontSize: fluid(11), color: "var(--fg-muted)", cursor: "pointer", whiteSpace: "nowrap" }}>
+          <input
+            type="checkbox"
+            checked={goal.active}
+            onChange={(e) => onPatch({ active: e.target.checked })}
+            style={{ width: fluid(13), height: fluid(13), accentColor: "var(--accent)", cursor: "pointer" }}
+          />
           Activo
         </label>
         <button className="icon-btn" onClick={onDelete} title="Borrar objetivo" style={{ color: "var(--fg-subtle)" }}>
@@ -296,23 +305,33 @@ function GoalCard({
         </button>
       </div>
 
-      {isOpenEnded && (
-        <div style={{ fontSize: 22, fontWeight: 700, fontVariantNumeric: "tabular-nums", color: "var(--fg)" }}>
-          {fmtMoney(saved, { compact: true })}
-        </div>
-      )}
+      {/* Slot de altura fija — sea el numero grande (sin objetivo) o la linea
+          chica "ahorrado / objetivo" (con objetivo), ocupa lo mismo en ambas
+          variantes para que las cards no queden de distinto tamaño. */}
+      <div style={{ display: "flex", alignItems: "center", minHeight: fluid(26) }}>
+        {isOpenEnded ? (
+          <div style={{ fontSize: fluid(20), fontWeight: 700, fontVariantNumeric: "tabular-nums", color: "var(--fg)" }}>
+            {fmtMoney(saved, { compact: true })}
+          </div>
+        ) : (
+          <div style={{ fontSize: fluid(11), color: "var(--fg-subtle)", fontVariantNumeric: "tabular-nums" }}>
+            {fmtMoney(saved, { compact: true })} / {fmtMoney(goal.targetAmount ?? 0, { compact: true })}
+          </div>
+        )}
+      </div>
 
-      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--fg-muted)", cursor: "pointer" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: fluid(10), flexWrap: "wrap", minHeight: fluid(24) }}>
+        <label style={{ display: "flex", alignItems: "center", gap: fluid(5), fontSize: fluid(11), color: "var(--fg-muted)", cursor: "pointer" }}>
           <input
             type="checkbox"
             checked={isOpenEnded}
             onChange={(e) => onPatch({ targetAmount: e.target.checked ? null : (parseMoney(targetText) ?? 1000) })}
+            style={{ width: fluid(13), height: fluid(13), accentColor: "var(--accent)", cursor: "pointer" }}
           />
           Sin monto fijo
         </label>
         {!isOpenEnded && (
-          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: fluid(4) }}>
             <input
               type="text"
               inputMode="decimal"
@@ -322,9 +341,9 @@ function GoalCard({
               onBlur={commitTarget}
               onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
               className="input"
-              style={{ width: 100, textAlign: "right", fontVariantNumeric: "tabular-nums" }}
+              style={{ ...fieldChrome, width: fluid(100), textAlign: "right", fontVariantNumeric: "tabular-nums", fontSize: fluid(12), padding: `${fluid(4)} ${fluid(7)}` }}
             />
-            <span style={{ fontSize: 11, color: "var(--fg-muted)" }}>{CURRENCY}</span>
+            <span style={{ fontSize: fluid(11), color: "var(--fg-muted)" }}>{CURRENCY}</span>
           </div>
         )}
         <select
@@ -332,7 +351,7 @@ function GoalCard({
           title="Cuenta de ahorro/recuperacion (a donde entra la plata)"
           value={goal.destinationAccountId ?? ""}
           onChange={(e) => onPatch({ destinationAccountId: e.target.value || null })}
-          style={{ width: "auto", fontSize: 12 }}
+          style={{ ...fieldChrome, width: "auto", fontSize: fluid(12), padding: `${fluid(4)} ${fluid(20)} ${fluid(4)} ${fluid(7)}` }}
         >
           <option value="">Sin cuenta de ahorro</option>
           {accounts.map((a) => (
@@ -344,7 +363,7 @@ function GoalCard({
           title="Cuenta de compra (de donde sale la plata al comprar)"
           value={goal.purchaseAccountId ?? ""}
           onChange={(e) => onPatch({ purchaseAccountId: e.target.value || null })}
-          style={{ width: "auto", fontSize: 12 }}
+          style={{ ...fieldChrome, width: "auto", fontSize: fluid(12), padding: `${fluid(4)} ${fluid(20)} ${fluid(4)} ${fluid(7)}` }}
         >
           <option value="">Sin cuenta de compra</option>
           {allAccounts.map((a) => (
@@ -354,24 +373,35 @@ function GoalCard({
       </div>
 
       {goal.priority ? (
-        <div style={{ background: "rgba(239,68,68,0.12)", border: "1px solid var(--danger)", borderRadius: 6, padding: "6px 8px", fontSize: 11.5, color: "var(--danger)", display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ background: "color-mix(in oklch, var(--danger) 12%, var(--bg))", border: "1px solid var(--danger)", borderRadius: 6, padding: `${fluid(6)} ${fluid(9)}`, fontSize: fluid(11), color: "var(--danger)", display: "flex", alignItems: "center", gap: fluid(8) }}>
           <span style={{ flex: 1 }}>
             Prioridad — recuperar {fmtMoney(Math.max(0, (goal.targetAmount ?? 0) - saved))}
           </span>
-          <button className="btn ghost" style={{ padding: "2px 8px", fontSize: 10.5, whiteSpace: "nowrap" }} onClick={onRecovered}>
+          <button className="btn ghost" style={{ padding: `${fluid(2)} ${fluid(8)}`, fontSize: fluid(10), whiteSpace: "nowrap" }} onClick={onRecovered}>
             Ya recuperé
           </button>
         </div>
-      ) : !isOpenEnded ? (
-        <button className="btn ghost" style={{ alignSelf: "flex-start", fontSize: 11 }} onClick={onRegistrarCompra}>
-          Registrar compra
-        </button>
-      ) : null}
+      ) : (
+        <div style={{ display: "flex", alignItems: "center", gap: fluid(8), fontSize: fluid(11), color: "var(--fg-muted)" }}>
+          <span style={{ padding: `${fluid(3)} ${fluid(8)}`, background: "var(--bg-sunken)", border: "1px solid var(--line)", borderRadius: 999 }}>
+            → {(goal.destinationAccountId && (accounts.find((a) => a.id === goal.destinationAccountId) ?? allAccounts.find((a) => a.id === goal.destinationAccountId))?.name) || "sin cuenta"}
+          </span>
+          {!isOpenEnded && (
+            <button style={{ fontSize: fluid(11), color: "var(--fg-muted)" }} onClick={onRegistrarCompra}>
+              Registrar compra
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
-export function AhorrosView() {
+export interface AhorrosViewHandle {
+  openCreate: () => void;
+}
+
+export const AhorrosView = forwardRef<AhorrosViewHandle>(function AhorrosView(_props, ref) {
   const goalsQ = useSavingsGoals();
   const accountsQ = useAccounts();
   const transfersQ = useAccountTransfers();
@@ -435,17 +465,16 @@ export function AhorrosView() {
   const [showAddGoal, setShowAddGoal] = useState(false);
   const [newGoalName, setNewGoalName] = useState("");
 
+  useImperativeHandle(ref, () => ({
+    openCreate: () => { setNewGoalName(""); setShowAddGoal(true); },
+  }));
+
   useEffect(() => {
     if (!showAddGoal) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setShowAddGoal(false); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [showAddGoal]);
-
-  const onAdd = () => {
-    setNewGoalName("");
-    setShowAddGoal(true);
-  };
 
   const createGoal = () => {
     const name = newGoalName.trim();
@@ -463,7 +492,7 @@ export function AhorrosView() {
   };
 
   const goalColumn = (list: SavingsGoal[]) => (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: fluid(6) }}>
       {list.map((g) => (
         <div
           key={g.id}
@@ -491,73 +520,47 @@ export function AhorrosView() {
   );
 
   return (
-    <div className="day-view-main">
-      <header
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 14,
-          paddingBottom: 8,
-          borderBottom: "1px solid var(--line)",
-          minHeight: 84,
-          boxSizing: "border-box",
-        }}
-      >
-        <div>
-          <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", color: "var(--fg-subtle)", fontWeight: 600 }}>
-            Ahorros
-          </div>
-          <div style={{ fontSize: 24, fontWeight: 600, letterSpacing: "-0.02em", lineHeight: 1.1 }}>
-            Objetivos
-          </div>
+    <div style={{ display: "flex", flexDirection: "column", gap: fluid(16), flex: 1, minHeight: 0 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: fluid(16), flex: "0 0 auto" }}>
+        <GoalsPie activeGoals={activeGoals} savedByGoalId={savedByGoalId} />
+        <MovementsCard transfers={transfers} accounts={accounts} goals={goals} />
+      </div>
+
+      {goalsWithTarget.length === 0 && goalsNoTarget.length === 0 && purchasedGoals.length === 0 ? (
+        <div style={{ padding: `${fluid(16)} ${fluid(12)}`, textAlign: "center", fontSize: fluid(12), color: "var(--fg-subtle)", border: "1px dashed var(--line)", borderRadius: fluid(8) }}>
+          Todavia no hay objetivos. Crea el primero con "Nuevo objetivo".
         </div>
-        <div style={{ flex: 1 }} />
-        <button className="btn primary" onClick={onAdd}>
-          <IPlus size={12} /> Nuevo objetivo
-        </button>
-      </header>
-
-      <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 20, flex: 1, minHeight: 0, overflowY: "auto" }}>
-        <section style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
-          <GoalsPie activeGoals={activeGoals} savedByGoalId={savedByGoalId} />
-          <MovementsList transfers={transfers} accounts={accounts} goals={goals} />
-        </section>
-
-        {goalsWithTarget.length === 0 && goalsNoTarget.length === 0 && purchasedGoals.length === 0 ? (
-          <div style={{ padding: "16px 12px", textAlign: "center", fontSize: 12, color: "var(--fg-subtle)", border: "1px dashed var(--line)", borderRadius: 8 }}>
-            Todavia no hay objetivos. Crea el primero con "Nuevo objetivo".
-          </div>
-        ) : (
-          <section style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "start" }}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".05em", fontWeight: 600, color: "var(--fg-muted)" }}>
-                Con objetivo
-              </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: fluid(16), flex: 1, minHeight: 0 }}>
+          {/* El titulo de cada columna queda fijo — solo el contenido de abajo scrollea. */}
+          <div style={{ display: "flex", flexDirection: "column", gap: fluid(10), minHeight: 0 }}>
+            <div style={{ ...sectionLabelStyle, flexShrink: 0 }}>Con objetivo</div>
+            <div className="fz-col" style={{ display: "flex", flexDirection: "column", gap: fluid(10), flex: 1, minHeight: 0, overflowY: "auto", paddingRight: fluid(4) }}>
               {goalsWithTarget.length === 0 ? (
-                <div style={{ padding: "12px", textAlign: "center", fontSize: 11.5, color: "var(--fg-subtle)", border: "1px dashed var(--line)", borderRadius: 8 }}>
+                <div style={{ padding: fluid(12), textAlign: "center", fontSize: fluid(11.5), color: "var(--fg-subtle)", border: "1px dashed var(--line)", borderRadius: fluid(8) }}>
                   Ninguno con monto fijo todavia.
                 </div>
               ) : goalColumn(goalsWithTarget)}
 
               {purchasedGoals.length > 0 && (
-                <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 4 }}>
-                  <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".05em", fontWeight: 600, color: "var(--fg-subtle)" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: fluid(6), marginTop: fluid(4) }}>
+                  <div style={{ fontSize: fluid(10), textTransform: "uppercase", letterSpacing: ".05em", fontWeight: 600, color: "var(--fg-subtle)" }}>
                     Comprados · {purchasedGoals.length}
                   </div>
                   {purchasedGoals.map((g) => (
                     <div
                       key={g.id}
-                      style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 10px", background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: 8, opacity: 0.6 }}
+                      style={{ display: "flex", alignItems: "center", gap: fluid(10), padding: `${fluid(7)} ${fluid(11)}`, background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: fluid(8), opacity: 0.65 }}
                     >
-                      <span style={{ flex: 1, fontSize: 12.5, fontWeight: 500, textDecoration: "line-through", color: "var(--fg-subtle)" }}>
+                      <span style={{ flex: 1, fontSize: fluid(12), fontWeight: 500, textDecoration: "line-through", color: "var(--fg-subtle)" }}>
                         {g.name}
                       </span>
-                      <span style={{ fontSize: 11, color: "var(--ok)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".05em" }}>
+                      <span style={{ fontSize: fluid(11), color: "var(--ok)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".05em" }}>
                         Comprado
                       </span>
                       <button
                         className="btn ghost"
-                        style={{ padding: "3px 8px", fontSize: 11 }}
+                        style={{ padding: `${fluid(3)} ${fluid(8)}`, fontSize: fluid(11) }}
                         onClick={() => patch.mutate({ id: g.id, patch: { purchasedAt: null } })}
                       >
                         Restaurar
@@ -567,23 +570,23 @@ export function AhorrosView() {
                 </div>
               )}
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".05em", fontWeight: 600, color: "var(--fg-muted)" }}>
-                Sin fin definido
-              </div>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: fluid(10), minHeight: 0 }}>
+            <div style={{ ...sectionLabelStyle, flexShrink: 0 }}>Sin fin definido</div>
+            <div className="fz-col" style={{ display: "flex", flexDirection: "column", gap: fluid(10), flex: 1, minHeight: 0, overflowY: "auto", paddingRight: fluid(4) }}>
               {goalsNoTarget.length === 0 ? (
-                <div style={{ padding: "12px", textAlign: "center", fontSize: 11.5, color: "var(--fg-subtle)", border: "1px dashed var(--line)", borderRadius: 8 }}>
+                <div style={{ padding: fluid(12), textAlign: "center", fontSize: fluid(11.5), color: "var(--fg-subtle)", border: "1px dashed var(--line)", borderRadius: fluid(8) }}>
                   Ninguno sin monto fijo todavia.
                 </div>
               ) : goalColumn(goalsNoTarget)}
             </div>
-          </section>
-        )}
-      </div>
+          </div>
+        </div>
+      )}
 
       {showAddGoal && (
         <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) setShowAddGoal(false); }}>
-          <div className="modal" style={{ width: 420 }} onMouseDown={(e) => e.stopPropagation()}>
+          <div className="modal" style={{ width: "calc(var(--home-s, 1) * 420px)" }} onMouseDown={(e) => e.stopPropagation()}>
             <div className="modal-head">
               <span style={{ flex: 1, fontSize: 15, fontWeight: 600, letterSpacing: "-0.01em" }}>Nuevo objetivo</span>
               <button className="icon-btn" onClick={() => setShowAddGoal(false)} title="Cerrar">
@@ -624,7 +627,7 @@ export function AhorrosView() {
 
       {confirmDeleteId && (
         <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) setConfirmDeleteId(null); }}>
-          <div className="modal" style={{ width: 360 }} onMouseDown={(e) => e.stopPropagation()}>
+          <div className="modal" style={{ width: "calc(var(--home-s, 1) * 360px)" }} onMouseDown={(e) => e.stopPropagation()}>
             <div className="modal-head">
               <span style={{ flex: 1, fontSize: 15, fontWeight: 600 }}>Borrar objetivo</span>
               <button className="icon-btn" onClick={() => setConfirmDeleteId(null)} title="Cerrar">
@@ -652,4 +655,4 @@ export function AhorrosView() {
       )}
     </div>
   );
-}
+});

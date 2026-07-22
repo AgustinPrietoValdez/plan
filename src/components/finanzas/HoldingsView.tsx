@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type MouseEvent } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useState, type MouseEvent } from "react";
 import { convertViaUsd, DEFAULT_RATES_PER_USD, fmtMoneyIn, parseMoney } from "../../lib/money";
 import { computeNetWorth } from "../../lib/netWorth";
 import { fetchLiveRates } from "../../lib/exchangeRates";
@@ -12,9 +12,23 @@ import {
   useUpsertFinanzasSettings,
 } from "../../lib/queries";
 import type { Account, AccountCurrency, AccountOwner, AccountType } from "../../types";
-import { ICheck, IPlus, IRefresh, ITrash, IX } from "../icons";
+import { ICheck, IRefresh, ITrash, IX } from "../icons";
 import { NetWorthChart } from "./NetWorthChart";
 import { PortfolioPie } from "./PortfolioPie";
+
+// Mismo frame de diseño 1280×720 (2× a 2560×1440) que Home/Café/Finanzas — `--s`
+// lo pone FinanzasView en la raíz y cascadea hasta acá.
+function fluid(base: number): string {
+  return `calc(var(--s, 2) * ${base}px)`;
+}
+
+const sectionLabelStyle = {
+  fontSize: fluid(11),
+  textTransform: "uppercase" as const,
+  letterSpacing: ".06em",
+  color: "var(--fg-subtle)",
+  fontWeight: 600,
+};
 
 const CURRENCY_OPTIONS: AccountCurrency[] = ["DKK", "USD", "EUR", "ARS"];
 
@@ -42,7 +56,11 @@ const TYPE_LABEL: Record<AccountType, string> = {
 const TYPE_OPTIONS: AccountType[] = ["checking", "savings", "investment", "broker", "cash"];
 const OWNER_OPTIONS: AccountOwner[] = ["agus", "sofi", "shared"];
 
-export function HoldingsView() {
+export interface HoldingsViewHandle {
+  openCreate: () => void;
+}
+
+export const HoldingsView = forwardRef<HoldingsViewHandle>(function HoldingsView(_props, ref) {
   const accountsQ = useAccounts();
   const finSettingsQ = useFinanzasSettings();
   const upsertFinSettings = useUpsertFinanzasSettings();
@@ -91,12 +109,35 @@ export function HoldingsView() {
 
   const [editor, setEditor] = useState<{ mode: "create" } | { mode: "edit"; id: string } | null>(null);
 
+  useImperativeHandle(ref, () => ({
+    openCreate: () => setEditor({ mode: "create" }),
+  }));
+
   const netWorth = useMemo(
     () => computeNetWorth(accounts, baseCurrency, ratesPerUsd),
     [accounts, ratesPerUsd, baseCurrency],
   );
 
   const netWorthSnapshotsQ = useNetWorthSnapshot(accounts, baseCurrency, ratesPerUsd, accountsQ.isSuccess);
+  // TEMP — fake placeholder history so the chart's look can be reviewed before
+  // enough real monthly snapshots exist (only 1/mes se guardan). Remove once
+  // the redesign is approved.
+  const chartSnapshots = (netWorthSnapshotsQ.data ?? []).length >= 2
+    ? netWorthSnapshotsQ.data!
+    : Array.from({ length: 8 }, (_, i) => {
+        const d = new Date();
+        d.setMonth(d.getMonth() - (7 - i));
+        return {
+          id: `fake-${i}`,
+          month: d.toISOString().slice(0, 7),
+          amount: netWorth * (0.82 + i * 0.028),
+          currency: baseCurrency,
+          createdAt: "",
+          updatedAt: "",
+          deletedAt: null,
+          version: 1,
+        };
+      });
 
   // Holdings se divide en dos lados: cuentas bancarias (agrupadas por titular,
   // como antes) e inversiones (broker/inversion, con su propio piechart de
@@ -124,14 +165,6 @@ export function HoldingsView() {
     [investmentAccounts, ratesPerUsd, baseCurrency],
   );
 
-  const sectionHeaderStyle = {
-    fontSize: 11,
-    textTransform: "uppercase" as const,
-    letterSpacing: ".06em",
-    color: "var(--fg-subtle)",
-    fontWeight: 600,
-  };
-
   const renderAccountRow = (a: Account) => (
     <button
       key={a.id}
@@ -139,57 +172,36 @@ export function HoldingsView() {
       style={{
         display: "grid",
         gridTemplateColumns: "minmax(0, 1fr) auto",
-        gap: 12,
+        gap: fluid(12),
         alignItems: "center",
-        padding: "10px 8px",
-        borderBottom: "1px solid var(--line)",
+        padding: `${fluid(9)} 0`,
+        borderTop: "1px solid var(--line)",
         background: "none",
         border: 0,
-        borderBottomWidth: 1,
-        borderBottomStyle: "solid",
-        borderBottomColor: "var(--line)",
+        borderTopWidth: 1,
+        borderTopStyle: "solid",
+        borderTopColor: "var(--line)",
         textAlign: "left",
         cursor: "pointer",
+        width: "100%",
       }}
       title="Editar cuenta"
     >
       <div style={{ minWidth: 0 }}>
-        <div
-          style={{
-            fontSize: 13.5,
-            fontWeight: 500,
-            color: "var(--fg)",
-            whiteSpace: "nowrap",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-          }}
-        >
+        <div style={{ fontSize: fluid(13), fontWeight: 500, color: "var(--fg)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
           {a.name}
         </div>
-        <div style={{ fontSize: 11.5, color: "var(--fg-muted)", marginTop: 1 }}>
+        <div style={{ fontSize: fluid(11), color: "var(--fg-muted)", marginTop: 1 }}>
           {TYPE_LABEL[a.type]}
           {a.institution ? ` · ${a.institution}` : ""}
         </div>
       </div>
       <div style={{ textAlign: "right" }}>
-        <div
-          style={{
-            fontSize: 13.5,
-            fontWeight: 600,
-            color: "var(--fg)",
-            fontVariantNumeric: "tabular-nums",
-          }}
-        >
+        <div style={{ fontSize: fluid(13), fontWeight: 600, color: "var(--fg)", fontVariantNumeric: "tabular-nums" }}>
           {fmtMoneyIn(a.balance, a.currency)}
         </div>
         {a.currency !== baseCurrency && (
-          <div
-            style={{
-              fontSize: 11,
-              color: "var(--fg-subtle)",
-              fontVariantNumeric: "tabular-nums",
-            }}
-          >
+          <div style={{ fontSize: fluid(10.5), color: "var(--fg-subtle)", fontVariantNumeric: "tabular-nums" }}>
             ≈ {fmtMoneyIn(toBase(a.balance, a.currency), baseCurrency)}
           </div>
         )}
@@ -198,50 +210,20 @@ export function HoldingsView() {
   );
 
   return (
-    <div className="day-view-main">
+    <div style={{ display: "flex", flexDirection: "column", gap: fluid(14), flex: 1, minHeight: 0 }}>
       {/* Header */}
-      <header
-        style={{
-          display: "flex",
-          alignItems: "flex-start",
-          gap: 14,
-          paddingBottom: 8,
-          borderBottom: "1px solid var(--line)",
-          minHeight: 84,
-          boxSizing: "border-box",
-        }}
-      >
-        <div style={{ flex: 1 }}>
-          <div
-            style={{
-              fontSize: 11,
-              textTransform: "uppercase",
-              letterSpacing: ".06em",
-              color: "var(--fg-subtle)",
-              fontWeight: 600,
-            }}
-          >
-            Patrimonio neto
-          </div>
-          <div
-            style={{
-              fontSize: 28,
-              fontWeight: 600,
-              letterSpacing: "-0.02em",
-              lineHeight: 1.1,
-              fontVariantNumeric: "tabular-nums",
-            }}
-          >
+      <div style={{ display: "flex", alignItems: "flex-start", gap: fluid(14), flexWrap: "wrap", flex: "0 0 auto" }}>
+        <div style={{ flex: 1, minWidth: fluid(260) }}>
+          <div style={sectionLabelStyle}>Patrimonio neto</div>
+          <div style={{ fontSize: fluid(28), fontWeight: 600, letterSpacing: "-0.02em", lineHeight: 1.05, fontVariantNumeric: "tabular-nums" }}>
             {fmtMoneyIn(netWorth, baseCurrency)}
           </div>
-          <div style={{ marginTop: 4, fontSize: 11.5, color: "var(--fg-muted)", display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
-            <span>
-              {accounts.length} {accounts.length === 1 ? "cuenta" : "cuentas"}
-            </span>
+          <div style={{ marginTop: fluid(3), fontSize: fluid(11), color: "var(--fg-muted)", display: "flex", alignItems: "center", flexWrap: "wrap", gap: fluid(6) }}>
+            <span>{accounts.length} {accounts.length === 1 ? "cuenta" : "cuentas"}</span>
             <span style={{ color: "var(--line-strong)" }}>·</span>
             <span>
               1 USD = {ratesPerUsd.DKK.toFixed(2)} DKK · {ratesPerUsd.EUR.toFixed(2)} EUR ·{" "}
-              {Math.round(ratesPerUsd.ARS).toLocaleString("es-AR")} ARS (oficial)
+              {Math.round(ratesPerUsd.ARS).toLocaleString("es-AR")} ARS
             </span>
             <span style={{ color: "var(--fg-subtle)" }}>
               {ratesUpdatedAt ? (isToday(ratesUpdatedAt) ? "hoy" : `actualizado ${ratesUpdatedAt.slice(0, 10)}`) : "sin cotizacion"}
@@ -258,86 +240,73 @@ export function HoldingsView() {
             {refreshError && <span style={{ color: "var(--danger)" }}>{refreshError}</span>}
           </div>
         </div>
-        <div className="control" style={{ alignSelf: "center" }}>
-          <select
-            className="input"
-            style={{ width: "auto" }}
-            value={baseCurrency}
-            onChange={(e) =>
-              upsertFinSettings.mutate({ baseCurrency: e.target.value as AccountCurrency })
-            }
-            title="Moneda base del patrimonio neto"
-          >
-            {CURRENCY_OPTIONS.map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-          </select>
-        </div>
-        <button className="btn primary" style={{ alignSelf: "center" }} onClick={() => setEditor({ mode: "create" })}>
-          <IPlus size={12} /> Nueva cuenta
-        </button>
-      </header>
+        <select
+          className="input"
+          style={{ border: "1px solid var(--line)", background: "var(--bg-elev)", borderRadius: fluid(6), outline: 0, alignSelf: "center", width: "auto", fontSize: fluid(12), padding: `${fluid(5)} ${fluid(20)} ${fluid(5)} ${fluid(8)}` }}
+          value={baseCurrency}
+          onChange={(e) => upsertFinSettings.mutate({ baseCurrency: e.target.value as AccountCurrency })}
+          title="Moneda base del patrimonio neto"
+        >
+          {CURRENCY_OPTIONS.map((c) => (
+            <option key={c} value={c}>{c}</option>
+          ))}
+        </select>
+      </div>
 
-      <div style={{ marginTop: 12 }}>
-        <NetWorthChart snapshots={netWorthSnapshotsQ.data ?? []} baseCurrency={baseCurrency} />
+      {/* Net worth chart card */}
+      <div style={{ background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: fluid(12), padding: `${fluid(14)} ${fluid(16)}`, boxShadow: "var(--shadow-sm)", flex: "0 0 auto" }}>
+        <NetWorthChart snapshots={chartSnapshots} baseCurrency={baseCurrency} />
       </div>
 
       {/* Body */}
       {accounts.length === 0 ? (
-        <div
-          style={{
-            marginTop: 24,
-            padding: "28px 16px",
-            textAlign: "center",
-            fontSize: 13,
-            color: "var(--fg-subtle)",
-            border: "1px dashed var(--line)",
-            borderRadius: 10,
-          }}
-        >
+        <div style={{ padding: `${fluid(28)} ${fluid(16)}`, textAlign: "center", fontSize: fluid(13), color: "var(--fg-subtle)", border: "1px dashed var(--line)", borderRadius: fluid(10) }}>
           Todavia no hay cuentas. Crea la primera con "Nueva cuenta".
         </div>
       ) : (
-        <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24, flex: 1, minHeight: 0, overflowY: "auto" }}>
-          {/* IZQUIERDA — cuentas bancarias, agrupadas por titular */}
-          <div>
-            <div style={sectionHeaderStyle}>Cuentas</div>
-            {bankAccounts.length === 0 ? (
-              <div style={{ fontSize: 12.5, color: "var(--fg-subtle)", padding: "12px 2px" }}>
-                Sin cuentas bancarias todavia.
-              </div>
-            ) : (
-              <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 18 }}>
-                {grouped.map((group) => (
-                  <section key={group.owner}>
-                    <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 6 }}>
-                      <div style={sectionHeaderStyle}>{OWNER_LABEL[group.owner]}</div>
-                      <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums" }}>
-                        {fmtMoneyIn(group.subtotal, baseCurrency)}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: fluid(20), flex: 1, minHeight: 0 }}>
+          {/* IZQUIERDA — cuentas bancarias, agrupadas por titular. El titulo
+              queda fijo — solo el contenido de abajo scrollea. */}
+          <div style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
+            <div style={{ ...sectionLabelStyle, marginBottom: fluid(8), flexShrink: 0 }}>Cuentas</div>
+            <div className="fz-col" style={{ flex: 1, minHeight: 0, overflowY: "auto", paddingRight: fluid(4) }}>
+              {bankAccounts.length === 0 ? (
+                <div style={{ fontSize: fluid(12.5), color: "var(--fg-subtle)", padding: `${fluid(12)} 2px` }}>
+                  Sin cuentas bancarias todavia.
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: fluid(14) }}>
+                  {grouped.map((group) => (
+                    <div key={group.owner} style={{ background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: fluid(12), padding: `0 ${fluid(14)}`, boxShadow: "var(--shadow-sm)" }}>
+                      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", padding: `${fluid(11)} 0 ${fluid(5)}` }}>
+                        <div style={sectionLabelStyle}>{OWNER_LABEL[group.owner]}</div>
+                        <div style={{ fontSize: fluid(12), fontWeight: 600, color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums" }}>
+                          {fmtMoneyIn(group.subtotal, baseCurrency)}
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", paddingBottom: fluid(4) }}>
+                        {group.accounts.map((a) => renderAccountRow(a))}
                       </div>
                     </div>
-                    <div style={{ display: "flex", flexDirection: "column" }}>
-                      {group.accounts.map((a) => renderAccountRow(a))}
-                    </div>
-                  </section>
-                ))}
-              </div>
-            )}
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
 
           {/* DERECHA — inversiones: piechart de composicion + lista */}
-          <div>
-            <div style={sectionHeaderStyle}>Inversiones</div>
-            <div style={{ marginTop: 8 }}>
-              <PortfolioPie items={portfolioItems} currency={baseCurrency} />
-            </div>
-            {investmentAccounts.length > 0 && (
-              <div style={{ marginTop: 12, display: "flex", flexDirection: "column" }}>
-                {investmentAccounts.map((a) => renderAccountRow(a))}
+          <div style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
+            <div style={{ ...sectionLabelStyle, marginBottom: fluid(8), flexShrink: 0 }}>Inversiones</div>
+            <div className="fz-col" style={{ flex: 1, minHeight: 0, overflowY: "auto", paddingRight: fluid(4) }}>
+              <div style={{ background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: fluid(12), padding: fluid(16), boxShadow: "var(--shadow-sm)" }}>
+                <PortfolioPie items={portfolioItems} currency={baseCurrency} />
+                {investmentAccounts.length > 0 && (
+                  <div style={{ marginTop: fluid(8), display: "flex", flexDirection: "column" }}>
+                    {investmentAccounts.map((a) => renderAccountRow(a))}
+                  </div>
+                )}
               </div>
-            )}
+            </div>
           </div>
         </div>
       )}
@@ -351,7 +320,7 @@ export function HoldingsView() {
       )}
     </div>
   );
-}
+});
 
 // ── Account editor modal (create / edit) ──────────────────────────────────────
 
@@ -577,7 +546,7 @@ function AccountEditor({
 
   return (
     <div className="modal-backdrop" onMouseDown={onBackdropMouseDown}>
-      <div className="modal" style={{ width: 480 }} onMouseDown={(e) => e.stopPropagation()}>
+      <div className="modal" style={{ width: "calc(var(--home-s, 1) * 480px)" }} onMouseDown={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <span style={{ flex: 1, fontSize: 15, fontWeight: 600, letterSpacing: "-0.01em" }}>
             {mode === "edit" ? "Editar cuenta" : "Nueva cuenta"}

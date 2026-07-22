@@ -88,6 +88,19 @@
   height: 0;
   display: none;
 }
+/* Thin scrollbar for the Finanzas view's internally-scrolling columns/cards —
+   matches the Finanzas design handoff (`.fz-col`), scaled with the same --s
+   frame factor as the rest of that view's chrome. */
+.fz-col::-webkit-scrollbar {
+  width: calc(var(--s, 1) * 7px);
+}
+.fz-col::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 8px;
+}
+.fz-col::-webkit-scrollbar-track {
+  background: transparent;
+}
 .sidebar-head {
   padding: 14px 14px 10px;
   display: flex; align-items: center; gap: 8px;
@@ -239,12 +252,12 @@
 .title-block .sub { color: var(--fg-subtle); font-size: calc(var(--home-s, 1) * 12.5px); font-variant-numeric: tabular-nums; }
 
 .btn {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 5px 10px;
+  display: inline-flex; align-items: center; gap: calc(var(--home-s, 1) * 6px);
+  padding: calc(var(--home-s, 1) * 5px) calc(var(--home-s, 1) * 10px);
   background: var(--bg-elev);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  font-size: 12.5px; font-weight: 500;
+  font-size: calc(var(--home-s, 1) * 12.5px); font-weight: 500;
   color: var(--fg);
   box-shadow: var(--shadow-sm);
   white-space: nowrap;
@@ -275,7 +288,7 @@
 .seg button:hover:not(.active) { background: var(--bg-hover); color: var(--fg); }
 
 .icon-btn {
-  width: 28px; height: 28px; border-radius: 6px;
+  width: calc(var(--home-s, 1) * 28px); height: calc(var(--home-s, 1) * 28px); border-radius: calc(var(--home-s, 1) * 6px);
   display: grid; place-items: center;
   color: var(--fg-muted);
   border: 1px solid transparent;
@@ -725,12 +738,16 @@
   overflow-y: auto;
 }
 @keyframes fadein { from { opacity: 0 } to { opacity: 1 } }
+/* Modals render outside `.app` (siblings, not descendants — see App.tsx), but
+   still read `--home-s` from the wrapping div one level up, so they scale up
+   to match Home/Café/Finanzas chrome when opened from one of those views.
+   `--home-s` defaults to 1 everywhere else, so this is a no-op elsewhere. */
 .modal {
-  width: 540px; max-width: 100%;
+  width: calc(var(--home-s, 1) * 540px); max-width: 100%;
   max-height: calc(100vh - 48px);
   background: var(--bg-elev);
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: calc(var(--home-s, 1) * 12px);
   box-shadow: var(--shadow-lg);
   display: flex; flex-direction: column;
   overflow: hidden;
@@ -741,12 +758,12 @@
   to { transform: none; opacity: 1 }
 }
 .modal-head {
-  display: flex; align-items: center; gap: 10px;
-  padding: 12px 14px;
+  display: flex; align-items: center; gap: calc(var(--home-s, 1) * 10px);
+  padding: calc(var(--home-s, 1) * 12px) calc(var(--home-s, 1) * 14px);
   border-bottom: 1px solid var(--line);
 }
 .modal-head .check {
-  width: 18px; height: 18px; border-radius: 5px;
+  width: calc(var(--home-s, 1) * 18px); height: calc(var(--home-s, 1) * 18px); border-radius: calc(var(--home-s, 1) * 5px);
   border: 1.5px solid var(--line-strong);
   display: grid; place-items: center;
   flex: 0 0 auto;
@@ -756,39 +773,39 @@
 .modal-head .title-input {
   flex: 1; min-width: 0;
   border: 0; outline: 0; background: transparent;
-  font-size: 16px; font-weight: 600; letter-spacing: -0.01em;
+  font-size: calc(var(--home-s, 1) * 16px); font-weight: 600; letter-spacing: -0.01em;
 }
 .modal-head.done .title-input { text-decoration: line-through; color: var(--fg-subtle); }
 .modal-body {
-  padding: 14px;
-  display: flex; flex-direction: column; gap: 14px;
+  padding: calc(var(--home-s, 1) * 14px);
+  display: flex; flex-direction: column; gap: calc(var(--home-s, 1) * 14px);
   overflow: auto;
 }
 .field {
-  display: grid; grid-template-columns: 96px 1fr; gap: 8px; align-items: start;
+  display: grid; grid-template-columns: calc(var(--home-s, 1) * 96px) 1fr; gap: calc(var(--home-s, 1) * 8px); align-items: start;
 }
 .field label {
-  font-size: 11.5px; color: var(--fg-muted); padding-top: 5px;
+  font-size: calc(var(--home-s, 1) * 11.5px); color: var(--fg-muted); padding-top: calc(var(--home-s, 1) * 5px);
   text-transform: uppercase; letter-spacing: 0.04em; font-weight: 500;
 }
-.field .control { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.field .control { display: flex; flex-wrap: wrap; gap: calc(var(--home-s, 1) * 6px); align-items: center; }
 .field .input {
   width: 100%;
   border: 1px solid var(--line);
   background: var(--bg-elev);
-  border-radius: 6px;
-  padding: 6px 8px;
-  font-size: 13px;
+  border-radius: calc(var(--home-s, 1) * 6px);
+  padding: calc(var(--home-s, 1) * 6px) calc(var(--home-s, 1) * 8px);
+  font-size: calc(var(--home-s, 1) * 13px);
   outline: 0;
 }
 .field .input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-.field textarea.input { resize: vertical; min-height: 60px; font-family: inherit; }
+.field textarea.input { resize: vertical; min-height: calc(var(--home-s, 1) * 60px); font-family: inherit; }
 .pill-select {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 4px 9px;
+  display: inline-flex; align-items: center; gap: calc(var(--home-s, 1) * 6px);
+  padding: calc(var(--home-s, 1) * 4px) calc(var(--home-s, 1) * 9px);
   border: 1px solid var(--line); border-radius: 999px;
   background: var(--bg-elev);
-  font-size: 12px;
+  font-size: calc(var(--home-s, 1) * 12px);
   cursor: pointer;
 }
 .pill-select:hover { background: var(--bg-hover); }
@@ -825,12 +842,12 @@
 
 .modal-foot {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 14px;
+  padding: calc(var(--home-s, 1) * 10px) calc(var(--home-s, 1) * 14px);
   border-top: 1px solid var(--line);
   background: var(--bg-sunken);
-  font-size: 11.5px; color: var(--fg-subtle);
+  font-size: calc(var(--home-s, 1) * 11.5px); color: var(--fg-subtle);
 }
-.modal-foot .actions { display: flex; gap: 6px; }
+.modal-foot .actions { display: flex; gap: calc(var(--home-s, 1) * 6px); }
 .modal-foot .danger { color: var(--danger); }
 .modal-foot .danger:hover { background: oklch(0.95 0.04 25); }
 

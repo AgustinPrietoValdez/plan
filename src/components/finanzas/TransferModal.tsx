@@ -106,7 +106,7 @@ export function TransferModal({
 
   return (
     <div className="modal-backdrop" onMouseDown={onBackdropMouseDown}>
-      <div className="modal" style={{ width: 460 }} onMouseDown={(e) => e.stopPropagation()}>
+      <div className="modal" style={{ width: "calc(var(--home-s, 1) * 460px)" }} onMouseDown={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <span style={{ flex: 1, fontSize: 15, fontWeight: 600, letterSpacing: "-0.01em" }}>
             Nueva transferencia

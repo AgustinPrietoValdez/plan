@@ -66,7 +66,7 @@ export function CompletionModal({ task, onClose }: Props) {
 
   return (
     <div className="modal-backdrop" onMouseDown={onBackdropMouseDown}>
-      <div className="modal" style={{ width: 460 }} onMouseDown={(e) => e.stopPropagation()}>
+      <div className="modal" style={{ width: "calc(var(--home-s, 1) * 460px)" }} onMouseDown={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <div
             className="check"

@@ -79,10 +79,10 @@ export const CAFE_TABS: { id: CafeTab; label: string; icon: string }[] = [
 // propio piechart de portfolio) — no queda como tab propio.
 export type FinanzasTab = "presupuesto" | "ahorros" | "holdings";
 
-export const FINANZAS_TABS: { id: FinanzasTab; label: string }[] = [
-  { id: "presupuesto", label: "Presupuesto" },
-  { id: "ahorros", label: "Ahorros" },
-  { id: "holdings", label: "Holdings" },
+export const FINANZAS_TABS: { id: FinanzasTab; label: string; icon: string }[] = [
+  { id: "presupuesto", label: "Presupuesto", icon: "📊" },
+  { id: "ahorros", label: "Ahorros", icon: "🎯" },
+  { id: "holdings", label: "Holdings", icon: "🏦" },
 ];
 
 export type EditorState =

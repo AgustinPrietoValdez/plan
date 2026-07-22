@@ -8,7 +8,6 @@ import {
   useCategories,
   useProjects,
   useTasks,
-  useExpenseCategories,
   useIngredientCategories,
 } from "../lib/queries";
 import { IBolt, ICal, IList, IPlus, ISearch } from "./icons";
@@ -62,7 +61,7 @@ export function Sidebar() {
   return (
     <>
       <Rail activeArea={activeArea} view={view} setView={setView} />
-      {activeArea !== "home" && activeArea !== "cafe" && <SidePanel activeArea={activeArea} />}
+      {activeArea !== "home" && activeArea !== "cafe" && activeArea !== "presupuesto" && <SidePanel activeArea={activeArea} />}
     </>
   );
 }
@@ -71,7 +70,7 @@ export function Sidebar() {
 
 function Rail({ activeArea, view, setView }: { activeArea: Area | null; view: View; setView: (v: View) => void }) {
   const frameScale = useFrameScale();
-  const s = view === "home" || view === "cafe" ? frameScale : 1;
+  const s = view === "home" || view === "cafe" || view === "budget" ? frameScale : 1;
   const px = (n: number) => Math.round(n * s);
   return (
     <aside className="rail">
@@ -165,12 +164,10 @@ function SidePanel({ activeArea }: { activeArea: Area | null }) {
   const tasksQ = useTasks();
   const projectsQ = useProjects();
   const categoriesQ = useCategories();
-  const expenseCategoriesQ = useExpenseCategories();
   const ingredientCategoriesQ = useIngredientCategories();
   const tasks = tasksQ.data ?? [];
   const projects = projectsQ.data ?? [];
   const categories = categoriesQ.data ?? [];
-  const expenseCategories = expenseCategoriesQ.data ?? [];
   const ingredientCategories = ingredientCategoriesQ.data ?? [];
 
   const {
@@ -276,24 +273,6 @@ function SidePanel({ activeArea }: { activeArea: Area | null }) {
                   </span>
                 </div>
               )}
-            </div>
-          </>
-        )}
-
-        {activeArea === "presupuesto" && (
-          <>
-            <div className="sidebar-section" style={{ paddingTop: 8 }}>
-              <div className="sidebar-section-title">Categorías de gasto</div>
-            </div>
-            <div className="nav-list" style={{ paddingBottom: 12 }}>
-              {expenseCategories
-                .filter((c) => !c.archived)
-                .map((c) => (
-                  <div key={c.id} className="nav-item" style={{ cursor: "default" }}>
-                    <span className="dot" style={{ background: colorsForHue(c.hue).bg }} />
-                    <span style={{ flex: 1 }}>{c.name}</span>
-                  </div>
-                ))}
             </div>
           </>
         )}

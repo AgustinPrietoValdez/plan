@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { colorsForHue } from "../lib/categoryColor";
 import { useSession } from "../lib/auth";
-import { fromYmd, shiftMonth, todayYmd } from "../lib/date";
+import { shiftMonth } from "../lib/date";
 import { CURRENCY, convertViaUsd, DEFAULT_RATES_PER_USD, fmtMoney, fmtMoneyIn, parseMoney } from "../lib/money";
 import { formatRule } from "../lib/recurrence";
 import { useMaterializeRecurringExpenses } from "../lib/materializeRecurringExpenses";
+import { useFrameScale } from "../lib/uiScale";
 import {
   useAccounts,
   useAccountTransfers,
@@ -39,20 +40,43 @@ import { KIND_LABEL, TransferModal } from "./finanzas/TransferModal";
 import { ICheck, IChevD, IChevL, IChevR, IChevU, IPlus, IRecurring, ITrash } from "./icons";
 import { SpendingPie } from "./SpendingPie";
 
+// Mismo frame de diseño 1280×720 (2× a 2560×1440) que Home/Café/Finanzas — `--s`
+// lo pone FinanzasView en la raíz y cascadea hasta acá.
+function fluid(base: number): string {
+  return `calc(var(--s, 2) * ${base}px)`;
+}
+
 const MONTHS = [
-  "January", "February", "March", "April", "May", "June",
-  "July", "August", "September", "October", "November", "December",
+  "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+  "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
 ];
 
-function ymToLabel(yyyymm: string): string {
+function ymToParts(yyyymm: string): { month: string; year: string } {
   const [y, m] = yyyymm.split("-").map(Number);
-  return `${MONTHS[m - 1]} ${y}`;
+  return { month: MONTHS[m - 1], year: String(y) };
 }
 
 function expenseInMonth(e: Expense, yyyymm: string): boolean {
   return e.spentOn.slice(0, 7) === yyyymm;
 }
 
+const sectionLabelStyle = {
+  fontSize: fluid(11),
+  textTransform: "uppercase" as const,
+  letterSpacing: ".05em",
+  fontWeight: 600,
+  color: "var(--fg-muted)",
+};
+
+// `className="input"` alone has no CSS — it's only styled when nested inside a
+// `.field` wrapper (see `.field .input` in components.css). These small inline
+// inputs live directly in cards, not in `.field`s, so they need their own chrome.
+const fieldChrome = {
+  border: "1px solid var(--line)",
+  background: "var(--bg-elev)",
+  borderRadius: fluid(6),
+  outline: 0,
+};
 
 // ── Inline expense row (collapsible — read-only info, edit via modal) ─────────
 function InlineExpenseRow({
@@ -74,63 +98,64 @@ function InlineExpenseRow({
 }) {
   const cat = expense.categoryId ? categories.find((c) => c.id === expense.categoryId) ?? null : null;
   const colors = cat ? colorsForHue(cat.hue) : { bg: "var(--bg-sunken)", fg: "var(--fg-muted)" };
-  const date = fromYmd(expense.spentOn);
+  const [, m, d] = expense.spentOn.split("-");
   const displayName = expense.name || expense.note || cat?.name || "Untitled";
   const expLineItems = lineItems.filter((li) => li.expenseId === expense.id && !li.deletedAt);
   const liTotal = expLineItems.reduce((s, li) => s + li.quantity * li.unitPrice, 0);
 
   return (
-    <div style={{ background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: 8, overflow: "hidden" }}>
-      {/* Header */}
+    <div style={{ background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: fluid(8), overflow: "hidden" }}>
+      {/* Header — same height for every row (single line, no subtitle) */}
       <div
         onClick={onToggle}
-        style={{ display: "grid", gridTemplateColumns: "44px 8px 1fr auto auto", gap: 10, alignItems: "center", padding: "8px 10px", cursor: "pointer" }}
+        style={{
+          display: "grid",
+          gridTemplateColumns: `${fluid(46)} ${fluid(10)} 1fr auto ${fluid(14)}`,
+          gap: fluid(10), alignItems: "center", padding: `${fluid(9)} ${fluid(12)}`, cursor: "pointer",
+        }}
       >
-        <span style={{ fontSize: 10.5, color: "var(--fg-subtle)", textTransform: "uppercase", letterSpacing: ".05em", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
-          {date.toLocaleDateString("da-DK", { day: "2-digit", month: "short" })}
+        <span style={{ fontSize: fluid(10), color: "var(--fg-subtle)", textTransform: "uppercase", letterSpacing: ".05em", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
+          {d} {MONTHS[Number(m) - 1].slice(0, 3).toLowerCase()}
         </span>
-        <span style={{ width: 8, height: 8, borderRadius: 2, background: colors.bg }} />
-        <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
-          <div style={{ fontSize: 13, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{displayName}</span>
-            {expense.recurrence && <IRecurring size={11} stroke={2} />}
-          </div>
-          {expLineItems.length > 0 && (
-            <span style={{ fontSize: 10, color: "var(--fg-subtle)" }}>
-              {expLineItems.length} item{expLineItems.length > 1 ? "s" : ""} · {fmtMoney(liTotal)}
-            </span>
-          )}
+        <span style={{ width: fluid(10), height: fluid(10), borderRadius: 3, background: colors.bg }} />
+        <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: fluid(6) }}>
+          <span style={{ fontSize: fluid(12.5), fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {displayName}
+          </span>
+          {expense.recurrence && <IRecurring size={11} stroke={2} />}
         </div>
-        <span style={{ fontSize: 13, fontWeight: 600, fontVariantNumeric: "tabular-nums", letterSpacing: "-0.01em" }}>
+        <span style={{ fontSize: fluid(12.5), fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
           {fmtMoneyIn(expense.amount, expense.currency)}
         </span>
-        {expanded ? <IChevU size={12} /> : <IChevD size={12} />}
+        <span style={{ color: "var(--fg-subtle)", display: "flex", justifyContent: "center" }}>
+          {expanded ? <IChevU size={12} /> : <IChevD size={12} />}
+        </span>
       </div>
 
       {/* Expanded — read-only */}
       {expanded && (
         <div
-          style={{ borderTop: "1px solid var(--line)", padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8 }}
+          style={{ borderTop: "1px solid var(--line)", padding: `${fluid(10)} ${fluid(12)}`, display: "flex", flexDirection: "column", gap: fluid(8) }}
           onClick={(e) => e.stopPropagation()}
         >
           {/* Note */}
           <div>
-            <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: ".05em", fontWeight: 600, color: "var(--fg-subtle)", marginBottom: 3 }}>Note</div>
+            <div style={{ fontSize: fluid(10), textTransform: "uppercase", letterSpacing: ".05em", fontWeight: 600, color: "var(--fg-subtle)", marginBottom: 3 }}>Note</div>
             {expense.note
-              ? <p style={{ margin: 0, fontSize: 12, color: "var(--fg-muted)", lineHeight: 1.4 }}>{expense.note}</p>
-              : <p style={{ margin: 0, fontSize: 12, color: "var(--fg-subtle)", fontStyle: "italic" }}>No note</p>
+              ? <p style={{ margin: 0, fontSize: fluid(12), color: "var(--fg-muted)", lineHeight: 1.4 }}>{expense.note}</p>
+              : <p style={{ margin: 0, fontSize: fluid(12), color: "var(--fg-subtle)", fontStyle: "italic" }}>No note</p>
             }
           </div>
 
           {/* Items */}
           <div>
-            <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: ".05em", fontWeight: 600, color: "var(--fg-subtle)", marginBottom: 3 }}>
+            <div style={{ fontSize: fluid(10), textTransform: "uppercase", letterSpacing: ".05em", fontWeight: 600, color: "var(--fg-subtle)", marginBottom: 3 }}>
               Items{expLineItems.length > 0 && ` · ${fmtMoney(liTotal)}`}
             </div>
             {expLineItems.length === 0
-              ? <p style={{ margin: 0, fontSize: 12, color: "var(--fg-subtle)", fontStyle: "italic" }}>No items</p>
+              ? <p style={{ margin: 0, fontSize: fluid(12), color: "var(--fg-subtle)", fontStyle: "italic" }}>No items</p>
               : expLineItems.map((li) => (
-                  <div key={li.id} style={{ display: "grid", gridTemplateColumns: "1fr auto auto auto", gap: 8, alignItems: "center", fontSize: 12, color: "var(--fg-muted)", padding: "2px 0" }}>
+                  <div key={li.id} style={{ display: "grid", gridTemplateColumns: "1fr auto auto auto", gap: fluid(8), alignItems: "center", fontSize: fluid(12), color: "var(--fg-muted)", padding: "2px 0" }}>
                     <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{li.name}</span>
                     <span style={{ fontVariantNumeric: "tabular-nums" }}>{li.quantity}×</span>
                     <span style={{ fontVariantNumeric: "tabular-nums" }}>{fmtMoney(li.unitPrice)}</span>
@@ -141,9 +166,9 @@ function InlineExpenseRow({
           </div>
 
           {/* Actions */}
-          <div style={{ display: "flex", gap: 6, paddingTop: 4, borderTop: "1px solid var(--line)" }}>
-            <button className="btn ghost" style={{ padding: "4px 10px", fontSize: 11 }} onClick={onEdit}>Edit</button>
-            <button className="btn ghost danger" style={{ padding: "4px 10px", fontSize: 11, marginLeft: "auto" }} onClick={onDelete}>Delete</button>
+          <div style={{ display: "flex", gap: fluid(6), paddingTop: fluid(4), borderTop: "1px solid var(--line)" }}>
+            <button className="btn ghost" style={{ padding: `${fluid(4)} ${fluid(10)}`, fontSize: fluid(11) }} onClick={onEdit}>Edit</button>
+            <button className="btn ghost danger" style={{ padding: `${fluid(4)} ${fluid(10)}`, fontSize: fluid(11), marginLeft: "auto" }} onClick={onDelete}>Delete</button>
           </div>
         </div>
       )}
@@ -164,21 +189,10 @@ function RecurringSection({
   onPause: (e: Expense) => void;
 }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <div
-        style={{
-          fontSize: 11,
-          textTransform: "uppercase",
-          letterSpacing: ".05em",
-          fontWeight: 600,
-          color: "var(--fg-muted)",
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-          marginBottom: 4,
-        }}
-      >
-        <IRecurring size={11} stroke={2} /> Recurring · {expenses.length}
+    <div style={{ display: "flex", flexDirection: "column", gap: fluid(4) }}>
+      {/* Sticky, igual que el titulo de Gastos arriba — al llegar acá lo reemplaza. */}
+      <div style={{ ...sectionLabelStyle, display: "flex", alignItems: "center", gap: fluid(6), padding: `${fluid(2)} 0`, position: "sticky", top: 0, zIndex: 2, background: "var(--bg)" }}>
+        <IRecurring size={11} stroke={2} /> Recurrentes · {expenses.length}
       </div>
       {expenses.map((e) => {
         const c = e.categoryId ? categories.find((c) => c.id === e.categoryId) ?? null : null;
@@ -189,35 +203,35 @@ function RecurringSection({
             onClick={() => onEdit(e)}
             style={{
               display: "grid",
-              gridTemplateColumns: "10px 1fr auto auto",
-              gap: 10,
+              gridTemplateColumns: `${fluid(10)} 1fr auto auto`,
+              gap: fluid(10),
               alignItems: "center",
-              padding: "8px 12px",
+              padding: `${fluid(9)} ${fluid(12)}`,
               background: "var(--bg-elev)",
               border: "1px solid var(--line)",
-              borderRadius: 8,
+              borderRadius: fluid(8),
               cursor: "pointer",
             }}
           >
-            <span style={{ width: 10, height: 10, borderRadius: 3, background: cols.bg }} />
+            <span style={{ width: fluid(10), height: fluid(10), borderRadius: 3, background: cols.bg }} />
             <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              <div style={{ fontSize: fluid(12.5), fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                 {e.name || e.note || c?.name || "Untitled"}
               </div>
-              <div style={{ fontSize: 11.5, color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums" }}>
-                {e.recurrence ? formatRule(e.recurrence) : ""} · next {e.spentOn}
+              <div style={{ fontSize: fluid(11), color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums" }}>
+                {e.recurrence ? formatRule(e.recurrence) : ""} · próximo {e.spentOn}
               </div>
             </div>
-            <span style={{ fontSize: 13, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
+            <span style={{ fontSize: fluid(12.5), fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
               {fmtMoneyIn(e.amount, e.currency)}
             </span>
             <button
               className="btn ghost"
-              style={{ padding: "4px 8px", fontSize: 11.5 }}
+              style={{ padding: `${fluid(4)} ${fluid(8)}`, fontSize: fluid(11) }}
               onClick={(ev) => { ev.stopPropagation(); onPause(e); }}
-              title="Stop generating future instances"
+              title="Dejar de generar futuras instancias"
             >
-              Pause
+              Pausar
             </button>
           </div>
         );
@@ -226,7 +240,6 @@ function RecurringSection({
   );
 }
 
-// ── Income input ──────────────────────────────────────────────────────────────
 // ── Per-account income row ────────────────────────────────────────────────────
 function AccountIncomeRow({
   account,
@@ -249,8 +262,8 @@ function AccountIncomeRow({
   };
 
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      <span style={{ flex: 1, fontSize: 12.5, color: "var(--fg-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: fluid(8) }}>
+      <span style={{ flex: 1, fontSize: fluid(12), color: "var(--fg-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
         {account.name}
       </span>
       <input
@@ -262,15 +275,15 @@ function AccountIncomeRow({
         onBlur={commit}
         onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
         className="input"
-        style={{ width: 100, fontVariantNumeric: "tabular-nums", textAlign: "right", padding: "4px 8px", fontSize: 12.5 }}
+        style={{ ...fieldChrome, width: fluid(96), fontVariantNumeric: "tabular-nums", textAlign: "right", padding: `${fluid(5)} ${fluid(8)}`, fontSize: fluid(12) }}
       />
-      <span style={{ fontSize: 11, color: "var(--fg-subtle)", width: 28 }}>{account.currency}</span>
+      <span style={{ fontSize: fluid(10.5), color: "var(--fg-subtle)", width: fluid(26) }}>{account.currency}</span>
     </div>
   );
 }
 
-// ── Income-by-account section ─────────────────────────────────────────────────
-function IncomeByAccountSection({
+// ── Income-by-account card ────────────────────────────────────────────────────
+function IncomeByAccountCard({
   accounts,
   incomeByAccountId,
   onSave,
@@ -281,11 +294,9 @@ function IncomeByAccountSection({
 }) {
   if (accounts.length === 0) return null;
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".05em", fontWeight: 600, color: "var(--fg-muted)" }}>
-        Ingresos por cuenta
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+    <div style={{ background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: fluid(12), padding: fluid(14), boxShadow: "var(--shadow-sm)", display: "flex", flexDirection: "column", gap: fluid(8), flex: "0 0 auto" }}>
+      <div style={sectionLabelStyle}>Ingresos por cuenta</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: fluid(6) }}>
         {accounts.map((a) => (
           <AccountIncomeRow
             key={a.id}
@@ -299,7 +310,7 @@ function IncomeByAccountSection({
   );
 }
 
-// ── Savings % editor (only active goals — el resto del ciclo de vida vive en Ahorros) ──
+// ── Savings % editor row (only active goals — el resto del ciclo de vida vive en Ahorros) ──
 function GoalMonthRow({
   goal,
   overflowPct,
@@ -327,12 +338,16 @@ function GoalMonthRow({
   };
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 122px 70px", gap: 8, alignItems: "center", padding: "6px 8px", background: "var(--bg-elev)", border: goal.priority ? "1px solid var(--danger)" : "1px solid var(--line)", borderRadius: 8 }}>
-      <span style={{ fontSize: 12.5, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: goal.priority ? "var(--danger)" : "var(--fg)" }}>
+    <div style={{
+      display: "grid", gridTemplateColumns: "minmax(0,1fr) auto auto", gap: fluid(8), alignItems: "center",
+      padding: `${fluid(6)} ${fluid(8)}`, background: "var(--bg-sunken)",
+      border: goal.priority ? "1px solid var(--danger)" : "1px solid var(--line)", borderRadius: fluid(8),
+    }}>
+      <span style={{ fontSize: fluid(12), fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: goal.priority ? "var(--danger)" : "var(--fg)" }}>
         {goal.name}
-        {goal.isOverflowTarget && <span style={{ marginLeft: 6, fontSize: 9, color: "var(--ok)", textTransform: "uppercase" }}>overflow</span>}
+        {goal.isOverflowTarget && <span style={{ marginLeft: 6, fontSize: fluid(9), color: "var(--ok)", textTransform: "uppercase" }}>overflow</span>}
       </span>
-      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: fluid(3) }}>
         <input
           type="text"
           inputMode="numeric"
@@ -341,14 +356,14 @@ function GoalMonthRow({
           onBlur={commitPct}
           onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
           className="input"
-          style={{ width: 40, textAlign: "right", padding: "3px 5px", fontSize: 11.5 }}
+          style={{ ...fieldChrome, width: fluid(38), textAlign: "right", padding: `${fluid(3)} ${fluid(5)}`, fontSize: fluid(11) }}
         />
-        <span style={{ fontSize: 10.5, color: "var(--fg-muted)" }}>%</span>
-        <button className="btn ghost" style={{ width: 58, padding: "1px 0", fontSize: 9.5, textAlign: "center" }} onClick={onToggleOverflow}>
+        <span style={{ fontSize: fluid(10), color: "var(--fg-muted)" }}>%</span>
+        <button className="btn ghost" style={{ width: fluid(58), padding: "1px 0", fontSize: fluid(9.5), textAlign: "center" }} onClick={onToggleOverflow}>
           {goal.isOverflowTarget ? "unset" : "overflow"}
         </button>
       </div>
-      <span style={{ fontSize: 11.5, fontWeight: 600, fontVariantNumeric: "tabular-nums", color: "var(--fg-muted)", textAlign: "right" }}>
+      <span style={{ fontSize: fluid(11), fontWeight: 600, fontVariantNumeric: "tabular-nums", color: "var(--fg-muted)", textAlign: "right", minWidth: fluid(52) }}>
         {fmtMoney(allocated, { compact: true })}
       </span>
     </div>
@@ -371,21 +386,24 @@ function PendingTransferRow({
   onTransfer: () => void;
 }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: 8 }}>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 12.5, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+    <div style={{
+      display: "grid", gridTemplateColumns: "1fr auto", gap: fluid(10), alignItems: "center",
+      padding: `${fluid(9)} ${fluid(11)}`, background: "var(--bg-sunken)", border: "1px solid var(--line)", borderRadius: fluid(8),
+    }}>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: fluid(12), fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {accountName}
         </div>
-        <div style={{ fontSize: 10.5, color: "var(--fg-subtle)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        <div style={{ fontSize: fluid(10), color: "var(--fg-subtle)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {goalNames.join(", ")}
         </div>
       </div>
       {done ? (
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--ok)", fontWeight: 600, whiteSpace: "nowrap" }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: fluid(4), fontSize: fluid(11), color: "var(--ok)", fontWeight: 600, whiteSpace: "nowrap" }}>
           <ICheck size={12} stroke={2.4} /> {fmtMoney(amount, { compact: true })}
         </span>
       ) : (
-        <button className="btn ghost" style={{ fontSize: 11, whiteSpace: "nowrap" }} onClick={onTransfer}>
+        <button className="btn ghost" style={{ fontSize: fluid(11), whiteSpace: "nowrap" }} onClick={onTransfer}>
           Transferir {fmtMoney(amount, { compact: true })}
         </button>
       )}
@@ -393,69 +411,80 @@ function PendingTransferRow({
   );
 }
 
-// ── Transfers section (recent movements for the month) ────────────────────────
-function TransfersSection({
+// ── Transfers card (recent real movements, "+ Nueva" pinned header) ───────────
+function TransfersCard({
   month,
   transfers,
   accounts,
+  pendingByAccount,
   onAdd,
+  onTransferPending,
   onDelete,
 }: {
   month: string;
   transfers: AccountTransfer[];
   accounts: Account[];
+  pendingByAccount: { account: Account; goals: { goal: SavingsGoal; target: number }[]; contributed: number; totalTarget: number }[];
   onAdd: () => void;
+  onTransferPending: (p: { account: Account; goals: { goal: SavingsGoal; target: number }[]; totalTarget: number }) => void;
   onDelete: (id: string) => void;
 }) {
   const nameOf = (id: string | null) => (id ? accounts.find((a) => a.id === id)?.name ?? "—" : "—");
   const monthTransfers = transfers.filter((t) => t.transferredOn.slice(0, 7) === month && !t.deletedAt);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".05em", fontWeight: 600, color: "var(--fg-muted)" }}>
-          Transferencias
-        </span>
-        <button className="btn ghost" style={{ marginLeft: "auto", padding: "2px 8px", fontSize: 11 }} onClick={onAdd}>
+    <div style={{
+      background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: fluid(12), padding: fluid(14), boxShadow: "var(--shadow-sm)",
+      display: "flex", flexDirection: "column", gap: fluid(8), flex: "1 1 0", minHeight: fluid(140), overflow: "hidden",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: fluid(8), flex: "0 0 auto" }}>
+        <span style={sectionLabelStyle}>Transferencias</span>
+        <button className="btn ghost" style={{ marginLeft: "auto", padding: `${fluid(2)} ${fluid(8)}`, fontSize: fluid(11) }} onClick={onAdd}>
           <IPlus size={11} /> Nueva
         </button>
       </div>
-      {monthTransfers.length === 0 ? (
-        <div style={{ padding: "12px", textAlign: "center", fontSize: 12, color: "var(--fg-subtle)", border: "1px dashed var(--line)", borderRadius: 8 }}>
-          Sin transferencias este mes.
-        </div>
-      ) : (
-        monthTransfers.map((t) => (
-          <div
-            key={t.id}
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr auto auto",
-              gap: 10,
-              alignItems: "center",
-              padding: "8px 10px",
-              background: "var(--bg-elev)",
-              border: "1px solid var(--line)",
-              borderRadius: 8,
-            }}
-          >
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 12.5, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                {nameOf(t.fromAccountId)} → {nameOf(t.toAccountId)}
-              </div>
-              <div style={{ fontSize: 10.5, color: "var(--fg-subtle)" }}>
-                {KIND_LABEL[t.kind]} · {t.transferredOn}
-              </div>
-            </div>
-            <span style={{ fontSize: 13, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
-              {fmtMoneyIn(t.amount, t.currency)}
-            </span>
-            <button className="icon-btn" style={{ color: "var(--fg-subtle)" }} onClick={() => onDelete(t.id)} title="Borrar">
-              <ITrash size={12} />
-            </button>
+      <div className="fz-col" style={{ flex: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: fluid(6), paddingRight: fluid(4) }}>
+        {pendingByAccount.map((p) => (
+          <PendingTransferRow
+            key={p.account.id}
+            accountName={p.account.name}
+            goalNames={p.goals.map((g) => g.goal.name)}
+            amount={p.totalTarget}
+            done={p.contributed >= p.totalTarget - 1}
+            onTransfer={() => onTransferPending(p)}
+          />
+        ))}
+        {monthTransfers.length === 0 && pendingByAccount.length === 0 ? (
+          <div style={{ padding: fluid(12), textAlign: "center", fontSize: fluid(12), color: "var(--fg-subtle)", border: "1px dashed var(--line)", borderRadius: fluid(8) }}>
+            Sin transferencias este mes.
           </div>
-        ))
-      )}
+        ) : (
+          monthTransfers.map((t) => (
+            <div
+              key={t.id}
+              style={{
+                display: "grid", gridTemplateColumns: "1fr auto auto", gap: fluid(10), alignItems: "center",
+                padding: `${fluid(9)} ${fluid(11)}`, background: "var(--bg-sunken)", border: "1px solid var(--line)", borderRadius: fluid(8), flex: "0 0 auto",
+              }}
+            >
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: fluid(12), fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {nameOf(t.fromAccountId)} → {nameOf(t.toAccountId)}
+                </div>
+                <div style={{ fontSize: fluid(10), color: "var(--fg-subtle)" }}>
+                  {KIND_LABEL[t.kind]} · {t.transferredOn}
+                </div>
+              </div>
+              <span style={{ fontSize: fluid(12.5), fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
+                {fmtMoneyIn(t.amount, t.currency)}
+              </span>
+              <button className="icon-btn" style={{ color: "var(--fg-subtle)" }} onClick={() => onDelete(t.id)} title="Borrar">
+                <ITrash size={12} />
+              </button>
+            </div>
+          ))
+        )}
+      </div>
     </div>
   );
 }
@@ -465,6 +494,7 @@ export function BudgetView() {
   const { session } = useSession();
   const userId = session?.user.id;
   useMaterializeRecurringExpenses(userId);
+  const s = useFrameScale();
 
   const expensesQ = useExpenses();
   const categoriesQ = useExpenseCategories();
@@ -515,27 +545,11 @@ export function BudgetView() {
   const {
     budgetMonth,
     setBudgetMonth,
-    openExpenseCreate,
     openExpenseEdit,
-    openBudgetManager,
-    openExpenseCategoryManager,
   } = useApp();
 
   const [filterCategoryId, setFilterCategoryId] = useState<string | null>(null);
   const [expandedExpenseId, setExpandedExpenseId] = useState<string | null>(null);
-
-  // Keep the pie at ~40% of the column height at all times; the rest of the height
-  // goes to the legend (beside it) and the expenses list below.
-  const leftColRef = useRef<HTMLDivElement | null>(null);
-  const [leftColH, setLeftColH] = useState<number | null>(null);
-  useEffect(() => {
-    const el = leftColRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver((entries) => setLeftColH(entries[0].contentRect.height));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-  const pieSizePx = leftColH != null ? leftColH * 0.40 : undefined;
 
   const monthExpenses = useMemo(
     () => expenses.filter((e) => expenseInMonth(e, budgetMonth) && !e.deletedAt),
@@ -647,202 +661,118 @@ export function BudgetView() {
     );
   };
 
+  const monthParts = ymToParts(budgetMonth);
+
+  const kpiCards = [
+    { label: "Gastado", value: fmtMoney(totalSpent, { compact: true }), sub: totalBudget > 0 ? `${pctUsed}% del presupuesto` : "sin presupuesto", color: "var(--fg)" },
+    { label: "Presupuesto", value: fmtMoney(totalBudget, { compact: true }), sub: "límite mensual", color: "var(--fg)" },
+    { label: "Sobra", value: fmtMoney(Math.max(0, leftover), { compact: true }), sub: "tras gastos", color: leftover < 0 ? "var(--danger)" : "var(--fg)" },
+    { label: "A ahorro", value: fmtMoney(totalAllocated, { compact: true }), sub: "asignado a goals", color: "var(--ok)" },
+  ];
+
   return (
-    <div className="day-view-main">
-      {/* Header */}
-      <header
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 14,
-          paddingBottom: 8,
-          borderBottom: "1px solid var(--line)",
-          minHeight: 84,
-          boxSizing: "border-box",
-        }}
-      >
-        <div>
-          <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", color: "var(--fg-subtle)", fontWeight: 600 }}>
-            Budget
-          </div>
-          <div style={{ fontSize: 24, fontWeight: 600, letterSpacing: "-0.02em", lineHeight: 1.1, fontVariantNumeric: "tabular-nums" }}>
-            {ymToLabel(budgetMonth)}
-          </div>
-          <div
-            style={{
-              marginTop: 8,
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              fontSize: 12,
-              color: "var(--fg-muted)",
-              flexWrap: "wrap",
-            }}
-          >
-            <span>
-              <span style={{ color: "var(--fg)", fontWeight: 600 }}>{fmtMoney(totalSpent)}</span>{" "}
-              spent{totalBudget > 0 && <> of {fmtMoney(totalBudget)} ({pctUsed}%)</>}
-            </span>
-            {incomeAmount > 0 && (
-              <>
-                <span style={{ color: "var(--line-strong)" }}>·</span>
-                {leftover >= 0 ? (
-                  <span>
-                    <span
-                      style={{
-                        color: "var(--fg)",
-                        fontWeight: 600,
-                        fontVariantNumeric: "tabular-nums",
-                      }}
-                    >
-                      {fmtMoney(leftover)}
-                    </span>{" "}
-                    leftover
-                  </span>
-                ) : (
-                  <span style={{ color: "var(--danger)", fontWeight: 600 }}>
-                    no leftover
-                  </span>
-                )}
-                {totalAllocated > 0 && (
-                  <>
-                    <span style={{ color: "var(--line-strong)" }}>·</span>
-                    <span>
-                      <span style={{ color: "var(--ok)", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
-                        {fmtMoney(totalAllocated)}
-                      </span>{" "}
-                      to savings
-                    </span>
-                  </>
-                )}
-              </>
-            )}
-          </div>
+    <div style={{ display: "flex", flexDirection: "column", gap: fluid(12), flex: 1, minHeight: 0 }}>
+      {/* KPI cards + month nav */}
+      <div style={{ display: "flex", alignItems: "center", gap: fluid(10), flex: "0 0 auto" }}>
+        <button className="icon-btn" onClick={() => setBudgetMonth(shiftMonth(budgetMonth, -1))} title="Mes anterior" style={{ width: fluid(26), height: fluid(26) }}>
+          <IChevL size={13} />
+        </button>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flex: "0 0 auto", lineHeight: 1.15 }}>
+          <span style={{ fontSize: fluid(13.5), fontWeight: 700, letterSpacing: "-0.01em" }}>{monthParts.month}</span>
+          <span style={{ fontSize: fluid(10.5), color: "var(--fg-subtle)", fontVariantNumeric: "tabular-nums" }}>{monthParts.year}</span>
         </div>
-        <div style={{ flex: 1 }} />
-        <button className="icon-btn" onClick={() => setBudgetMonth(shiftMonth(budgetMonth, -1))} title="Previous month">
-          <IChevL size={15} />
+        <button className="icon-btn" onClick={() => setBudgetMonth(shiftMonth(budgetMonth, 1))} title="Mes siguiente" style={{ width: fluid(26), height: fluid(26) }}>
+          <IChevR size={13} />
         </button>
-        <button className="icon-btn" onClick={() => setBudgetMonth(shiftMonth(budgetMonth, 1))} title="Next month">
-          <IChevR size={15} />
-        </button>
-        <button className="btn" onClick={() => openExpenseCreate({ spentOn: todayYmd() })}>
-          <IPlus size={12} /> Expense
-        </button>
-        <button className="btn ghost" onClick={openBudgetManager}>Edit budgets</button>
-        <button className="btn ghost" onClick={openExpenseCategoryManager}>Categories</button>
-      </header>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: fluid(12), flex: 1 }}>
+          {kpiCards.map((k) => (
+            <div key={k.label} style={{ background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: fluid(12), padding: `${fluid(12)} ${fluid(14)}`, boxShadow: "var(--shadow-sm)" }}>
+              <div style={{ fontSize: fluid(10.5), textTransform: "uppercase", letterSpacing: ".05em", fontWeight: 600, color: "var(--fg-subtle)" }}>{k.label}</div>
+              <div style={{ fontSize: fluid(20), fontWeight: 600, letterSpacing: "-0.01em", fontVariantNumeric: "tabular-nums", marginTop: fluid(3), color: k.color }}>{k.value}</div>
+              <div style={{ fontSize: fluid(10.5), color: "var(--fg-subtle)", marginTop: 1 }}>{k.sub}</div>
+            </div>
+          ))}
+        </div>
+      </div>
 
       {/* Main grid */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 380px",
-          gap: 24,
-          flex: 1,
-          minHeight: 0,
-        }}
-      >
+      <div style={{ display: "grid", gridTemplateColumns: `1fr ${fluid(380)}`, gap: fluid(20), flex: 1, minHeight: 0 }}>
         {/* LEFT — spending overview */}
-        <div ref={leftColRef} style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0, minHeight: 0 }}>
-          {/* Spending pie (row layout: pie beside category legend) */}
-          <SpendingPie
-            expenses={monthExpensesForPie}
-            categories={categories}
-            layout="row"
-            fill={false}
-            sizePx={pieSizePx}
-            limit={totalBudget > 0 ? totalBudget : undefined}
-            budgets={budgets}
-            onToggleHidden={(categoryId) => {
-              const cat = categories.find((c) => c.id === categoryId);
-              if (cat) {
-                patchExpenseCategory
-                  .mutateAsync({ id: categoryId, patch: { hiddenFromChart: !cat.hiddenFromChart } })
-                  .catch((err) => window.alert(err instanceof Error ? err.message : "No se pudo cambiar"));
-              }
-            }}
-            selectedCategoryId={filterCategoryId}
-            onSelectCategory={(categoryId) => setFilterCategoryId(filterCategoryId === categoryId ? null : categoryId)}
-          />
-
-          {/* Scrollable: expenses + recurring (pie above stays pinned) */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 16, flex: 1, minHeight: 120, overflowY: "auto" }}>
-          {/* Expenses section */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <div
-              style={{
-                fontSize: 11,
-                textTransform: "uppercase",
-                letterSpacing: ".05em",
-                fontWeight: 600,
-                color: "var(--fg-muted)",
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                marginBottom: 4,
+        <div style={{ display: "flex", flexDirection: "column", gap: fluid(12), minWidth: 0, minHeight: 0 }}>
+          <div style={{ background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: fluid(12), padding: fluid(16), boxShadow: "var(--shadow-sm)", display: "flex", alignItems: "center", gap: fluid(22), flex: "0 0 auto" }}>
+            <SpendingPie
+              expenses={monthExpensesForPie}
+              categories={categories}
+              layout="row"
+              fill={false}
+              sizePx={Math.round(190 * s)}
+              limit={totalBudget > 0 ? totalBudget : undefined}
+              budgets={budgets}
+              centerLabel="gastado"
+              onToggleHidden={(categoryId) => {
+                const cat = categories.find((c) => c.id === categoryId);
+                if (cat) {
+                  patchExpenseCategory
+                    .mutateAsync({ id: categoryId, patch: { hiddenFromChart: !cat.hiddenFromChart } })
+                    .catch((err) => window.alert(err instanceof Error ? err.message : "No se pudo cambiar"));
+                }
               }}
-            >
-              <span>Expenses · {filteredExpenses.length}</span>
-              {filterCategoryId && (
-                <button
-                  className="btn ghost"
-                  style={{ padding: "2px 6px", fontSize: 11 }}
-                  onClick={() => setFilterCategoryId(null)}
-                >
-                  Clear filter
-                </button>
-              )}
-            </div>
-            {filteredExpenses.length === 0 && (
-              <div
-                style={{
-                  padding: "20px 12px",
-                  textAlign: "center",
-                  fontSize: 12,
-                  color: "var(--fg-subtle)",
-                  border: "1px dashed var(--line)",
-                  borderRadius: 8,
-                }}
-              >
-                No expenses to show.
-              </div>
-            )}
-            {filteredExpenses.map((e) => (
-              <InlineExpenseRow
-                key={e.id}
-                expense={e}
-                categories={categories}
-                lineItems={lineItems}
-                expanded={expandedExpenseId === e.id}
-                onToggle={() => setExpandedExpenseId(expandedExpenseId === e.id ? null : e.id)}
-                onEdit={() => openExpenseEdit(e.id)}
-                onDelete={() => {
-                  deleteExpense.mutateAsync(e.id).catch((err) =>
-                    window.alert(err instanceof Error ? err.message : "No se pudo borrar"),
-                  );
-                  if (expandedExpenseId === e.id) setExpandedExpenseId(null);
-                }}
-              />
-            ))}
+              selectedCategoryId={filterCategoryId}
+              onSelectCategory={(categoryId) => setFilterCategoryId(filterCategoryId === categoryId ? null : categoryId)}
+            />
           </div>
 
-          {/* Recurring */}
-          {recurringActive.length > 0 && (
-            <RecurringSection
-              expenses={recurringActive}
-              categories={categories}
-              onEdit={(e) => openExpenseEdit(e.id)}
-              onPause={onPauseRecurring}
-            />
-          )}
+          {/* Scrollable: expenses + recurring (pie above stays pinned) */}
+          <div className="fz-col" style={{ display: "flex", flexDirection: "column", gap: fluid(12), flex: 1, minHeight: 0, overflowY: "auto", paddingRight: fluid(4) }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: fluid(4) }}>
+              {/* Sticky — mientras se scrollea la lista de gastos este titulo queda
+                  pegado arriba; al llegar a Recurrentes, su propio titulo lo tapa. */}
+              <div style={{ ...sectionLabelStyle, display: "flex", alignItems: "center", gap: fluid(8), padding: `${fluid(2)} 0`, position: "sticky", top: 0, zIndex: 2, background: "var(--bg)" }}>
+                <span>Gastos · {filteredExpenses.length}</span>
+                {filterCategoryId && (
+                  <button className="btn ghost" style={{ padding: `${fluid(2)} ${fluid(6)}`, fontSize: fluid(11) }} onClick={() => setFilterCategoryId(null)}>
+                    Quitar filtro
+                  </button>
+                )}
+              </div>
+              {filteredExpenses.length === 0 && (
+                <div style={{ padding: `${fluid(20)} ${fluid(12)}`, textAlign: "center", fontSize: fluid(12), color: "var(--fg-subtle)", border: "1px dashed var(--line)", borderRadius: fluid(8) }}>
+                  Sin gastos para mostrar.
+                </div>
+              )}
+              {filteredExpenses.map((e) => (
+                <InlineExpenseRow
+                  key={e.id}
+                  expense={e}
+                  categories={categories}
+                  lineItems={lineItems}
+                  expanded={expandedExpenseId === e.id}
+                  onToggle={() => setExpandedExpenseId(expandedExpenseId === e.id ? null : e.id)}
+                  onEdit={() => openExpenseEdit(e.id)}
+                  onDelete={() => {
+                    deleteExpense.mutateAsync(e.id).catch((err) =>
+                      window.alert(err instanceof Error ? err.message : "No se pudo borrar"),
+                    );
+                    if (expandedExpenseId === e.id) setExpandedExpenseId(null);
+                  }}
+                />
+              ))}
+            </div>
+
+            {recurringActive.length > 0 && (
+              <RecurringSection
+                expenses={recurringActive}
+                categories={categories}
+                onEdit={(e) => openExpenseEdit(e.id)}
+                onPause={onPauseRecurring}
+              />
+            )}
           </div>
         </div>
 
-        {/* RIGHT — income (top) + transfers (rest) */}
-        <div style={{ display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0, gap: 12 }}>
-          {/* Income by account (compact, fixed) */}
-          <IncomeByAccountSection
+        {/* RIGHT — income (top) + savings % + transfers (rest) */}
+        <div style={{ display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0, gap: fluid(12) }}>
+          <IncomeByAccountCard
             accounts={incomeAccounts}
             incomeByAccountId={incomeByAccountId}
             onSave={(account, amount) =>
@@ -852,13 +782,12 @@ export function BudgetView() {
             }
           />
 
-          {/* Savings % editor — top half, scrolls on its own */}
           {activeGoals.length > 0 && (
-            <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, overflowY: "auto" }}>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".05em", fontWeight: 600, color: "var(--fg-muted)" }}>
-                  % de ahorro
-                </div>
+            <div style={{ background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: fluid(12), padding: fluid(14), boxShadow: "var(--shadow-sm)", display: "flex", flexDirection: "column", gap: fluid(6), flex: "0 0 auto" }}>
+              <div style={sectionLabelStyle}>% de ahorro</div>
+              {/* Cap la lista a ~3 filas visibles y scrollea adentro — asi Transferencias
+                  (debajo) no se queda sin espacio cuando hay muchos goals activos. */}
+              <div className="fz-col" style={{ display: "flex", flexDirection: "column", gap: fluid(6), maxHeight: fluid(130), overflowY: "auto", paddingRight: fluid(4) }}>
                 {goalMonthTarget.map(({ goal }) => (
                   <GoalMonthRow
                     key={goal.id}
@@ -881,44 +810,26 @@ export function BudgetView() {
             </div>
           )}
 
-          {/* Transfers — fills the rest, scrolls on its own */}
-          <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, overflowY: "auto", gap: 12 }}>
-          {pendingByAccount.length > 0 && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".05em", fontWeight: 600, color: "var(--fg-muted)" }}>
-                Ahorro de este mes
-              </div>
-              {pendingByAccount.map(({ account, goals: goalsInAccount, contributed, totalTarget }) => (
-                <PendingTransferRow
-                  key={account.id}
-                  accountName={account.name}
-                  goalNames={goalsInAccount.map((g) => g.goal.name)}
-                  amount={totalTarget}
-                  done={contributed >= totalTarget - 1}
-                  onTransfer={() =>
-                    setGoalTransfer({
-                      toId: account.id,
-                      amount: totalTarget,
-                      goalId: goalsInAccount.length === 1 ? goalsInAccount[0].goal.id : undefined,
-                      goals: goalsInAccount,
-                    })
-                  }
-                />
-              ))}
-            </div>
-          )}
-          <TransfersSection
+          <TransfersCard
             month={budgetMonth}
             transfers={transfers}
             accounts={allAccounts}
+            pendingByAccount={pendingByAccount}
             onAdd={() => setShowTransferModal(true)}
+            onTransferPending={(p) =>
+              setGoalTransfer({
+                toId: p.account.id,
+                amount: p.totalTarget,
+                goalId: p.goals.length === 1 ? p.goals[0].goal.id : undefined,
+                goals: p.goals,
+              })
+            }
             onDelete={(id) =>
               deleteTransfer.mutateAsync(id).catch((err) =>
                 window.alert(err instanceof Error ? err.message : "No se pudo borrar"),
               )
             }
           />
-          </div>
         </div>
       </div>
 

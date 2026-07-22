@@ -10,9 +10,7 @@ import {
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { BrewAssignModal } from "./components/BrewAssignModal";
 import { BudgetManager } from "./components/BudgetManager";
-import { BudgetView } from "./components/BudgetView";
-import { AhorrosView } from "./components/finanzas/AhorrosView";
-import { HoldingsView } from "./components/finanzas/HoldingsView";
+import { FinanzasView } from "./components/finanzas/FinanzasView";
 import { CategoryManager } from "./components/CategoryManager";
 import { CompletionModal } from "./components/CompletionModal";
 import { ComprasView } from "./components/ComprasView";
@@ -80,7 +78,6 @@ function App() {
     closeEventEditor,
     openEventEdit,
     openEventCreate,
-    finanzasTab,
   } = useApp();
 
   const tasksQ = useTasks();
@@ -109,11 +106,11 @@ function App() {
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
   );
 
-  // Home and Café are the two screens rebuilt to the 1280×720 design frame; scale
-  // their chrome (rail + topbar) together with their content so they stay coherent
-  // at 2K. Other views keep --home-s at 1 (their fixed-px chrome is unchanged).
+  // Home, Café and Finanzas are the screens rebuilt to the 1280×720 design frame;
+  // scale their chrome (rail + topbar) together with their content so they stay
+  // coherent at 2K. Other views keep --home-s at 1 (their fixed-px chrome is unchanged).
   const frameScale = useFrameScale();
-  const homeScale = view === "home" || view === "cafe" ? frameScale : 1;
+  const homeScale = view === "home" || view === "cafe" || view === "budget" ? frameScale : 1;
 
   const [activeTask, setActiveTask] = useState<Task | null>(null);
 
@@ -265,11 +262,16 @@ function App() {
       onDragEnd={onDragEnd}
       onDragCancel={onDragCancel}
     >
-      <div className="app" style={{ ["--home-s" as string]: homeScale } as CSSProperties}>
+      {/* `--home-s` lives here, one level above `.app`, so it also reaches the
+          modals below (TaskEditor, ExpenseEditor, etc.) — they render as siblings
+          of `.app`, not descendants, but still need to scale up to match Home/
+          Café/Finanzas chrome when opened from one of those (already-2x) views. */}
+      <div style={{ ["--home-s" as string]: homeScale } as CSSProperties}>
+      <div className="app">
         <Sidebar />
         <div className="main">
-          {view !== "home" && view !== "cafe" && <Topbar />}
-          {view !== "home" && view !== "cafe" && (stripOpen ? (
+          {view !== "home" && view !== "cafe" && view !== "budget" && <Topbar />}
+          {view !== "home" && view !== "cafe" && view !== "budget" && (stripOpen ? (
             <div style={{ position: "relative" }}>
               <TaskStrip onAddNew={onAddNew} onOpen={onOpenTask} onToggleDone={onToggleDone} />
               <button
@@ -342,9 +344,7 @@ function App() {
             />
           )}
           {view === "recurring" && <RecurringView />}
-          {view === "budget" && finanzasTab === "presupuesto" && <BudgetView />}
-          {view === "budget" && finanzasTab === "ahorros" && <AhorrosView />}
-          {view === "budget" && finanzasTab === "holdings" && <HoldingsView />}
+          {view === "budget" && <FinanzasView />}
           {view === "habits" && <HabitsView />}
           {view === "compras" && <ComprasView />}
           {view === "cafe" && <CafeView />}
@@ -393,6 +393,7 @@ function App() {
         />
       )}
       {!modalOpen && <BrewAssignModal />}
+      </div>
     </DndContext>
   );
 }

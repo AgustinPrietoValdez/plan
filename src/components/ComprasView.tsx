@@ -924,7 +924,7 @@ function CloseListModal({
 
   return (
     <div className="modal-backdrop" onMouseDown={onBackdropMouseDown}>
-      <div className="modal" style={{ width: 460 }} onMouseDown={(e) => e.stopPropagation()}>
+      <div className="modal" style={{ width: "calc(var(--home-s, 1) * 460px)" }} onMouseDown={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <span style={{ flex: 1, fontSize: 15, fontWeight: 600, letterSpacing: "-0.01em" }}>
             Cerrar lista / registrar gasto
@@ -1669,7 +1669,7 @@ function RecipeModal({
 
   return (
     <div className="modal-backdrop" onMouseDown={onBackdropMouseDown}>
-      <div className="modal" style={{ width: 640, maxWidth: "90vw", maxHeight: "85vh", display: "flex", flexDirection: "column" }} onMouseDown={(e) => e.stopPropagation()}>
+      <div className="modal" style={{ width: "calc(var(--home-s, 1) * 640px)", maxWidth: "90vw", maxHeight: "85vh", display: "flex", flexDirection: "column" }} onMouseDown={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <span style={{ flex: 1, fontSize: 15, fontWeight: 600, letterSpacing: "-0.01em" }}>Receta</span>
           <button className="icon-btn" onClick={close} title="Cerrar">
@@ -1835,7 +1835,7 @@ function AddIngredientModal({ categories, onClose }: { categories: IngredientCat
 
   return (
     <div className="modal-backdrop" onMouseDown={onBackdropMouseDown}>
-      <div className="modal" style={{ width: 420 }} onMouseDown={(e) => e.stopPropagation()}>
+      <div className="modal" style={{ width: "calc(var(--home-s, 1) * 420px)" }} onMouseDown={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <span style={{ flex: 1, fontSize: 15, fontWeight: 600, letterSpacing: "-0.01em" }}>Nuevo ingrediente</span>
           <button className="icon-btn" onClick={onClose} title="Cerrar">
@@ -1978,7 +1978,7 @@ function EditIngredientModal({
 
   return (
     <div className="modal-backdrop" onMouseDown={onBackdropMouseDown}>
-      <div className="modal" style={{ width: 480, maxHeight: "85vh", display: "flex", flexDirection: "column" }} onMouseDown={(e) => e.stopPropagation()}>
+      <div className="modal" style={{ width: "calc(var(--home-s, 1) * 480px)", maxHeight: "85vh", display: "flex", flexDirection: "column" }} onMouseDown={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <span style={{ flex: 1, fontSize: 15, fontWeight: 600, letterSpacing: "-0.01em" }}>Editar ingrediente</span>
           <button className="icon-btn" onClick={close} title="Cerrar">

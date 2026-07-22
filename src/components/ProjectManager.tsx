@@ -150,7 +150,7 @@ export function ProjectManager({ onClose }: Props) {
 
   return (
     <div className="modal-backdrop" onMouseDown={onBackdropMouseDown}>
-      <div className="modal" style={{ width: 540 }} onMouseDown={(e) => e.stopPropagation()}>
+      <div className="modal" style={{ width: "calc(var(--home-s, 1) * 540px)" }} onMouseDown={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <span style={{ flex: 1, fontSize: 15, fontWeight: 600, letterSpacing: "-0.01em" }}>
             Projects

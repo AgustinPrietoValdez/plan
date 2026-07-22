@@ -77,7 +77,7 @@ export function BrewAssignModal() {
 
   return (
     <div className="modal-backdrop">
-      <div className="modal" style={{ width: 480 }} onMouseDown={(e) => e.stopPropagation()}>
+      <div className="modal" style={{ width: "calc(var(--home-s, 1) * 480px)" }} onMouseDown={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <div style={{ flex: 1, minWidth: 0 }}>
             <div
