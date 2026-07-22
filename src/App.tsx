@@ -17,22 +17,16 @@ import { ComprasView } from "./components/ComprasView";
 import { CafeView } from "./components/CafeView";
 import { AutomationsView } from "./components/AutomationsView";
 import { HomeView } from "./components/HomeView";
-import { AreaTabs } from "./components/AreaTabs";
-import { DayView } from "./components/DayView";
+import { CalendarView } from "./components/calendar/CalendarView";
 import { ExpenseCategoryManager } from "./components/ExpenseCategoryManager";
 import { EventEditor } from "./components/EventEditor";
 import { ExpenseEditor } from "./components/ExpenseEditor";
-import { HabitsView } from "./components/HabitsView";
-import { MonthView } from "./components/MonthView";
 import { ProjectManager } from "./components/ProjectManager";
-import { ProjectView } from "./components/ProjectView";
-import { RecurringView } from "./components/RecurringView";
 import { Sidebar } from "./components/Sidebar";
 import { TaskEditor } from "./components/TaskEditor";
 import { TaskStrip } from "./components/TaskStrip";
 import { Topbar } from "./components/Topbar";
 import { IChevD } from "./components/icons";
-import { WeekView } from "./components/WeekView";
 import { DragGhost } from "./components/dnd/DragGhost";
 import { useSession } from "./lib/auth";
 import { useFrameScale } from "./lib/uiScale";
@@ -106,28 +100,29 @@ function App() {
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
   );
 
-  // Home, Café and Finanzas are the screens rebuilt to the 1280×720 design frame;
-  // scale their chrome (rail + topbar) together with their content so they stay
-  // coherent at 2K. Other views keep --home-s at 1 (their fixed-px chrome is unchanged).
+  // Home, Café, Finanzas and the redesigned Calendario views (all 6 tabs —
+  // day/week/month/project/habits/recurring) are the screens rebuilt to the
+  // 1280×720 design frame; scale their chrome (rail + topbar) together with
+  // their content so they stay coherent at 2K. Other views (compras,
+  // automations) keep --home-s at 1 (their fixed-px chrome is unchanged).
+  const isCalendarRedesign =
+    view === "day" || view === "week" || view === "month" || view === "project" ||
+    view === "habits" || view === "recurring";
   const frameScale = useFrameScale();
-  const homeScale = view === "home" || view === "cafe" || view === "budget" ? frameScale : 1;
+  const homeScale = view === "home" || view === "cafe" || view === "budget" || isCalendarRedesign ? frameScale : 1;
 
   const [activeTask, setActiveTask] = useState<Task | null>(null);
 
-  // The Inbox strip is only relevant in task-centric views; collapse it
-  // elsewhere (budget, compras, recurring, habits) so it doesn't get in the way.
-  const isTaskView = view === "day" || view === "week" || view === "month" || view === "project";
-  const [stripOpen, setStripOpen] = useState(isTaskView);
-  useEffect(() => {
-    setStripOpen(isTaskView);
-  }, [isTaskView]);
+  // The old Inbox strip only still applies to the non-redesigned task-adjacent
+  // views (recurring, habits, compras) — the redesigned Calendario views render
+  // their own inbox strip inside CalendarView. Collapsed by default there too.
+  const [stripOpen, setStripOpen] = useState(false);
   const inboxCount = tasks.filter((t) => t.day === null && !t.done).length;
 
   const onAddNew = () => openCreate({});
   const onAddNewWithPrefill = (prefill: Partial<Task>) => openCreate(prefill);
   const onOpenTask = (t: Task) => openEdit(t.id);
   const onOpenEvent = (ev: CalendarEvent) => openEventEdit(ev.id);
-  const onNewEvent = (day: string) => openEventCreate({ day });
 
   const onToggleDone = (t: Task) => {
     if (t.done) {
@@ -270,8 +265,8 @@ function App() {
       <div className="app">
         <Sidebar />
         <div className="main">
-          {view !== "home" && view !== "cafe" && view !== "budget" && <Topbar />}
-          {view !== "home" && view !== "cafe" && view !== "budget" && (stripOpen ? (
+          {!isCalendarRedesign && view !== "home" && view !== "cafe" && view !== "budget" && <Topbar />}
+          {!isCalendarRedesign && view !== "home" && view !== "cafe" && view !== "budget" && (stripOpen ? (
             <div style={{ position: "relative" }}>
               <TaskStrip onAddNew={onAddNew} onOpen={onOpenTask} onToggleDone={onToggleDone} />
               <button
@@ -311,41 +306,18 @@ function App() {
               <IChevD size={14} />
             </button>
           ))}
-          <AreaTabs />
           {view === "home" && <HomeView />}
-          {view === "month" && (
-            <MonthView
+          {isCalendarRedesign && (
+            <CalendarView
               onTaskClick={onOpenTask}
               onDayClick={onMonthDayClick}
               onToggleDone={onToggleDone}
               onEventClick={onOpenEvent}
+              onAddNew={onAddNew}
+              onAddNewWithPrefill={onAddNewWithPrefill}
             />
           )}
-          {view === "week" && (
-            <WeekView
-              onTaskClick={onOpenTask}
-              onToggleDone={onToggleDone}
-              onEventClick={onOpenEvent}
-            />
-          )}
-          {view === "day" && (
-            <DayView
-              onTaskClick={onOpenTask}
-              onToggleDone={onToggleDone}
-              onEventClick={onOpenEvent}
-              onNewEvent={onNewEvent}
-            />
-          )}
-          {view === "project" && (
-            <ProjectView
-              onTaskClick={onOpenTask}
-              onToggleDone={onToggleDone}
-              onAddNew={onAddNewWithPrefill}
-            />
-          )}
-          {view === "recurring" && <RecurringView />}
           {view === "budget" && <FinanzasView />}
-          {view === "habits" && <HabitsView />}
           {view === "compras" && <ComprasView />}
           {view === "cafe" && <CafeView />}
           {view === "automations" && <AutomationsView />}

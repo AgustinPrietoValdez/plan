@@ -149,3 +149,15 @@ export const IBox = (p: IconProps) => (
     <path d="M1 3h22v5H1zM10 12h4" />
   </Icon>
 );
+export const ISun = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="12" cy="12" r="4" />
+    <path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19" />
+  </Icon>
+);
+export const IColumns = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="3" y="5" width="18" height="14" rx="2" />
+    <path d="M9 5v14M15 5v14" />
+  </Icon>
+);

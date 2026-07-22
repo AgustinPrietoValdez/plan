@@ -10,6 +10,7 @@ export const DOW_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 export const DOW_MINI = ["S", "M", "T", "W", "T", "F", "S"];
 
 export const DOW_LONG_ES = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
+export const DOW_MINI_ES = ["D", "L", "M", "M", "J", "V", "S"];
 export const MONTH_LONG_ES = [
   "enero", "febrero", "marzo", "abril", "mayo", "junio",
   "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",

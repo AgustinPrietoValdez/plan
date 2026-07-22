@@ -4,17 +4,10 @@ import { signOut, useSession } from "../lib/auth";
 import { onSyncStatus, type SyncStatus } from "../lib/sync";
 import { useApp } from "../lib/store";
 import { AREA_OF_VIEW, AREA_DEFAULT_VIEW, type Area, type View } from "../lib/store";
-import {
-  useCategories,
-  useProjects,
-  useTasks,
-  useIngredientCategories,
-} from "../lib/queries";
-import { IBolt, ICal, IList, IPlus, ISearch } from "./icons";
+import { useTasks, useIngredientCategories } from "../lib/queries";
+import { IBolt, ICal, IList, ISearch } from "./icons";
 import { MiniMonth } from "./MiniMonth";
 import { useFrameScale } from "../lib/uiScale";
-
-const SIDEBAR_CATEGORIES_LIMIT = 5;
 
 const krIcon = {
   width: 14,
@@ -52,6 +45,18 @@ function railIconFor(area: Area, px: (n: number) => number): ReactNode {
   }
 }
 
+/** The redesigned Calendario views (all 6 — Día/Semana/Mes/Proyecto/Hábitos/
+ *  Recurrentes) — they render their own context panel (mini-month + projects
+ *  + categories) inside `CalendarView` at the 1280×720 frame scale, so the
+ *  Rail scales with them and the old `SidePanel` is suppressed, same as
+ *  Home/Café/Finanzas. */
+function isCalendarRedesignView(view: View): boolean {
+  return (
+    view === "day" || view === "week" || view === "month" || view === "project" ||
+    view === "habits" || view === "recurring"
+  );
+}
+
 export function Sidebar() {
   const { view, setView } = useApp();
   // Automations lives in the "home" area but is reached from the rail's bolt icon,
@@ -61,7 +66,9 @@ export function Sidebar() {
   return (
     <>
       <Rail activeArea={activeArea} view={view} setView={setView} />
-      {activeArea !== "home" && activeArea !== "cafe" && activeArea !== "presupuesto" && <SidePanel activeArea={activeArea} />}
+      {activeArea !== "home" && activeArea !== "cafe" && activeArea !== "presupuesto" && !isCalendarRedesignView(view) && (
+        <SidePanel activeArea={activeArea} />
+      )}
     </>
   );
 }
@@ -70,7 +77,7 @@ export function Sidebar() {
 
 function Rail({ activeArea, view, setView }: { activeArea: Area | null; view: View; setView: (v: View) => void }) {
   const frameScale = useFrameScale();
-  const s = view === "home" || view === "cafe" || view === "budget" ? frameScale : 1;
+  const s = view === "home" || view === "cafe" || view === "budget" || isCalendarRedesignView(view) ? frameScale : 1;
   const px = (n: number) => Math.round(n * s);
   return (
     <aside className="rail">
@@ -158,32 +165,15 @@ function RailAvatar({ scale = 1 }: { scale?: number }) {
   );
 }
 
-// ---- Side panel: contextual lists (Projects/Categories/etc.), hidden on Home ----
+// ---- Side panel: contextual lists, hidden on Home/Café/Finanzas and on the
+// redesigned Calendario views (they render their own context panel inline).
+// The only area left that still reaches this component is Compras (plus
+// `null` for Automations, which just gets the bare mini-month below). ----
 
 function SidePanel({ activeArea }: { activeArea: Area | null }) {
-  const tasksQ = useTasks();
-  const projectsQ = useProjects();
-  const categoriesQ = useCategories();
-  const ingredientCategoriesQ = useIngredientCategories();
-  const tasks = tasksQ.data ?? [];
-  const projects = projectsQ.data ?? [];
-  const categories = categoriesQ.data ?? [];
-  const ingredientCategories = ingredientCategoriesQ.data ?? [];
-
-  const {
-    view,
-    viewDate,
-    selectedDay,
-    viewProjectId,
-    setViewDate,
-    setSelectedDay,
-    setView,
-    setViewProject,
-    filterCategoryId,
-    setFilterCategory,
-    openCategoryManager,
-    openProjectManager,
-  } = useApp();
+  const tasks = useTasks().data ?? [];
+  const ingredientCategories = useIngredientCategories().data ?? [];
+  const { viewDate, selectedDay, setViewDate, setSelectedDay } = useApp();
 
   return (
     <aside className="sidebar">
@@ -195,87 +185,6 @@ function SidePanel({ activeArea }: { activeArea: Area | null }) {
           setSelectedDay={setSelectedDay}
           tasks={tasks}
         />
-
-        {activeArea === "calendario" && (
-          <>
-            <div className="sidebar-section" style={{ paddingTop: 8 }}>
-              <div className="sidebar-section-title">
-                Projects
-                <button className="add" title="Manage projects" onClick={openProjectManager}>
-                  <IPlus size={11} />
-                </button>
-              </div>
-            </div>
-            <div className="nav-list">
-              {projects
-                .filter((p) => !p.archived)
-                .map((p) => {
-                  const cat = categories.find((c) => c.id === p.categoryId);
-                  const colors = cat ? colorsForHue(cat.hue) : null;
-                  const c = tasks.filter((t) => t.projectId === p.id && !t.done).length;
-                  const active = view === "project" && viewProjectId === p.id;
-                  return (
-                    <div
-                      key={p.id}
-                      className={`nav-item ${active ? "active" : ""}`}
-                      onClick={() => {
-                        setViewProject(p.id);
-                        setView("project");
-                        setFilterCategory(null);
-                      }}
-                    >
-                      <span className="dot" style={{ background: colors?.bg ?? "var(--bg-sunken)" }} />
-                      <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {p.name}
-                      </span>
-                      <span className="count">{c}</span>
-                    </div>
-                  );
-                })}
-            </div>
-
-            <div className="sidebar-section" style={{ marginTop: 4 }}>
-              <div className="sidebar-section-title">
-                Categories
-                <button className="add" title="Manage categories" onClick={openCategoryManager}>
-                  <IPlus size={11} />
-                </button>
-              </div>
-            </div>
-            <div className="nav-list" style={{ paddingBottom: 12 }}>
-              {categories
-                .filter((c) => !c.archived)
-                .slice(0, SIDEBAR_CATEGORIES_LIMIT)
-                .map((c) => {
-                  const colors = colorsForHue(c.hue);
-                  const n = tasks.filter((t) => t.categoryId === c.id && !t.done).length;
-                  return (
-                    <div
-                      key={c.id}
-                      className={`nav-item ${filterCategoryId === c.id ? "active" : ""}`}
-                      onClick={() => setFilterCategory(filterCategoryId === c.id ? null : c.id)}
-                    >
-                      <span className="dot" style={{ background: colors.bg }} />
-                      <span style={{ flex: 1 }}>{c.name}</span>
-                      <span className="count">{n}</span>
-                    </div>
-                  );
-                })}
-              {categories.filter((c) => !c.archived).length > SIDEBAR_CATEGORIES_LIMIT && (
-                <div
-                  className="nav-item"
-                  style={{ color: "var(--fg-subtle)", fontSize: 11.5 }}
-                  onClick={openCategoryManager}
-                >
-                  <span style={{ width: 8, flex: "0 0 auto" }} />
-                  <span style={{ flex: 1 }}>
-                    + {categories.filter((c) => !c.archived).length - SIDEBAR_CATEGORIES_LIMIT} more
-                  </span>
-                </div>
-              )}
-            </div>
-          </>
-        )}
 
         {activeArea === "compras" && (
           <>

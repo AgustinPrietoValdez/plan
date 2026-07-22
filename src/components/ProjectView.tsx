@@ -123,9 +123,6 @@ export function ProjectView({ onTaskClick, onToggleDone, onAddNew }: Props) {
               {visible.length} {visible.length === 1 ? "proyecto" : "proyectos"}
             </div>
           </div>
-          <button className="btn" onClick={openProjectManager}>
-            <IPlus size={12} /> Nuevo proyecto
-          </button>
         </header>
 
         {visible.length === 0 ? (

@@ -101,6 +101,29 @@
 .fz-col::-webkit-scrollbar-track {
   background: transparent;
 }
+/* Same thin-scrollbar treatment for the redesigned Calendario screen
+   (context panel, inbox strip, month grid) — matches its design handoff's
+   `.cal-scroll` class, scaled with the same --s frame factor as `.fz-col`. */
+.cal-scroll::-webkit-scrollbar {
+  width: calc(var(--s, 1) * 8px);
+  height: calc(var(--s, 1) * 8px);
+}
+.cal-scroll::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 99px;
+}
+.cal-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+/* Fully hidden scrollbar for the Calendario Day view's sticky-header column,
+   which still needs to scroll via wheel/trackpad. */
+.cal-noscroll {
+  scrollbar-width: none;
+}
+.cal-noscroll::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
 .sidebar-head {
   padding: 14px 14px 10px;
   display: flex; align-items: center; gap: 8px;
