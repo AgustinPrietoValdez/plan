@@ -119,25 +119,7 @@ export const HoldingsView = forwardRef<HoldingsViewHandle>(function HoldingsView
   );
 
   const netWorthSnapshotsQ = useNetWorthSnapshot(accounts, baseCurrency, ratesPerUsd, accountsQ.isSuccess);
-  // TEMP — fake placeholder history so the chart's look can be reviewed before
-  // enough real monthly snapshots exist (only 1/mes se guardan). Remove once
-  // the redesign is approved.
-  const chartSnapshots = (netWorthSnapshotsQ.data ?? []).length >= 2
-    ? netWorthSnapshotsQ.data!
-    : Array.from({ length: 8 }, (_, i) => {
-        const d = new Date();
-        d.setMonth(d.getMonth() - (7 - i));
-        return {
-          id: `fake-${i}`,
-          month: d.toISOString().slice(0, 7),
-          amount: netWorth * (0.82 + i * 0.028),
-          currency: baseCurrency,
-          createdAt: "",
-          updatedAt: "",
-          deletedAt: null,
-          version: 1,
-        };
-      });
+  const chartSnapshots = netWorthSnapshotsQ.data ?? [];
 
   // Holdings se divide en dos lados: cuentas bancarias (agrupadas por titular,
   // como antes) e inversiones (broker/inversion, con su propio piechart de
