@@ -1953,7 +1953,8 @@ function FinishBeanModal({ bean, onClose, onConfirm }: {
       await Promise.race([onConfirm(rating, finalTags), timeout]);
       onClose();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "No se pudo guardar");
+      console.error("[CafeView] FinishBeanModal confirm failed:", e);
+      setError(e instanceof Error ? e.message : typeof e === "string" ? e : "No se pudo guardar (ver consola)");
       setSaving(false);
     }
   };
@@ -1987,6 +1988,20 @@ function FinishBeanModal({ bean, onClose, onConfirm }: {
               onClick={() => toggleTag(t)}
             >
               {t}
+            </button>
+          ))}
+          {/* Sabores propios agregados a mano — no estan en FLAVOR_TAG_OPTIONS,
+              asi que sin esto quedaban en el estado pero invisibles en pantalla. */}
+          {tags.filter((t) => !FLAVOR_TAG_OPTIONS.includes(t)).map((t) => (
+            <button
+              key={t}
+              type="button"
+              className="btn primary"
+              style={{ fontSize: 11.5, padding: "3px 9px", borderRadius: 999, display: "inline-flex", alignItems: "center", gap: 4 }}
+              onClick={() => toggleTag(t)}
+              title="Quitar"
+            >
+              {t} <IX size={10} />
             </button>
           ))}
         </div>

@@ -30,9 +30,12 @@ export function CalendarMonthView({ onTaskClick, onDayClick, onToggleDone, onEve
   const allEvents = useEvents().data ?? [];
   const { viewDate, filterCategoryId } = useApp();
 
-  const tasks = filterCategoryId
+  // Mes/Semana = vistas de un vistazo; los habitos (recurrentes a diario) solo
+  // se ven en Dia, ahi tienen su propio trato — aca solo generan ruido repetido.
+  const tasks = (filterCategoryId
     ? allTasks.filter((t) => categoryFor(t, categories, projects)?.id === filterCategoryId)
-    : allTasks;
+    : allTasks
+  ).filter((t) => !t.isHabit);
 
   const anchor = fromYmd(viewDate);
   const viewMonth = anchor.getMonth();

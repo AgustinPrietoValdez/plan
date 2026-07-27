@@ -22,19 +22,21 @@ import { CalendarWeekView } from "./CalendarWeekView";
 import { CalendarDayView } from "./CalendarDayView";
 import { CalendarHabitsView } from "./CalendarHabitsView";
 import { CalendarRecurringView } from "./CalendarRecurringView";
-import { ICal, IChevL, IChevR, IColumns, IFilter, IHabit, IList, IPlus, IRecurring, ISun } from "../icons";
+import { IChevL, IChevR, IFilter, IPlus } from "../icons";
 
 function fluid(base: number): string {
   return `calc(var(--s, 2) * ${base}px)`;
 }
 
-const TABS: { view: View; label: string; icon: (size: number) => React.ReactNode }[] = [
-  { view: "day", label: "Día", icon: (s) => <ISun size={s} stroke={1.7} /> },
-  { view: "week", label: "Semana", icon: (s) => <IColumns size={s} stroke={1.7} /> },
-  { view: "month", label: "Mes", icon: (s) => <ICal size={s} stroke={1.7} /> },
-  { view: "project", label: "Proyecto", icon: (s) => <IList size={s} stroke={1.7} /> },
-  { view: "habits", label: "Hábitos", icon: (s) => <IHabit size={s} stroke={1.7} /> },
-  { view: "recurring", label: "Recurrentes", icon: (s) => <IRecurring size={s} stroke={1.7} /> },
+// Emoji, no íconos SVG monocromo — mismo estilo que las folder-tabs de
+// Compras/Café/Finanzas (🧾🍽️⚙️ / 📦🕓📖 / 📊🎯🏦).
+const TABS: { view: View; label: string; icon: string }[] = [
+  { view: "day", label: "Día", icon: "☀️" },
+  { view: "week", label: "Semana", icon: "🗓️" },
+  { view: "month", label: "Mes", icon: "📅" },
+  { view: "project", label: "Proyecto", icon: "📁" },
+  { view: "habits", label: "Hábitos", icon: "✅" },
+  { view: "recurring", label: "Recurrentes", icon: "🔁" },
 ];
 
 function todayMonthKey(): string {
@@ -53,7 +55,7 @@ interface Props {
 export function CalendarView({ onTaskClick, onDayClick, onToggleDone, onEventClick, onAddNew, onAddNewWithPrefill }: Props) {
   const s = useFrameScale();
   const { view, setView, viewDate, setViewDate, setSelectedDay, viewProjectId, openProjectManager } = useApp();
-  const [inboxOpen, setInboxOpen] = useState(true);
+  const [inboxOpen, setInboxOpen] = useState(false);
   const [habitsMonth, setHabitsMonth] = useState(todayMonthKey);
   const projects = useProjects().data ?? [];
   const tasks = useTasks().data ?? [];
@@ -132,7 +134,7 @@ export function CalendarView({ onTaskClick, onDayClick, onToggleDone, onEventCli
     <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden", ["--s" as string]: s } as CSSProperties}>
       <div style={{ padding: `${fluid(20)} ${fluid(20)} 0`, borderBottom: "1px solid var(--line)", flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: fluid(12), marginBottom: fluid(10) }}>
-          <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: fluid(38), height: fluid(38), borderRadius: fluid(9), color: "var(--accent)", background: "color-mix(in oklch, var(--accent) 15%, var(--bg))", flexShrink: 0, fontSize: fluid(19) }}>
+          <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: fluid(38), height: fluid(38), borderRadius: fluid(9), color: "var(--c-blue-fg)", background: "var(--c-blue)", flexShrink: 0, fontSize: fluid(19) }}>
             📅
           </span>
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -186,8 +188,8 @@ export function CalendarView({ onTaskClick, onDayClick, onToggleDone, onEventCli
                   color: active ? "var(--fg)" : "var(--fg-muted)",
                 }}
               >
-                <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: fluid(15), height: fluid(15) }}>
-                  {t.icon(14)}
+                <span aria-hidden style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: fluid(16), height: fluid(16), fontSize: fluid(14), lineHeight: 1 }}>
+                  {t.icon}
                 </span>
                 {t.label}
               </div>

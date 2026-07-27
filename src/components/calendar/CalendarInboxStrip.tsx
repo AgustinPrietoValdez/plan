@@ -32,7 +32,12 @@ export function CalendarInboxStrip({ open, onToggleOpen, onAddNew, onOpen }: Pro
 
   return (
     <div style={{ flexShrink: 0, background: "var(--bg-elev)", borderBottom: "1px solid var(--line)" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: fluid(9), padding: `${fluid(12)} ${fluid(20)} ${fluid(12)}` }}>
+      <div
+        role="button"
+        onClick={onToggleOpen}
+        title="Mostrar u ocultar el inbox"
+        style={{ display: "flex", alignItems: "center", gap: fluid(9), padding: `${fluid(12)} ${fluid(20)} ${fluid(12)}`, cursor: "pointer" }}
+      >
         <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: fluid(26), height: fluid(26), borderRadius: fluid(8), color: "var(--fg-muted)", background: "var(--bg-sunken)", flexShrink: 0 }}>
           <IInbox size={15} stroke={1.7} />
         </span>
@@ -41,14 +46,14 @@ export function CalendarInboxStrip({ open, onToggleOpen, onAddNew, onOpen }: Pro
           {unscheduled.length}
         </span>
         <span style={{ flex: 1 }} />
-        <button
-          onClick={onToggleOpen}
-          title="Mostrar u ocultar el inbox"
-          style={{ marginLeft: fluid(10), height: fluid(24), padding: `0 ${fluid(10)}`, borderRadius: fluid(7), border: "1px solid var(--line)", background: "var(--bg-elev)", color: "var(--fg-muted)", fontSize: fluid(11.5), fontWeight: 600, display: "inline-flex", alignItems: "center", gap: fluid(5), cursor: "pointer", flexShrink: 0 }}
+        {/* Ya no es un <button> propio: toda la fila dispara onToggleOpen (mas
+            facil de acertar el click), esto queda solo como indicador visual. */}
+        <span
+          style={{ marginLeft: fluid(10), height: fluid(24), padding: `0 ${fluid(10)}`, borderRadius: fluid(7), border: "1px solid var(--line)", background: "var(--bg-elev)", color: "var(--fg-muted)", fontSize: fluid(11.5), fontWeight: 600, display: "inline-flex", alignItems: "center", gap: fluid(5), flexShrink: 0 }}
         >
           {open ? <IChevU size={13} /> : <IChevD size={13} />}
           {open ? "Ocultar" : "Mostrar"}
-        </button>
+        </span>
       </div>
       {open && (
         <div

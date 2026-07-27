@@ -44,7 +44,7 @@ export function FinanzasView() {
           <span style={{
             display: "inline-flex", alignItems: "center", justifyContent: "center",
             width: fluid(38), height: fluid(38), borderRadius: fluid(9), fontSize: fluid(19),
-            color: "var(--c-blue-fg)", background: "var(--c-blue)", flexShrink: 0,
+            color: "var(--c-sand-fg)", background: "var(--c-sand)", flexShrink: 0,
           }}>💰</span>
           <div style={{ flex: 1 }}>
             <h2 style={{ margin: 0, fontSize: fluid(22), fontWeight: 600, letterSpacing: "-0.02em", lineHeight: 1.15 }}>Finanzas</h2>

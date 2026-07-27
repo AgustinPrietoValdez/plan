@@ -1,9 +1,8 @@
 import { useDraggable } from "@dnd-kit/core";
 import { useMemo, type CSSProperties } from "react";
 import { DOW_LONG_ES, addDays, fromYmd, startOfWeek, todayYmd, ymd } from "../../lib/date";
-import { categoryFor, projectFor } from "../../lib/categoryFor";
+import { categoryFor } from "../../lib/categoryFor";
 import { colorsForCategory } from "../../lib/categoryColor";
-import { fmtDuration, priLabelEs } from "../../lib/format";
 import { useApp } from "../../lib/store";
 import { useCategories, useEvents, useProjects, useTasks } from "../../lib/queries";
 import type { CalendarEvent, Category, Project, Task } from "../../types";
@@ -26,9 +25,12 @@ export function CalendarWeekView({ onTaskClick, onToggleDone, onEventClick }: Pr
   const allEvents = useEvents().data ?? [];
   const { viewDate, filterCategoryId } = useApp();
 
-  const tasks = filterCategoryId
+  // Semana = vista de un vistazo; los habitos (recurrentes a diario) solo se
+  // ven en Dia, ahi tienen su propio trato — aca solo generan ruido repetido.
+  const tasks = (filterCategoryId
     ? allTasks.filter((t) => categoryFor(t, categories, projects)?.id === filterCategoryId)
-    : allTasks;
+    : allTasks
+  ).filter((t) => !t.isHabit);
 
   const start = startOfWeek(fromYmd(viewDate));
   const days = Array.from({ length: 7 }, (_, i) => addDays(start, i));
@@ -112,7 +114,6 @@ function WeekTaskCard({
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: task.id, data: { task } });
   const cat = categoryFor(task, categories, projects);
   const colors = cat ? colorsForCategory(cat) : { bg: "var(--bg-sunken)", fg: "var(--fg-muted)" };
-  const proj = projectFor(task, projects);
   return (
     <div
       ref={setNodeRef}
@@ -120,38 +121,41 @@ function WeekTaskCard({
       {...listeners}
       onClick={(e) => { e.stopPropagation(); onTaskClick(task); }}
       style={{
-        display: "flex", flexDirection: "column", gap: fluid(3), padding: `${fluid(6)} ${fluid(8)}`, borderRadius: fluid(7),
-        flexShrink: 0, cursor: "grab", background: colors.bg, color: colors.fg, opacity: isDragging ? 0.4 : 1,
+        display: "flex", alignItems: "flex-start", gap: fluid(5), padding: `${fluid(6)} ${fluid(8)}`, borderRadius: fluid(7),
+        flexShrink: 0, minWidth: 0, overflow: "hidden", boxSizing: "border-box",
+        cursor: "grab", background: colors.bg, color: colors.fg, opacity: isDragging ? 0.4 : 1,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: fluid(5) }}>
-        <span
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => { e.stopPropagation(); onToggleDone(task); }}
-          style={{
-            width: fluid(12), height: fluid(12), borderRadius: fluid(4), flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
-            border: `1.4px solid ${task.done ? "var(--ok)" : `color-mix(in oklch, ${colors.fg} 45%, transparent)`}`,
-            background: task.done ? "var(--ok)" : "transparent",
-          }}
-        >
-          {task.done && (
-            <svg width={7} height={7} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round">
-              <path d="M5 12l4.5 4.5L19 7" />
-            </svg>
-          )}
-        </span>
-        <span style={{ fontSize: fluid(11.5), fontWeight: 500, lineHeight: 1.25, textDecoration: task.done ? "line-through" : undefined, opacity: task.done ? 0.6 : 1 }}>
-          {task.title}
-        </span>
-      </div>
-      <div style={{ fontSize: fluid(10), opacity: 0.75, display: "flex", gap: fluid(5), alignItems: "center", paddingLeft: fluid(17) }}>
-        {proj && <span>{proj.name}</span>}
-        {!proj && cat && <span>{cat.name}</span>}
-        <span>·</span>
-        <span>{priLabelEs(task.priority)}</span>
-        <span>·</span>
-        <span>{fmtDuration(task.duration)}</span>
-      </div>
+      <span
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => { e.stopPropagation(); onToggleDone(task); }}
+        style={{
+          width: fluid(12), height: fluid(12), borderRadius: fluid(4), flexShrink: 0, marginTop: fluid(1.5), display: "flex", alignItems: "center", justifyContent: "center",
+          border: `1.4px solid ${task.done ? "var(--ok)" : `color-mix(in oklch, ${colors.fg} 45%, transparent)`}`,
+          background: task.done ? "var(--ok)" : "transparent",
+        }}
+      >
+        {task.done && (
+          <svg width={7} height={7} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M5 12l4.5 4.5L19 7" />
+          </svg>
+        )}
+      </span>
+      {/* Semana = vista de un vistazo, solo el nombre (hasta 2 lineas, despues
+          "..."). Prioridad/duracion/proyecto son detalle de dia a dia — viven
+          en Dia, no aca (pedido explicito del usuario). */}
+      <span
+        style={{
+          fontSize: fluid(11.5), fontWeight: 500, lineHeight: 1.25, minWidth: 0,
+          // minHeight reserva el alto de 2 lineas siempre, para que las cards no
+          // salten de tamaño segun tengan titulo corto o largo (pedido del usuario).
+          minHeight: fluid(11.5 * 1.25 * 2),
+          display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
+          textDecoration: task.done ? "line-through" : undefined, opacity: task.done ? 0.6 : 1,
+        }}
+      >
+        {task.title}
+      </span>
     </div>
   );
 }

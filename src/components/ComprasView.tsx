@@ -1,4 +1,14 @@
-import { useEffect, useMemo, useState, type DragEvent, type MouseEvent, type ReactNode } from "react";
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 import {
   useAccounts,
   useCreateExpense,
@@ -49,6 +59,7 @@ import { CURRENCY, fmtMoney, fmtUsdFromDkk } from "../lib/money";
 import { useUsdRate } from "../lib/useUsdRate";
 import { defaultSlot, useLogMeal } from "../lib/useLogMeal";
 import { useToggleBought } from "../lib/useToggleBought";
+import { useAutoExchangeRates } from "../lib/exchangeRates";
 import { fromYmd, mondayOfThisWeek, shiftWeek, todayYmd, weekLabel, ymd } from "../lib/date";
 import {
   DIMENSION_LABELS,
@@ -72,8 +83,18 @@ import type {
 } from "../types";
 import { colorsForHue } from "../lib/categoryColor";
 import { useApp, COMPRAS_TABS } from "../lib/store";
+import { useFrameScale } from "../lib/uiScale";
 import { IngredientCategoryManager } from "./IngredientCategoryManager";
 import { ICheck, IChevD, IChevL, IChevR, IEdit, IPlus, ITrash, IX } from "./icons";
+
+// El mockup de Compras (como el de Home/Café/Finanzas) fue diseñado en un frame
+// fijo de 1280×720 pensado para 2560×1440 (2×). `fluid(n)` = "n px a esa
+// escala": se resuelve a `calc(var(--s) * n px)`, donde `--s` lo pone
+// useFrameScale() en la raíz de ComprasView y cascadea a todo lo de abajo —
+// igual que FinanzasView.tsx / CafeView.tsx.
+function fluid(base: number): string {
+  return `calc(var(--s, 2) * ${base}px)`;
+}
 
 const MEAL_TYPE_LABELS: Record<MealType, string> = {
   breakfast_snack: "Desayuno / Merienda",
@@ -97,20 +118,20 @@ function Pill({ tone, children, title }: { tone: string; children: ReactNode; ti
       style={{
         display: "inline-flex",
         alignItems: "center",
-        gap: 6,
-        fontSize: 10.5,
+        gap: fluid(3),
+        fontSize: fluid(10.5),
         textTransform: "uppercase",
         letterSpacing: ".04em",
         fontWeight: 700,
         color: tone,
         background: `color-mix(in oklch, ${tone} 22%, var(--bg))`,
         border: `1px solid color-mix(in oklch, ${tone} 55%, transparent)`,
-        padding: "2px 8px",
+        padding: `${fluid(2)} ${fluid(8)}`,
         borderRadius: 999,
         whiteSpace: "nowrap",
       }}
     >
-      <span style={{ width: 6, height: 6, borderRadius: "50%", background: tone, flex: "none" }} />
+      <span style={{ width: fluid(6), height: fluid(6), borderRadius: "50%", background: tone, flex: "none" }} />
       {children}
     </span>
   );
@@ -118,10 +139,10 @@ function Pill({ tone, children, title }: { tone: string; children: ReactNode; ti
 
 function SectionTitle({ children, right }: { children: ReactNode; right?: ReactNode }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, minHeight: 28 }}>
+    <div style={{ display: "flex", alignItems: "center", gap: fluid(8), minHeight: fluid(28) }}>
       <div
         style={{
-          fontSize: 11,
+          fontSize: fluid(11),
           textTransform: "uppercase",
           letterSpacing: ".05em",
           fontWeight: 600,
@@ -144,7 +165,7 @@ function IconBtn({ onClick, title, children, danger }: { onClick: () => void; ti
   return (
     <button
       className="btn ghost"
-      style={{ padding: "3px 7px", fontSize: 11, color: danger ? "var(--danger)" : undefined }}
+      style={{ padding: `${fluid(3)} ${fluid(7)}`, fontSize: fluid(11), color: danger ? "var(--danger)" : undefined }}
       onClick={onClick}
       title={title}
       aria-label={title}
@@ -154,57 +175,118 @@ function IconBtn({ onClick, title, children, danger }: { onClick: () => void; ti
   );
 }
 
+// ---------------- Shell: icon-chip header + folder tabs ----------------
+
+interface ListasPanelHandle {
+  openAddIngredient: () => void;
+  openCategoryManager: () => void;
+}
+interface PlanPanelHandle {
+  addRecipe: () => void;
+  generatePlan: () => void;
+}
+
 export function ComprasView() {
-  const { comprasTab: tab } = useApp();
+  const { comprasTab: tab, setComprasTab, comprasWeek: weekStart, setComprasWeek: setWeekStart } = useApp();
+  const s = useFrameScale();
+  const listasRef = useRef<ListasPanelHandle>(null);
+  const planRef = useRef<PlanPanelHandle>(null);
+
+  const onSecondary = () => {
+    if (tab === "listas") listasRef.current?.openCategoryManager();
+    else if (tab === "plan") planRef.current?.generatePlan();
+  };
+  const onPrimary = () => {
+    if (tab === "listas") listasRef.current?.openAddIngredient();
+    else if (tab === "plan") planRef.current?.addRecipe();
+  };
 
   return (
-    <div className="day-view-main" style={{ flex: 1, minHeight: 0 }}>
-      {tab !== "listas" && tab !== "plan" && (
-        <header
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 14,
-            paddingBottom: 8,
-            borderBottom: "1px solid var(--line)",
-          }}
-        >
-          <div>
-            <div
-              style={{
-                fontSize: 11,
-                textTransform: "uppercase",
-                letterSpacing: ".06em",
-                color: "var(--fg-subtle)",
-                fontWeight: 600,
-              }}
-            >
-              Compras
-            </div>
-            <div style={{ fontSize: 24, fontWeight: 600, letterSpacing: "-0.02em", lineHeight: 1.1 }}>
-              {COMPRAS_TABS.find((t) => t.id === tab)?.label}
+    <div
+      style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, overflow: "hidden", ["--s" as string]: s } as React.CSSProperties}
+    >
+      {/* Header + tabs */}
+      <div style={{ padding: `${fluid(20)} ${fluid(20)} 0`, borderBottom: "1px solid var(--line)", flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: fluid(12), marginBottom: fluid(10) }}>
+          <span
+            style={{
+              display: "inline-flex", alignItems: "center", justifyContent: "center",
+              width: fluid(38), height: fluid(38), borderRadius: fluid(9), fontSize: fluid(19),
+              color: "var(--c-mint-fg)", background: "var(--c-mint)", flexShrink: 0,
+            }}
+          >
+            🛒
+          </span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h2 style={{ margin: 0, fontSize: fluid(22), fontWeight: 600, letterSpacing: "-0.02em", lineHeight: 1.15 }}>Compras</h2>
+            <div style={{ fontSize: fluid(13), color: "var(--fg-muted)", marginTop: 2 }}>
+              Ingredientes, recetas y listas · anti-desperdicio
             </div>
           </div>
-        </header>
-      )}
 
-      <div
-        style={{
-          paddingTop: 14,
-          minHeight: 0,
-          flex: 1,
-          display: "flex",
-          flexDirection: "column",
-          overflowY: "auto",
-        }}
-      >
-        {tab === "listas" ? (
-          <ListasPanel />
-        ) : tab === "plan" ? (
-          <PlanPanel />
-        ) : (
-          <AjustesPanel />
-        )}
+          {tab !== "ajustes" && (
+            <div style={{ display: "flex", alignItems: "center", gap: fluid(5), marginRight: fluid(4) }}>
+              <button className="icon-btn" title="Semana anterior" onClick={() => setWeekStart(shiftWeek(weekStart, -1))}>
+                <IChevL size={13} />
+              </button>
+              <span style={{ fontSize: fluid(13.5), fontWeight: 600, fontVariantNumeric: "tabular-nums", minWidth: fluid(90), textAlign: "center" }}>
+                {weekLabel(weekStart)}
+              </span>
+              <button className="icon-btn" title="Semana siguiente" onClick={() => setWeekStart(shiftWeek(weekStart, 1))}>
+                <IChevR size={13} />
+              </button>
+              {weekStart !== mondayOfThisWeek() && (
+                <button className="btn ghost" onClick={() => setWeekStart(mondayOfThisWeek())}>
+                  Hoy
+                </button>
+              )}
+            </div>
+          )}
+
+          {tab !== "ajustes" && (
+            <button className="btn ghost" onClick={onSecondary}>
+              {tab === "listas" ? "Categorías" : "Generar plan semanal"}
+            </button>
+          )}
+          {tab !== "ajustes" && (
+            <button className="btn primary" onClick={onPrimary}>
+              <IPlus size={13} /> {tab === "listas" ? "Agregar ingrediente" : "Agregar receta"}
+            </button>
+          )}
+        </div>
+
+        {/* Listas / Plan semanal / Ajustes — folder tabs */}
+        <div style={{ display: "flex", gap: fluid(2), alignItems: "flex-end" }}>
+          {COMPRAS_TABS.map((t) => {
+            const active = tab === t.id;
+            return (
+              <div
+                key={t.id}
+                role="button"
+                onClick={() => setComprasTab(t.id)}
+                style={{
+                  padding: `${fluid(9)} ${fluid(16)}`, borderRadius: `${fluid(9)} ${fluid(9)} 0 0`,
+                  fontSize: fluid(13), fontWeight: 600, cursor: "pointer",
+                  display: "inline-flex", alignItems: "center", gap: fluid(7),
+                  marginBottom: -1, border: "1px solid transparent", borderBottom: "none",
+                  background: active ? "var(--bg-sunken)" : "transparent",
+                  color: active ? "var(--fg)" : "var(--fg-muted)",
+                  borderColor: active ? "var(--line)" : "transparent",
+                }}
+              >
+                <span aria-hidden style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: fluid(16), height: fluid(16), fontSize: fluid(14), lineHeight: 1 }}>
+                  {t.icon}
+                </span>
+                {t.label}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Content — el scroll vive dentro de cada tab */}
+      <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", padding: `${fluid(14)} ${fluid(20)} ${fluid(16)}`, overflow: "hidden" }}>
+        {tab === "listas" ? <ListasPanel ref={listasRef} /> : tab === "plan" ? <PlanPanel ref={planRef} /> : <AjustesPanel />}
       </div>
     </div>
   );
@@ -226,12 +308,12 @@ const DEFAULT_MEAL_TIMES: Record<MealSlot, string> = {
 function AjustesPanel() {
   const settingsQ = useComprasSettings();
   const upsert = useUpsertComprasSettings();
+  const { ratesPerUsd, ratesUpdatedAt } = useAutoExchangeRates();
 
   const derive = (s: typeof settingsQ.data) => ({
     mealTimes: { ...DEFAULT_MEAL_TIMES, ...(s?.mealTimes ?? {}) },
     expiryWarnDays: s?.expiryWarnDays ?? 2,
     notificationsEnabled: s?.notificationsEnabled ?? false,
-    dkkPerUsd: s?.dkkPerUsd ?? 6.9,
   });
   const [form, setForm] = useState(() => derive(settingsQ.data));
   useEffect(() => { setForm(derive(settingsQ.data)); }, [settingsQ.data]);
@@ -251,8 +333,14 @@ function AjustesPanel() {
     window.alert("Ajustes guardados.");
   };
 
-  const labelStyle = { fontSize: 13, color: "var(--fg-muted)", display: "flex", alignItems: "center", gap: 8 } as const;
-  const sectionStyle = { background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: 10, padding: 16, display: "flex", flexDirection: "column", gap: 12 } as const;
+  const labelStyle = { fontSize: fluid(13), color: "var(--fg-muted)", display: "flex", alignItems: "center", gap: fluid(8) } as const;
+  const sectionStyle = {
+    background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: fluid(10),
+    padding: fluid(16), display: "flex", flexDirection: "column", gap: fluid(12),
+  } as const;
+  const optionRowStyle = {
+    ...labelStyle, padding: `${fluid(8)} ${fluid(10)}`, border: "1px solid var(--line)", borderRadius: fluid(8), background: "var(--bg)",
+  } as const;
 
   const SLOT_TONE: Record<MealSlot, string> = {
     desayuno: "var(--warn)",
@@ -262,23 +350,16 @@ function AjustesPanel() {
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 560 }}>
+    <div className="cal-scroll" style={{ display: "flex", flexDirection: "column", gap: fluid(16), maxWidth: fluid(560), overflowY: "auto", paddingRight: fluid(6) }}>
       <section style={sectionStyle}>
         <SectionTitle>Moneda</SectionTitle>
-        <label style={labelStyle}>
-          US$1 =
-          <input
-            className="input"
-            type="number"
-            min={0}
-            step="0.01"
-            value={form.dkkPerUsd}
-            onChange={(e) => setForm((f) => ({ ...f, dkkPerUsd: Number(e.target.value) || 0 }))}
-            style={{ width: 90 }}
-          />
-          coronas (kr)
-        </label>
-        <div style={{ fontSize: 11, color: "var(--fg-subtle)" }}>Los precios se cargan en kr; se muestra la conversión a US$ con esta cotización.</div>
+        <div style={labelStyle}>
+          US$1 = <strong style={{ color: "var(--fg)", fontVariantNumeric: "tabular-nums" }}>{ratesPerUsd.DKK.toFixed(2)}</strong> coronas (kr)
+        </div>
+        <div style={{ fontSize: fluid(11), color: "var(--fg-subtle)" }}>
+          Los precios se cargan en kr; la conversión a US$ usa la cotización automática de
+          Finanzas ({ratesUpdatedAt ? `actualizada ${ratesUpdatedAt.slice(0, 10)}` : "sin cotización aún"}) — se edita desde Finanzas &gt; Holdings.
+        </div>
       </section>
 
       <section style={sectionStyle}>
@@ -288,7 +369,7 @@ function AjustesPanel() {
             type="checkbox"
             checked={form.notificationsEnabled}
             onChange={(e) => setForm((f) => ({ ...f, notificationsEnabled: e.target.checked }))}
-            style={{ width: 16, height: 16 }}
+            style={{ width: fluid(16), height: fluid(16) }}
           />
           Activar avisos en el celular
         </label>
@@ -300,15 +381,15 @@ function AjustesPanel() {
             min={0}
             value={form.expiryWarnDays}
             onChange={(e) => setForm((f) => ({ ...f, expiryWarnDays: Math.max(0, Number(e.target.value) || 0) }))}
-            style={{ width: 60 }}
+            style={{ width: fluid(60) }}
           />
           días antes
         </label>
-        <div style={{ fontSize: 12, color: "var(--fg-muted)", marginTop: 4 }}>Horarios para preguntar "¿qué vas a comer?"</div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+        <div style={{ fontSize: fluid(12), color: "var(--fg-muted)", marginTop: 4 }}>Horarios para preguntar "¿qué vas a comer?"</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: fluid(8) }}>
           {MEAL_SLOTS.map((slot) => (
-            <label key={slot.id} style={{ ...labelStyle, padding: "8px 10px", border: "1px solid var(--line)", borderRadius: 8, background: "var(--bg)" }}>
-              <span style={{ width: 8, height: 8, borderRadius: "50%", background: SLOT_TONE[slot.id] }} />
+            <label key={slot.id} style={optionRowStyle}>
+              <span style={{ width: fluid(8), height: fluid(8), borderRadius: "50%", background: SLOT_TONE[slot.id] }} />
               <span style={{ flex: 1 }}>{slot.label}</span>
               <input
                 className="input"
@@ -323,10 +404,10 @@ function AjustesPanel() {
 
       <section style={sectionStyle}>
         <SectionTitle>Plan semanal</SectionTitle>
-        <div style={{ fontSize: 12, color: "var(--fg-muted)" }}>Cuántas comidas de cada tipo necesitás por semana.</div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+        <div style={{ fontSize: fluid(12), color: "var(--fg-muted)" }}>Cuántas comidas de cada tipo necesitás por semana.</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: fluid(8) }}>
           {MEAL_BUCKETS.map((bucket) => (
-            <label key={bucket} style={{ ...labelStyle, padding: "8px 10px", border: "1px solid var(--line)", borderRadius: 8, background: "var(--bg)" }}>
+            <label key={bucket} style={optionRowStyle}>
               <span style={{ flex: 1 }}>{MEAL_TYPE_LABELS[bucket]}</span>
               <input
                 className="input"
@@ -334,18 +415,18 @@ function AjustesPanel() {
                 min={0}
                 value={mealTargets[bucket]}
                 onChange={(e) => updateMealTarget(bucket, Number(e.target.value) || 0)}
-                style={{ width: 60 }}
+                style={{ width: fluid(60) }}
               />
             </label>
           ))}
         </div>
       </section>
 
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <button className="btn" style={{ background: "var(--accent)", color: "#fff", borderColor: "var(--accent)" }} onClick={save}>
+      <div style={{ display: "flex", alignItems: "center", gap: fluid(12) }}>
+        <button className="btn primary" onClick={save}>
           Guardar ajustes
         </button>
-        <span style={{ fontSize: 11, color: "var(--fg-subtle)" }}>Se sincronizan al celular, que es donde suenan las notificaciones.</span>
+        <span style={{ fontSize: fluid(11), color: "var(--fg-subtle)" }}>Se sincronizan al celular, que es donde suenan las notificaciones.</span>
       </div>
     </div>
   );
@@ -386,7 +467,7 @@ function RecipeIngredientAdder({
 
   if (ingredients.length === 0 && categories.length === 0) {
     return (
-      <div style={{ fontSize: 12, color: "var(--fg-subtle)" }}>
+      <div style={{ fontSize: fluid(12), color: "var(--fg-subtle)" }}>
         Cargá ingredientes en la pestaña Ingredientes para poder agregarlos.
       </div>
     );
@@ -398,13 +479,13 @@ function RecipeIngredientAdder({
         e.preventDefault();
         add();
       }}
-      style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 2 }}
+      style={{ display: "flex", gap: fluid(6), alignItems: "center", flexWrap: "wrap", marginTop: 2 }}
     >
       <select
         className="input"
         value={mode}
         onChange={(e) => setMode(e.target.value as "ingrediente" | "categoria")}
-        style={{ width: 110 }}
+        style={{ width: fluid(110) }}
         title="Ingrediente concreto o categoria generica"
       >
         <option value="ingrediente">Ingrediente</option>
@@ -418,7 +499,7 @@ function RecipeIngredientAdder({
             setIngredientId(e.target.value);
             setUnit("");
           }}
-          style={{ flex: 1, minWidth: 160 }}
+          style={{ flex: 1, minWidth: fluid(160) }}
         >
           <option value="">Elegí ingrediente…</option>
           {ingredients.map((i) => (
@@ -432,7 +513,7 @@ function RecipeIngredientAdder({
           className="input"
           value={categoryId}
           onChange={(e) => setCategoryId(e.target.value)}
-          style={{ flex: 1, minWidth: 160 }}
+          style={{ flex: 1, minWidth: fluid(160) }}
         >
           <option value="">Elegí categoría…</option>
           {categories.map((c) => (
@@ -447,7 +528,7 @@ function RecipeIngredientAdder({
         placeholder={mode === "categoria" ? "Cantidad" : "Cant. (admite 1/2)"}
         value={amount}
         onChange={(e) => setAmount(e.target.value)}
-        style={{ width: 120 }}
+        style={{ width: fluid(120) }}
       />
       {mode === "ingrediente" && selected && units.length > 1 ? (
         <select className="input" value={effectiveUnit} onChange={(e) => setUnit(e.target.value)}>
@@ -458,7 +539,7 @@ function RecipeIngredientAdder({
           ))}
         </select>
       ) : mode === "ingrediente" && selected ? (
-        <span style={{ fontSize: 12, color: "var(--fg-muted)", width: 24 }}>{units[0]?.label}</span>
+        <span style={{ fontSize: fluid(12), color: "var(--fg-muted)", width: fluid(24) }}>{units[0]?.label}</span>
       ) : null}
       <button
         className="btn"
@@ -473,8 +554,8 @@ function RecipeIngredientAdder({
 
 // ---------------- Listas ----------------
 
-function ListasPanel() {
-  const { comprasWeek: weekStart, setComprasWeek: setWeekStart } = useApp();
+const ListasPanel = forwardRef<ListasPanelHandle>(function ListasPanel(_props, ref) {
+  const { comprasWeek: weekStart } = useApp();
 
   const itemsQ = useShoppingItems();
   const ingredientsQ = useIngredients();
@@ -491,6 +572,11 @@ function ListasPanel() {
   const [showCategoryManager, setShowCategoryManager] = useState(false);
   const [showAddIngredient, setShowAddIngredient] = useState(false);
   const [editingIngredientId, setEditingIngredientId] = useState<string | null>(null);
+
+  useImperativeHandle(ref, () => ({
+    openAddIngredient: () => setShowAddIngredient(true),
+    openCategoryManager: () => setShowCategoryManager(true),
+  }));
 
   const allItems = useMemo(() => itemsQ.data ?? [], [itemsQ.data]);
   const items = useMemo(() => allItems.filter((i) => i.weekStart === weekStart), [allItems, weekStart]);
@@ -630,59 +716,20 @@ function ListasPanel() {
         />
       )}
 
-      {/* Header estilo Finanzas: titulo grande a la izquierda, semana + acciones a la derecha */}
-      <header
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 14,
-          paddingBottom: 8,
-          marginBottom: 12,
-          borderBottom: "1px solid var(--line)",
-        }}
-      >
-        <div>
-          <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", color: "var(--fg-subtle)", fontWeight: 600 }}>
-            Listas
-          </div>
-          <div style={{ fontSize: 24, fontWeight: 600, letterSpacing: "-0.02em", lineHeight: 1.1, fontVariantNumeric: "tabular-nums" }}>
-            {weekLabel(weekStart)}
-          </div>
-        </div>
-        <div style={{ flex: 1 }} />
-        <button className="icon-btn" title="Semana anterior" onClick={() => setWeekStart(shiftWeek(weekStart, -1))}>
-          <IChevL size={15} />
-        </button>
-        <button className="icon-btn" title="Semana siguiente" onClick={() => setWeekStart(shiftWeek(weekStart, 1))}>
-          <IChevR size={15} />
-        </button>
-        {weekStart !== mondayOfThisWeek() && (
-          <button className="btn ghost" style={{ fontSize: 11, padding: "3px 8px" }} onClick={() => setWeekStart(mondayOfThisWeek())}>
-            Hoy
-          </button>
-        )}
-        <button className="btn ghost" onClick={() => setShowAddIngredient(true)}>
-          <IPlus size={12} /> Agregar ingrediente
-        </button>
-        <button className="btn ghost" onClick={() => setShowCategoryManager(true)}>
-          Categorías
-        </button>
-      </header>
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24, flex: 1, minHeight: 0, overflowY: "auto" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: fluid(24), flex: 1, minHeight: 0 }}>
         {/* IZQUIERDA — arriba la lista de esta semana, abajo el inventario (50/50) */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0, minHeight: 0 }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1, minHeight: 0 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: fluid(8), minWidth: 0, minHeight: 0 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: fluid(8), flex: 1, minHeight: 0 }}>
             <SectionTitle
               right={
-                <button className="btn ghost" style={{ fontSize: 11, padding: "3px 8px" }} onClick={() => setShowClose(true)} disabled={bought.length === 0} title="Registrar lo comprado como gasto en Finanzas">
+                <button className="btn ghost" onClick={() => setShowClose(true)} disabled={bought.length === 0} title="Registrar lo comprado como gasto en Finanzas">
                   Cerrar lista / registrar gasto
                 </button>
               }
             >
               Lista · {items.length}
               {total > 0 && (
-                <span style={{ marginLeft: 8, color: "var(--fg)", fontWeight: 700, textTransform: "none" }}>
+                <span style={{ marginLeft: fluid(8), color: "var(--fg)", fontWeight: 700, textTransform: "none" }}>
                   {fmtMoney(total)} <span style={{ color: "var(--fg-muted)", fontWeight: 500 }}>≈ {fmtUsdFromDkk(total, usdRate)}</span>
                 </span>
               )}
@@ -692,22 +739,24 @@ function ListasPanel() {
               onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
               onDragLeave={() => setDragOver(false)}
               onDrop={onListDrop}
+              className="cal-scroll"
               style={{
                 display: "flex",
                 flexDirection: "column",
-                gap: 8,
+                gap: fluid(8),
                 flex: 1,
                 minHeight: 0,
-                padding: 6,
+                padding: fluid(6),
                 boxSizing: "border-box",
-                borderRadius: 10,
+                borderRadius: fluid(10),
                 overflowY: "auto",
                 border: dragOver ? "2px dashed var(--accent)" : "2px dashed transparent",
-                transition: "border-color .1s",
+                background: dragOver ? "var(--accent-soft)" : undefined,
+                transition: "border-color .1s, background .1s",
               }}
             >
               {items.length === 0 && (
-                <div style={{ fontSize: 12.5, color: "var(--fg-subtle)", padding: "8px 2px" }}>
+                <div style={{ fontSize: fluid(12.5), color: "var(--fg-subtle)", padding: `${fluid(8)} 2px` }}>
                   La lista de esta semana esta vacia. Arrastra una variante desde Ingredientes.
                 </div>
               )}
@@ -724,7 +773,7 @@ function ListasPanel() {
                 />
               ))}
               {bought.length > 0 && (
-                <div style={{ fontSize: 11, color: "var(--fg-subtle)", textTransform: "uppercase", letterSpacing: ".04em", marginTop: 6 }}>
+                <div style={{ fontSize: fluid(11), color: "var(--fg-subtle)", textTransform: "uppercase", letterSpacing: ".04em", marginTop: fluid(6) }}>
                   Comprados · {bought.length}
                 </div>
               )}
@@ -743,28 +792,30 @@ function ListasPanel() {
             </div>
           </div>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1, minHeight: 0 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: fluid(8), flex: 1, minHeight: 0 }}>
             <SectionTitle>Inventario · {inventory.length}</SectionTitle>
             <div
               onDragOver={(e) => { e.preventDefault(); setDragOverInv(true); }}
               onDragLeave={() => setDragOverInv(false)}
               onDrop={onInventoryDrop}
+              className="cal-scroll"
               style={{
                 display: "flex",
                 flexDirection: "column",
-                gap: 8,
+                gap: fluid(8),
                 flex: 1,
                 minHeight: 0,
-                padding: 6,
+                padding: fluid(6),
                 boxSizing: "border-box",
-                borderRadius: 10,
+                borderRadius: fluid(10),
                 overflowY: "auto",
                 border: dragOverInv ? "2px dashed var(--accent)" : "2px dashed transparent",
-                transition: "border-color .1s",
+                background: dragOverInv ? "var(--accent-soft)" : undefined,
+                transition: "border-color .1s, background .1s",
               }}
             >
               {inventory.length === 0 && (
-                <div style={{ fontSize: 12.5, color: "var(--fg-subtle)", padding: "8px 2px" }}>
+                <div style={{ fontSize: fluid(12.5), color: "var(--fg-subtle)", padding: `${fluid(8)} 2px` }}>
                   Sin stock cargado. Arrastra una variante desde Ingredientes para sumarla.
                 </div>
               )}
@@ -791,11 +842,11 @@ function ListasPanel() {
         </div>
 
         {/* DERECHA — catalogo de ingredientes (arrastrar una variante a la izquierda para agregarla) */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0, minHeight: 0 }}>
-          <SectionTitle>Ingredientes</SectionTitle>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1, minHeight: 0, padding: 6, boxSizing: "border-box", overflowY: "auto" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: fluid(8), minWidth: 0, minHeight: 0 }}>
+          <SectionTitle>Ingredientes · {ingredients.length}</SectionTitle>
+          <div className="cal-scroll" style={{ display: "flex", flexDirection: "column", gap: fluid(8), flex: 1, minHeight: 0, padding: fluid(6), boxSizing: "border-box", overflowY: "auto" }}>
             {ingredients.length === 0 && (
-              <div style={{ fontSize: 12.5, color: "var(--fg-subtle)", padding: "8px 2px" }}>
+              <div style={{ fontSize: fluid(12.5), color: "var(--fg-subtle)", padding: `${fluid(8)} 2px` }}>
                 Todavia no cargaste ingredientes. Usa "Agregar ingrediente" arriba.
               </div>
             )}
@@ -814,7 +865,7 @@ function ListasPanel() {
       </div>
     </>
   );
-}
+});
 
 // ---------------- Cerrar lista / registrar gasto ----------------
 
@@ -1074,29 +1125,29 @@ function InventoryGroup({
   };
 
   return (
-    <div style={{ background: "var(--bg-elev)", border: `1px solid ${groupWarn ? "var(--warn)" : "var(--line)"}`, borderRadius: 10 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px" }}>
+    <div style={{ background: "var(--bg-elev)", border: `1px solid ${groupWarn ? "var(--warn)" : "var(--line)"}`, borderRadius: fluid(10) }}>
+      <div style={{ display: "flex", alignItems: "center", gap: fluid(10), padding: `${fluid(10)} ${fluid(12)}` }}>
         <span style={{ display: "inline-flex", cursor: "pointer", transform: open ? "rotate(0deg)" : "rotate(-90deg)", transition: "transform .15s" }} onClick={() => setOpen((o) => !o)}>
-          <IChevD size={14} />
+          <IChevD size={13} />
         </span>
-        <span style={{ fontSize: 14, fontWeight: 600, flex: 1, cursor: "pointer" }} onClick={() => setOpen((o) => !o)}>{name}</span>
-        <span style={{ fontSize: 11.5, color: "var(--fg-muted)" }}>{count} {count === 1 ? "lote" : "lotes"}</span>
-        <span style={{ fontSize: 13, color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums" }}>{totalLabel}</span>
-        <form onSubmit={(e) => { e.preventDefault(); subtract(); }} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+        <span style={{ fontSize: fluid(14), fontWeight: 600, flex: 1, cursor: "pointer" }} onClick={() => setOpen((o) => !o)}>{name}</span>
+        <span style={{ fontSize: fluid(11.5), color: "var(--fg-muted)" }}>{count} {count === 1 ? "lote" : "lotes"}</span>
+        <span style={{ fontSize: fluid(13), color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums" }}>{totalLabel}</span>
+        <form onSubmit={(e) => { e.preventDefault(); subtract(); }} style={{ display: "flex", alignItems: "center", gap: fluid(4) }}>
           <input
             className="input"
             placeholder={ingredient ? `cant. (${baseUnit(ingredient.dimension)})` : "cant."}
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
-            style={{ width: 88, fontSize: 12, padding: "3px 6px" }}
+            style={{ width: fluid(88), fontSize: fluid(12), padding: `${fluid(3)} ${fluid(6)}` }}
           />
-          <button className="btn ghost" type="submit" style={{ padding: "3px 8px", fontSize: 12 }} disabled={!amount.trim()} title="Restar del stock total (consume primero el lote que vence antes)">
+          <button className="btn ghost" type="submit" disabled={!amount.trim()} title="Restar del stock total (consume primero el lote que vence antes)">
             − restar
           </button>
         </form>
       </div>
       {open && (
-        <div style={{ borderTop: "1px solid var(--line)", padding: "6px 12px 10px" }}>
+        <div style={{ borderTop: "1px solid var(--line)", padding: `${fluid(6)} ${fluid(12)} ${fluid(10)}` }}>
           {lots.map((lot) => (
             <LotRow
               key={lot.id}
@@ -1133,13 +1184,13 @@ function LotRow({
   const expWarn = lot.expiresOn != null && !expSoon && lot.expiresOn <= warnLimit;
 
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0", borderBottom: "1px solid var(--line)" }}>
-      <span style={{ flex: 1, fontSize: 13 }}>{pres?.label ?? "Suelto"}</span>
-      <span style={{ fontSize: 12.5, color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: fluid(10), padding: `${fluid(6)} 0`, borderBottom: "1px solid var(--line)" }}>
+      <span style={{ flex: 1, fontSize: fluid(13) }}>{pres?.label ?? "Suelto"}</span>
+      <span style={{ fontSize: fluid(12.5), color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums" }}>
         {ingredient ? formatQuantity(lot.quantity, ingredient.dimension) : lot.quantity}
       </span>
       {lot.expiresOn && (
-        <span style={{ fontSize: 11, color: expSoon ? "var(--danger)" : expWarn ? "var(--warn)" : "var(--fg-subtle)" }}>
+        <span style={{ fontSize: fluid(11), color: expSoon ? "var(--danger)" : expWarn ? "var(--warn)" : "var(--fg-subtle)", fontWeight: expSoon || expWarn ? 600 : 400 }}>
           {expSoon ? "vencido" : `vence ${lot.expiresOn}`}
         </span>
       )}
@@ -1167,8 +1218,8 @@ function setMealTargetLS(bucket: MealType, n: number): void {
   localStorage.setItem(mealTargetKey(bucket), String(Math.max(0, n)));
 }
 
-function PlanPanel() {
-  const [weekStart, setWeekStart] = useState(mondayOfThisWeek());
+const PlanPanel = forwardRef<PlanPanelHandle>(function PlanPanel(_props, ref) {
+  const { comprasWeek: weekStart } = useApp();
   const entriesQ = useMealPlanEntries();
   const recipesQ = useRecipes();
   const riQ = useRecipeIngredients();
@@ -1275,6 +1326,11 @@ function PlanPanel() {
     }
   };
 
+  useImperativeHandle(ref, () => ({
+    addRecipe: () => { void addRecipe(); },
+    generatePlan,
+  }));
+
   const comi = (r: Recipe) => {
     const cookedTxt = window.prompt(`¿Cuántas porciones hiciste de "${r.name}"? (descuenta ingredientes del inventario)`, String(r.servings));
     if (cookedTxt == null) return;
@@ -1353,47 +1409,8 @@ function PlanPanel() {
         />
       )}
 
-      {/* Header estilo Listas: titulo grande a la izquierda, semana + acciones a la derecha */}
-      <header
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 14,
-          paddingBottom: 8,
-          marginBottom: 12,
-          borderBottom: "1px solid var(--line)",
-        }}
-      >
-        <div>
-          <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".06em", color: "var(--fg-subtle)", fontWeight: 600 }}>
-            Plan semanal
-          </div>
-          <div style={{ fontSize: 24, fontWeight: 600, letterSpacing: "-0.02em", lineHeight: 1.1, fontVariantNumeric: "tabular-nums" }}>
-            {weekLabel(weekStart)}
-          </div>
-        </div>
-        <div style={{ flex: 1 }} />
-        <button className="icon-btn" title="Semana anterior" onClick={() => setWeekStart(shiftWeek(weekStart, -1))}>
-          <IChevL size={15} />
-        </button>
-        <button className="icon-btn" title="Semana siguiente" onClick={() => setWeekStart(shiftWeek(weekStart, 1))}>
-          <IChevR size={15} />
-        </button>
-        {weekStart !== mondayOfThisWeek() && (
-          <button className="btn ghost" style={{ fontSize: 11, padding: "3px 8px" }} onClick={() => setWeekStart(mondayOfThisWeek())}>
-            Hoy
-          </button>
-        )}
-        <button className="btn ghost" onClick={() => void addRecipe()}>
-          <IPlus size={12} /> Agregar receta
-        </button>
-        <button className="btn" onClick={generatePlan} title="Arma el plan de la semana con las recetas que hay, cubriendo las metas de Ajustes con la menor cantidad de porciones de sobra">
-          Generar plan semanal
-        </button>
-      </header>
-
-      {/* needs by meal type: planned vs target (el target se configura en Ajustes) */}
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+      {/* meal target cards: planeado vs meta (el target se configura en Ajustes) */}
+      <div style={{ display: "flex", gap: fluid(12), flexWrap: "wrap", marginBottom: fluid(12) }}>
         {MEAL_BUCKETS.map((bucket) => {
           const planned = plannedByBucket[bucket];
           const target = targets[bucket];
@@ -1403,15 +1420,15 @@ function PlanPanel() {
               key={bucket}
               style={{
                 flex: 1,
-                minWidth: 200,
-                padding: "8px 12px",
+                minWidth: fluid(200),
+                padding: `${fluid(9)} ${fluid(12)}`,
                 background: "var(--bg-elev)",
                 border: `1px solid ${enough ? "var(--ok)" : "var(--line)"}`,
-                borderRadius: 10,
+                borderRadius: fluid(10),
               }}
             >
-              <div style={{ fontSize: 12.5, fontWeight: 600 }}>{MEAL_TYPE_LABELS[bucket]}</div>
-              <div style={{ fontSize: 11.5, color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums" }}>
+              <div style={{ fontSize: fluid(12.5), fontWeight: 600 }}>{MEAL_TYPE_LABELS[bucket]}</div>
+              <div style={{ fontSize: fluid(11.5), color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums" }}>
                 Planeado <strong style={{ color: "var(--fg)" }}>{planned}</strong>
                 {target > 0 && ` de ${target} porciones`}
               </div>
@@ -1420,12 +1437,12 @@ function PlanPanel() {
         })}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24, flex: 1, minHeight: 0, overflowY: "auto" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: fluid(24), flex: 1, minHeight: 0 }}>
         {/* IZQUIERDA — el plan de esta semana */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: fluid(8), minWidth: 0, minHeight: 0 }}>
           <SectionTitle
             right={
-              <button className="btn ghost" style={{ fontSize: 11, padding: "3px 8px" }} onClick={generateList} disabled={entries.length === 0}>
+              <button className="btn ghost" onClick={generateList} disabled={entries.length === 0}>
                 <IPlus size={11} /> Generar lista de compra
               </button>
             }
@@ -1437,21 +1454,24 @@ function PlanPanel() {
             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
             onDragLeave={() => setDragOver(false)}
             onDrop={onPlanDrop}
+            className="cal-scroll"
             style={{
               display: "flex",
               flexDirection: "column",
-              gap: 8,
+              gap: fluid(8),
               flex: 1,
-              minHeight: 120,
-              padding: 6,
+              minHeight: fluid(120),
+              padding: fluid(6),
               boxSizing: "border-box",
-              borderRadius: 10,
+              borderRadius: fluid(10),
+              overflowY: "auto",
               border: dragOver ? "2px dashed var(--accent)" : "2px dashed transparent",
-              transition: "border-color .1s",
+              background: dragOver ? "var(--accent-soft)" : undefined,
+              transition: "border-color .1s, background .1s",
             }}
           >
             {entries.length === 0 && (
-              <div style={{ fontSize: 12.5, color: "var(--fg-subtle)", padding: "8px 2px" }}>
+              <div style={{ fontSize: fluid(12.5), color: "var(--fg-subtle)", padding: `${fluid(8)} 2px` }}>
                 Todavía no elegiste recetas para esta semana. Arrastra una receta desde Recetas.
               </div>
             )}
@@ -1468,17 +1488,17 @@ function PlanPanel() {
             ))}
           </div>
 
-          <div style={{ fontSize: 11, color: "var(--fg-subtle)" }}>
+          <div style={{ fontSize: fluid(11), color: "var(--fg-subtle)" }}>
             Al generar la lista se restan los ingredientes que ya tenés en el Inventario y se eligen las presentaciones de menor desperdicio.
           </div>
         </div>
 
         {/* DERECHA — catalogo de recetas (arrastrar una receta a la izquierda para agregarla al plan) */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: fluid(8), minWidth: 0, minHeight: 0 }}>
           <SectionTitle>Recetas · {recipes.length}</SectionTitle>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1, minHeight: 120, padding: 6, boxSizing: "border-box", overflowY: "auto" }}>
+          <div className="cal-scroll" style={{ display: "flex", flexDirection: "column", gap: fluid(8), flex: 1, minHeight: fluid(120), padding: fluid(6), boxSizing: "border-box", overflowY: "auto" }}>
             {recipes.length === 0 && (
-              <div style={{ fontSize: 12.5, color: "var(--fg-subtle)", padding: "8px 2px" }}>
+              <div style={{ fontSize: fluid(12.5), color: "var(--fg-subtle)", padding: `${fluid(8)} 2px` }}>
                 Todavía no cargaste recetas. Usa "Agregar receta" arriba.
               </div>
             )}
@@ -1496,7 +1516,7 @@ function PlanPanel() {
       </div>
     </>
   );
-}
+});
 
 function RecipeCard({
   recipe,
@@ -1521,16 +1541,16 @@ function RecipeCard({
       style={{
         background: "var(--bg-elev)",
         border: "1px solid var(--line)",
-        borderRadius: 10,
-        padding: "10px 12px",
+        borderRadius: fluid(10),
+        padding: `${fluid(10)} ${fluid(12)}`,
         display: "flex",
         flexDirection: "column",
-        gap: 6,
+        gap: fluid(6),
         cursor: "grab",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={{ fontSize: 14, fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: fluid(8) }}>
+        <span style={{ fontSize: fluid(14), fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {recipe.name}
         </span>
         <Pill tone={MEAL_TYPE_TONE[recipe.mealType]}>{MEAL_TYPE_LABELS[recipe.mealType]}</Pill>
@@ -1540,7 +1560,7 @@ function RecipeCard({
           </IconBtn>
         </span>
       </div>
-      <div style={{ fontSize: 11.5, color: "var(--fg-muted)" }}>
+      <div style={{ fontSize: fluid(11.5), color: "var(--fg-muted)" }}>
         {recipe.servings} porc. · {ingredientCount} ingrediente{ingredientCount === 1 ? "" : "s"}
       </div>
     </div>
@@ -1569,22 +1589,22 @@ function PlanEntryCard({
       style={{
         display: "grid",
         gridTemplateColumns: "minmax(0,1fr) auto",
-        gap: 10,
+        gap: fluid(10),
         alignItems: "center",
-        padding: "10px 12px",
+        padding: `${fluid(10)} ${fluid(12)}`,
         background: "var(--bg-elev)",
         border: "1px solid var(--line)",
-        borderRadius: 10,
+        borderRadius: fluid(10),
       }}
     >
-      <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 6 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: 14, fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+      <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: fluid(6) }}>
+        <div style={{ display: "flex", alignItems: "center", gap: fluid(8) }}>
+          <span style={{ fontSize: fluid(14), fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {recipe?.name ?? "—"}
           </span>
           {recipe && <Pill tone={MEAL_TYPE_TONE[recipe.mealType]}>{MEAL_TYPE_LABELS[recipe.mealType]}</Pill>}
         </div>
-        <div style={{ fontSize: 11.5, color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums" }}>
+        <div style={{ fontSize: fluid(11.5), color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums" }}>
           × {entry.targetServings} {entry.targetServings === 1 ? "vez" : "veces"} · {totalServings} porc. total
           {eaten > 0 && (
             <>
@@ -1594,14 +1614,14 @@ function PlanEntryCard({
         </div>
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
-          <button className="btn ghost" style={{ padding: "2px 7px", fontSize: 13 }} onClick={() => onSetTimes(entry.targetServings - 1)} title="Menos">−</button>
-          <span style={{ width: 22, textAlign: "center", fontVariantNumeric: "tabular-nums", fontWeight: 600, fontSize: 13 }}>{entry.targetServings}</span>
-          <button className="btn ghost" style={{ padding: "2px 7px", fontSize: 13 }} onClick={() => onSetTimes(entry.targetServings + 1)} title="Más">+</button>
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: fluid(6) }}>
+        <div style={{ display: "flex", alignItems: "center", gap: fluid(2) }}>
+          <button className="btn ghost" style={{ padding: `${fluid(2)} ${fluid(7)}`, fontSize: fluid(13) }} onClick={() => onSetTimes(entry.targetServings - 1)} title="Menos">−</button>
+          <span style={{ width: fluid(22), textAlign: "center", fontVariantNumeric: "tabular-nums", fontWeight: 600, fontSize: fluid(13) }}>{entry.targetServings}</span>
+          <button className="btn ghost" style={{ padding: `${fluid(2)} ${fluid(7)}`, fontSize: fluid(13) }} onClick={() => onSetTimes(entry.targetServings + 1)} title="Más">+</button>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <button className="btn ghost" style={{ fontSize: 10.5, padding: "3px 7px" }} onClick={onComi} title="Registrar que la comiste (descuenta del inventario)">
+        <div style={{ display: "flex", alignItems: "center", gap: fluid(4) }}>
+          <button className="btn ghost" onClick={onComi} title="Registrar que la comiste (descuenta del inventario)">
             Comí
           </button>
           <IconBtn title="Quitar del plan" onClick={onDelete}>
@@ -1720,7 +1740,7 @@ function RecipeModal({
               return (
                 <div key={ri.id} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13 }}>
                   {ing && <Pill tone={DIMENSION_TONE[ing.dimension]}>{DIMENSION_LABELS[ing.dimension]}</Pill>}
-                  {cat && <Pill tone="neutral">generico</Pill>}
+                  {cat && <Pill tone="var(--fg-muted)">generico</Pill>}
                   <span style={{ flex: 1 }}>{ing?.name ?? (cat ? `[${cat.name}]` : "—")}</span>
                   <span style={{ color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums" }}>
                     {ing ? formatQuantity(ri.quantity, ing.dimension) : ri.quantity}
@@ -2173,12 +2193,12 @@ function IngredientCard({
   };
 
   return (
-    <div style={{ background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: 10, padding: "10px 12px", boxSizing: "border-box", display: "flex", flexDirection: "column", gap: 6 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={{ fontSize: 14, fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+    <div style={{ background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: fluid(10), padding: `${fluid(10)} ${fluid(12)}`, boxSizing: "border-box", display: "flex", flexDirection: "column", gap: fluid(6) }}>
+      <div style={{ display: "flex", alignItems: "center", gap: fluid(8) }}>
+        <span style={{ fontSize: fluid(14), fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {ingredient.name}
         </span>
-        {category && <Pill tone={colorsForHue(category.hue).bg} title="Categoría">{category.name}</Pill>}
+        {category && <Pill tone={colorsForHue(category.hue).fg} title="Categoría">{category.name}</Pill>}
         <Pill tone={DIMENSION_TONE[ingredient.dimension]} title="Tipo de medida">
           {DIMENSION_LABELS[ingredient.dimension]}
         </Pill>
@@ -2190,7 +2210,7 @@ function IngredientCard({
         </IconBtn>
       </div>
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 2 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: fluid(6), marginTop: 2 }}>
         {presentations.map((p) => (
           <span
             key={p.id}
@@ -2199,13 +2219,13 @@ function IngredientCard({
               e.dataTransfer.effectAllowed = "copy";
               e.dataTransfer.setData("text/plain", JSON.stringify({ ingredientId: ingredient.id, presentationId: p.id }));
             }}
-            title="Arrastrar a la lista para agregarlo"
+            title="Arrastrar a la lista para agregarlo (o click)"
             style={{
               display: "inline-flex",
               alignItems: "center",
-              gap: 6,
-              fontSize: 11.5,
-              padding: "4px 9px",
+              gap: fluid(6),
+              fontSize: fluid(11.5),
+              padding: `${fluid(4)} ${fluid(9)}`,
               background: "var(--bg-sunken)",
               border: "1px solid var(--line)",
               borderRadius: 999,
@@ -2225,7 +2245,7 @@ function IngredientCard({
         ))}
         <button
           className="btn ghost"
-          style={{ fontSize: 10.5, padding: "3px 8px", borderRadius: 999 }}
+          style={{ borderRadius: 999, border: "1px dashed var(--line-strong)" }}
           onClick={() => setShowAddPresentation((v) => !v)}
         >
           <IPlus size={10} /> Variante
@@ -2235,21 +2255,21 @@ function IngredientCard({
       {showAddPresentation && (
         <form
           onSubmit={(e) => { e.preventDefault(); addPresentation(); }}
-          style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 2 }}
+          style={{ display: "flex", gap: fluid(6), alignItems: "center", flexWrap: "wrap", marginTop: 2 }}
         >
-          <input className="input" placeholder="Etiqueta" value={pLabel} onChange={(e) => setPLabel(e.target.value)} style={{ flex: 1, minWidth: 100, fontSize: 12 }} />
-          <input className="input" placeholder="Cantidad" value={pAmount} onChange={(e) => setPAmount(e.target.value)} style={{ width: 75, fontSize: 12 }} />
+          <input className="input" placeholder="Etiqueta" value={pLabel} onChange={(e) => setPLabel(e.target.value)} style={{ flex: 1, minWidth: fluid(100), fontSize: fluid(12) }} />
+          <input className="input" placeholder="Cantidad" value={pAmount} onChange={(e) => setPAmount(e.target.value)} style={{ width: fluid(75), fontSize: fluid(12) }} />
           {units.length > 1 ? (
-            <select className="input" value={pUnit} onChange={(e) => setPUnit(e.target.value)} style={{ fontSize: 12 }}>
+            <select className="input" value={pUnit} onChange={(e) => setPUnit(e.target.value)} style={{ fontSize: fluid(12) }}>
               {units.map((u) => (
                 <option key={u.unit} value={u.unit}>{u.label}</option>
               ))}
             </select>
           ) : (
-            <span style={{ fontSize: 11, color: "var(--fg-muted)" }}>{units[0].label}</span>
+            <span style={{ fontSize: fluid(11), color: "var(--fg-muted)" }}>{units[0].label}</span>
           )}
-          <input className="input" placeholder="Precio" value={pPrice} onChange={(e) => setPPrice(e.target.value)} style={{ width: 75, fontSize: 12 }} />
-          <button className="btn" type="submit" disabled={!pAmount.trim()} style={{ fontSize: 11 }}>
+          <input className="input" placeholder="Precio" value={pPrice} onChange={(e) => setPPrice(e.target.value)} style={{ width: fluid(75), fontSize: fluid(12) }} />
+          <button className="btn" type="submit" disabled={!pAmount.trim()}>
             <ICheck size={10} /> Guardar
           </button>
         </form>
@@ -2293,13 +2313,13 @@ function ListCard({
       style={{
         display: "grid",
         gridTemplateColumns: "auto minmax(0,1fr) auto",
-        gap: 10,
+        gap: fluid(10),
         alignItems: "center",
-        padding: "10px 12px",
+        padding: `${fluid(10)} ${fluid(12)}`,
         boxSizing: "border-box",
-        background: item.bought ? "rgba(34,197,94,0.10)" : "var(--bg-elev)",
+        background: item.bought ? "rgba(102,187,106,0.12)" : "var(--bg-elev)",
         border: item.bought ? "1px solid var(--ok)" : "1px solid var(--line)",
-        borderRadius: 10,
+        borderRadius: fluid(10),
       }}
     >
       <button
@@ -2309,8 +2329,8 @@ function ListCard({
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          width: 26,
-          height: 26,
+          width: fluid(26),
+          height: fluid(26),
           borderRadius: "50%",
           border: item.bought ? "1px solid var(--ok)" : "1px solid var(--line-strong)",
           background: item.bought ? "var(--ok)" : "none",
@@ -2321,21 +2341,21 @@ function ListCard({
         <ICheck size={13} stroke={2.6} />
       </button>
 
-      <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 6 }}>
-        <div style={{ fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: item.bought ? "var(--fg-muted)" : "var(--fg)" }}>
+      <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: fluid(6) }}>
+        <div style={{ fontSize: fluid(14), fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: item.bought ? "var(--fg-muted)" : "var(--fg)" }}>
           {title}
         </div>
 
         {detailParts.length > 0 && (
-          <div style={{ fontSize: 11.5, color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums" }}>
+          <div style={{ fontSize: fluid(11.5), color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums" }}>
             {detailParts.join(" · ")}
           </div>
         )}
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
-          <button className="btn ghost" style={{ padding: "2px 7px", fontSize: 13 }} onClick={() => onSetQty(item.quantity - 1)} title="Menos">−</button>
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: fluid(6) }}>
+        <div style={{ display: "flex", alignItems: "center", gap: fluid(2) }}>
+          <button className="btn ghost" style={{ padding: `${fluid(2)} ${fluid(7)}`, fontSize: fluid(13) }} onClick={() => onSetQty(item.quantity - 1)} title="Menos">−</button>
           <input
             className="input"
             value={text}
@@ -2343,9 +2363,9 @@ function ListCard({
             onBlur={commit}
             onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
             inputMode="numeric"
-            style={{ width: 40, textAlign: "center", padding: "3px 4px", fontVariantNumeric: "tabular-nums" }}
+            style={{ width: fluid(40), textAlign: "center", padding: `${fluid(3)} ${fluid(4)}`, fontVariantNumeric: "tabular-nums" }}
           />
-          <button className="btn ghost" style={{ padding: "2px 7px", fontSize: 13 }} onClick={() => onSetQty(item.quantity + 1)} title="Más">+</button>
+          <button className="btn ghost" style={{ padding: `${fluid(2)} ${fluid(7)}`, fontSize: fluid(13) }} onClick={() => onSetQty(item.quantity + 1)} title="Más">+</button>
         </div>
         <IconBtn title="Eliminar" onClick={onDelete}>
           <ITrash size={12} />

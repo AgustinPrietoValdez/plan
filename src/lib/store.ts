@@ -59,10 +59,10 @@ export const CALENDARIO_TABS: { view: View; label: string }[] = [
 // como tabs propios.
 export type ComprasTab = "listas" | "plan" | "ajustes";
 
-export const COMPRAS_TABS: { id: ComprasTab; label: string; ready: boolean }[] = [
-  { id: "listas", label: "Listas", ready: true },
-  { id: "plan", label: "Plan semanal", ready: true },
-  { id: "ajustes", label: "Ajustes", ready: true },
+export const COMPRAS_TABS: { id: ComprasTab; label: string; icon: string; ready: boolean }[] = [
+  { id: "listas", label: "Listas", icon: "🧾", ready: true },
+  { id: "plan", label: "Plan semanal", icon: "🍽️", ready: true },
+  { id: "ajustes", label: "Ajustes", icon: "⚙️", ready: true },
 ];
 
 /** Sub-tabs shown inside the Cafe area. */

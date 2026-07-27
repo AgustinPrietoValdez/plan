@@ -1,22 +1,12 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { colorsForHue } from "../lib/categoryColor";
 import { signOut, useSession } from "../lib/auth";
 import { onSyncStatus, type SyncStatus } from "../lib/sync";
 import { useApp } from "../lib/store";
 import { AREA_OF_VIEW, AREA_DEFAULT_VIEW, type Area, type View } from "../lib/store";
-import { useTasks, useIngredientCategories } from "../lib/queries";
-import { IBolt, ICal, IList, ISearch } from "./icons";
+import { useTasks } from "../lib/queries";
+import { IBolt, ISearch } from "./icons";
 import { MiniMonth } from "./MiniMonth";
 import { useFrameScale } from "../lib/uiScale";
-
-const krIcon = {
-  width: 14,
-  textAlign: "center",
-  fontWeight: 700,
-  fontSize: 13,
-  lineHeight: 1,
-  fontFamily: "var(--font-mono)",
-} as const;
 
 /** The 5 top-level areas, in rail order. */
 const AREAS: { area: Area; label: string }[] = [
@@ -27,17 +17,20 @@ const AREAS: { area: Area; label: string }[] = [
   { area: "cafe", label: "Café" },
 ];
 
-/** Rail icon for an area, sized via `px` so it scales with the frame on Home. */
+/** Rail icon for an area, sized via `px` so it scales with the frame on Home.
+ *  Must match the icon each area's own header uses (Home/Calendario/Finanzas/
+ *  Compras/Café) — same symbol everywhere for a given area, never a different
+ *  one depending on where you're looking. */
 function railIconFor(area: Area, px: (n: number) => number): ReactNode {
   switch (area) {
     case "home":
       return <span style={{ fontSize: px(16) }}>🏠</span>;
     case "calendario":
-      return <ICal size={px(17)} />;
+      return <span style={{ fontSize: px(16) }}>📅</span>;
     case "presupuesto":
-      return <span style={{ ...krIcon, fontSize: px(14), width: "auto" }}>kr</span>;
+      return <span style={{ fontSize: px(16) }}>💰</span>;
     case "compras":
-      return <IList size={px(17)} />;
+      return <span style={{ fontSize: px(16) }}>🛒</span>;
     case "cafe":
       return <span style={{ fontSize: px(16) }}>☕</span>;
     default:
@@ -66,7 +59,7 @@ export function Sidebar() {
   return (
     <>
       <Rail activeArea={activeArea} view={view} setView={setView} />
-      {activeArea !== "home" && activeArea !== "cafe" && activeArea !== "presupuesto" && !isCalendarRedesignView(view) && (
+      {activeArea !== "home" && activeArea !== "cafe" && activeArea !== "presupuesto" && activeArea !== "compras" && !isCalendarRedesignView(view) && (
         <SidePanel activeArea={activeArea} />
       )}
     </>
@@ -77,7 +70,7 @@ export function Sidebar() {
 
 function Rail({ activeArea, view, setView }: { activeArea: Area | null; view: View; setView: (v: View) => void }) {
   const frameScale = useFrameScale();
-  const s = view === "home" || view === "cafe" || view === "budget" || isCalendarRedesignView(view) ? frameScale : 1;
+  const s = view === "home" || view === "cafe" || view === "budget" || view === "compras" || isCalendarRedesignView(view) ? frameScale : 1;
   const px = (n: number) => Math.round(n * s);
   return (
     <aside className="rail">
@@ -165,14 +158,13 @@ function RailAvatar({ scale = 1 }: { scale?: number }) {
   );
 }
 
-// ---- Side panel: contextual lists, hidden on Home/Café/Finanzas and on the
-// redesigned Calendario views (they render their own context panel inline).
-// The only area left that still reaches this component is Compras (plus
-// `null` for Automations, which just gets the bare mini-month below). ----
+// ---- Side panel: contextual lists, hidden on Home/Café/Finanzas/Compras and
+// on the redesigned Calendario views (they all render their own context panel
+// inline, or none at all). The only thing left that reaches this component is
+// `null` (Automations), which just gets the bare mini-month below. ----
 
-function SidePanel({ activeArea }: { activeArea: Area | null }) {
+function SidePanel({ activeArea: _activeArea }: { activeArea: Area | null }) {
   const tasks = useTasks().data ?? [];
-  const ingredientCategories = useIngredientCategories().data ?? [];
   const { viewDate, selectedDay, setViewDate, setSelectedDay } = useApp();
 
   return (
@@ -185,25 +177,6 @@ function SidePanel({ activeArea }: { activeArea: Area | null }) {
           setSelectedDay={setSelectedDay}
           tasks={tasks}
         />
-
-        {activeArea === "compras" && (
-          <>
-            <div className="sidebar-section" style={{ paddingTop: 8 }}>
-              <div className="sidebar-section-title">Categorías</div>
-            </div>
-            <div className="nav-list" style={{ paddingBottom: 12 }}>
-              {ingredientCategories
-                .filter((c) => !c.archived)
-                .map((c) => (
-                  <div key={c.id} className="nav-item" style={{ cursor: "default" }}>
-                    <span className="dot" style={{ background: colorsForHue(c.hue).bg }} />
-                    <span style={{ flex: 1 }}>{c.name}</span>
-                  </div>
-                ))}
-            </div>
-          </>
-        )}
-
       </div>
     </aside>
   );

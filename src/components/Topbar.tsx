@@ -10,7 +10,7 @@ import {
   todayYmd,
   ymd,
 } from "../lib/date";
-import { useApp, AREA_OF_VIEW, COMPRAS_TABS } from "../lib/store";
+import { useApp, AREA_OF_VIEW } from "../lib/store";
 import { useProjects } from "../lib/queries";
 import { IChevL, IChevR, IFilter } from "./icons";
 
@@ -22,8 +22,6 @@ export function Topbar() {
     setViewDate,
     setSelectedDay,
     viewProjectId,
-    comprasTab,
-    setComprasTab,
   } = useApp();
   const area = AREA_OF_VIEW[view];
   const projectsQ = useProjects();
@@ -116,10 +114,11 @@ export function Topbar() {
 
       <div className="topbar-spacer" />
 
-      {/* Café's Inventario/Historial/Recetas switcher (and Finanzas' Presupuesto/
-          Ahorros/Holdings switcher) live inside their own view, right under its
-          own header — matching the mockup — not up here. */}
-      {area !== "cafe" && area !== "presupuesto" && (
+      {/* Café's Inventario/Historial/Recetas switcher (Finanzas' Presupuesto/
+          Ahorros/Holdings switcher, and Compras' Listas/Plan/Ajustes switcher)
+          live inside their own view, right under its own header — matching
+          the mockup — not up here. */}
+      {area !== "cafe" && area !== "presupuesto" && area !== "compras" && (
         <div className="seg">
           {area === "calendario" ? (
             <>
@@ -136,18 +135,6 @@ export function Topbar() {
                 Project
               </button>
             </>
-          ) : area === "compras" ? (
-            COMPRAS_TABS.map((t) => (
-              <button
-                key={t.id}
-                className={comprasTab === t.id ? "active" : ""}
-                onClick={() => { if (t.ready) setComprasTab(t.id); }}
-                title={t.ready ? undefined : "Próximamente"}
-                style={t.ready ? undefined : { opacity: 0.55 }}
-              >
-                {t.label}
-              </button>
-            ))
           ) : null}
         </div>
       )}

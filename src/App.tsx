@@ -103,13 +103,13 @@ function App() {
   // Home, Café, Finanzas and the redesigned Calendario views (all 6 tabs —
   // day/week/month/project/habits/recurring) are the screens rebuilt to the
   // 1280×720 design frame; scale their chrome (rail + topbar) together with
-  // their content so they stay coherent at 2K. Other views (compras,
-  // automations) keep --home-s at 1 (their fixed-px chrome is unchanged).
+  // their content so they stay coherent at 2K. Other views (automations)
+  // keep --home-s at 1 (their fixed-px chrome is unchanged).
   const isCalendarRedesign =
     view === "day" || view === "week" || view === "month" || view === "project" ||
     view === "habits" || view === "recurring";
   const frameScale = useFrameScale();
-  const homeScale = view === "home" || view === "cafe" || view === "budget" || isCalendarRedesign ? frameScale : 1;
+  const homeScale = view === "home" || view === "cafe" || view === "budget" || view === "compras" || isCalendarRedesign ? frameScale : 1;
 
   const [activeTask, setActiveTask] = useState<Task | null>(null);
 
@@ -265,8 +265,8 @@ function App() {
       <div className="app">
         <Sidebar />
         <div className="main">
-          {!isCalendarRedesign && view !== "home" && view !== "cafe" && view !== "budget" && <Topbar />}
-          {!isCalendarRedesign && view !== "home" && view !== "cafe" && view !== "budget" && (stripOpen ? (
+          {!isCalendarRedesign && view !== "home" && view !== "cafe" && view !== "budget" && view !== "compras" && <Topbar />}
+          {!isCalendarRedesign && view !== "home" && view !== "cafe" && view !== "budget" && view !== "compras" && (stripOpen ? (
             <div style={{ position: "relative" }}>
               <TaskStrip onAddNew={onAddNew} onOpen={onOpenTask} onToggleDone={onToggleDone} />
               <button

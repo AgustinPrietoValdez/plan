@@ -22,7 +22,7 @@ import { suggestRecipesForExpiringLots } from "../lib/compras";
 import { freshnessStatus, FRESHNESS_COLOR } from "../lib/coffeeFreshness";
 import { CURRENCY, DEFAULT_RATES_PER_USD, convertViaUsd, fmtNumber } from "../lib/money";
 import { SpendingPie } from "./SpendingPie";
-import { IAlert, ICal, ICheck } from "./icons";
+import { IAlert, ICheck } from "./icons";
 import type { CalendarEvent, Task } from "../types";
 
 // The approved mockup is a fixed-px design authored in a 1280×720 frame that is
@@ -197,7 +197,7 @@ export function HomeView() {
         {/* Columna izquierda — Tu día (solo el link "+N más" navega) */}
         <div style={{ background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: fluid(14), padding: fluid(18), display: "flex", flexDirection: "column", gap: fluid(14), boxShadow: "var(--shadow-sm)", minHeight: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: fluid(10), flexShrink: 0 }}>
-            <IconBadge tone="var(--accent)"><ICal size={16} /></IconBadge>
+            <IconBadge tone="var(--c-blue-fg)" bg="var(--c-blue)"><span style={{ fontSize: fluid(15) }}>📅</span></IconBadge>
             <div style={{ fontSize: fluid(15), fontWeight: 600, letterSpacing: "-0.01em", flex: 1 }}>Tu día</div>
             <span style={{ fontSize: fluid(12), color: "var(--fg-subtle)", fontVariantNumeric: "tabular-nums" }}>
               {doneToday.length} de {todayAll.length} hecho
@@ -256,7 +256,7 @@ export function HomeView() {
             style={{ flex: "20 1 auto", minHeight: 0, maxHeight: "95%", overflow: "hidden", background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: fluid(14), padding: `${fluid(16)} ${fluid(20)}`, display: "flex", flexDirection: "column", gap: fluid(12), boxShadow: "var(--shadow-sm)", cursor: "pointer" }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: fluid(10) }}>
-              <IconBadge tone="var(--c-blue-fg)" bg="var(--c-blue)"><span style={{ fontSize: 14 }}>💰</span></IconBadge>
+              <IconBadge tone="var(--c-sand-fg)" bg="var(--c-sand)"><span style={{ fontSize: fluid(15) }}>💰</span></IconBadge>
               <div style={{ fontSize: fluid(15), fontWeight: 600, letterSpacing: "-0.01em", flex: 1 }}>Presupuesto · {monthLabel}</div>
               <span style={{ fontSize: fluid(11), fontWeight: 600, color: usedTone, background: `color-mix(in oklch, ${usedTone} 14%, var(--bg))`, padding: `${fluid(3)} ${fluid(9)}`, borderRadius: 999 }}>
                 {usedPct}% usado · {usedLabel}
@@ -298,7 +298,7 @@ export function HomeView() {
               style={{ background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: fluid(14), boxShadow: "var(--shadow-sm)", overflow: "auto", overflowAnchor: "none", padding: `${fluid(14)} ${fluid(16)}`, display: "flex", flexDirection: "column", gap: fluid(10), minHeight: 0, cursor: "pointer" }}
             >
               <div style={{ display: "flex", alignItems: "center", gap: fluid(10), flexShrink: 0 }}>
-                <IconBadge tone="var(--warn)" size={fluid(26)}><IAlert size={14} /></IconBadge>
+                <IconBadge tone="var(--warn)" size={fluid(26)}><IAlert size={Math.round(13 * s)} /></IconBadge>
                 <div style={{ fontSize: fluid(13), fontWeight: 600, flex: 1 }}>Por vencer</div>
                 <CountBadge tone="var(--warn)">{expiringSoon.length} lotes</CountBadge>
               </div>
@@ -334,7 +334,7 @@ export function HomeView() {
               style={{ background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: fluid(14), boxShadow: "var(--shadow-sm)", overflow: "auto", overflowAnchor: "none", padding: `${fluid(14)} ${fluid(16)}`, display: "flex", flexDirection: "column", gap: fluid(8), minHeight: 0, cursor: "pointer" }}
             >
               <div style={{ display: "flex", alignItems: "center", gap: fluid(10), flexShrink: 0 }}>
-                <IconBadge tone="var(--c-peach-fg)" bg="var(--c-peach)" size={fluid(26)}><span style={{ fontSize: fluid(14) }}>☕</span></IconBadge>
+                <IconBadge tone="var(--c-peach-fg)" bg="var(--c-peach)" size={fluid(26)}><span style={{ fontSize: fluid(13) }}>☕</span></IconBadge>
                 <div style={{ fontSize: fluid(13), fontWeight: 600, flex: 1 }}>Café en casa</div>
                 <CountBadge tone="oklch(0.5 0.08 50)">{coffeeBeans.length} abiertos</CountBadge>
               </div>

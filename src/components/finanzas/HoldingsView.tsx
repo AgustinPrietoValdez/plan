@@ -1,7 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useState, type MouseEvent } from "react";
-import { convertViaUsd, DEFAULT_RATES_PER_USD, fmtMoneyIn, parseMoney } from "../../lib/money";
+import { convertViaUsd, fmtMoneyIn, parseMoney } from "../../lib/money";
 import { computeNetWorth } from "../../lib/netWorth";
-import { fetchLiveRates } from "../../lib/exchangeRates";
+import { useAutoExchangeRates } from "../../lib/exchangeRates";
 import { useNetWorthSnapshot } from "../../lib/useNetWorthSnapshot";
 import {
   useAccounts,
@@ -64,41 +64,8 @@ export const HoldingsView = forwardRef<HoldingsViewHandle>(function HoldingsView
   const accountsQ = useAccounts();
   const finSettingsQ = useFinanzasSettings();
   const upsertFinSettings = useUpsertFinanzasSettings();
-
-  const ratesPerUsd: Record<string, number> = {
-    USD: 1,
-    DKK: finSettingsQ.data?.ratesPerUsd.DKK ?? DEFAULT_RATES_PER_USD.DKK,
-    EUR: finSettingsQ.data?.ratesPerUsd.EUR ?? DEFAULT_RATES_PER_USD.EUR,
-    ARS: finSettingsQ.data?.ratesPerUsd.ARS ?? DEFAULT_RATES_PER_USD.ARS,
-  };
+  const { ratesPerUsd, ratesUpdatedAt, refreshing, refreshError, refresh: refreshRates } = useAutoExchangeRates();
   const baseCurrency: AccountCurrency = finSettingsQ.data?.baseCurrency ?? "DKK";
-  const ratesUpdatedAt = finSettingsQ.data?.ratesUpdatedAt ?? null;
-
-  const [refreshing, setRefreshing] = useState(false);
-  const [refreshError, setRefreshError] = useState<string | null>(null);
-
-  const refreshRates = async () => {
-    setRefreshing(true);
-    setRefreshError(null);
-    try {
-      const live = await fetchLiveRates();
-      await upsertFinSettings.mutateAsync({
-        ratesPerUsd: { USD: 1, DKK: live.dkkPerUsd, EUR: live.eurPerUsd, ARS: live.arsPerUsd },
-        ratesUpdatedAt: new Date().toISOString(),
-      });
-    } catch {
-      setRefreshError("No se pudo actualizar la cotizacion");
-    } finally {
-      setRefreshing(false);
-    }
-  };
-
-  // Fetch once a day, automatically, as soon as the settings row is known.
-  useEffect(() => {
-    if (!finSettingsQ.isSuccess || isToday(ratesUpdatedAt)) return;
-    refreshRates();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [finSettingsQ.isSuccess, ratesUpdatedAt]);
 
   const toBase = (amount: number, currency: string) => convertViaUsd(amount, currency, baseCurrency, ratesPerUsd);
 

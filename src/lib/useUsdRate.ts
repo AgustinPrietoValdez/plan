@@ -1,9 +1,9 @@
-import { useComprasSettings } from "./queries";
-import { DEFAULT_DKK_PER_USD } from "./money";
+import { useAutoExchangeRates } from "./exchangeRates";
 
-/** Read-only DKK→USD rate (DKK per 1 USD), from the synced Compras settings.
- *  The rate is configured on desktop (Compras → Ajustes), not on the phone. */
+/** Read-only DKK→USD rate (DKK per 1 USD) for Compras — reuses Finanzas'
+ *  automatic daily cotización (`finanzas_settings.ratesPerUsd`) instead of a
+ *  separate manual field, so both areas always agree. */
 export function useUsdRate(): number {
-  const q = useComprasSettings();
-  return q.data?.dkkPerUsd ?? DEFAULT_DKK_PER_USD;
+  const { ratesPerUsd } = useAutoExchangeRates();
+  return ratesPerUsd.DKK;
 }
