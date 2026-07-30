@@ -17,6 +17,7 @@ import { useApp } from "../lib/store";
 import type { AccountCurrency, Expense, RecurrenceRule } from "../types";
 import { ICheck, IRecurring, ITrash, IX } from "./icons";
 import { RecurrencePicker } from "./RecurrencePicker";
+import { DateInput } from "./DateInput";
 
 const CURRENCY_OPTIONS: AccountCurrency[] = ["DKK", "USD", "EUR", "ARS"];
 
@@ -416,12 +417,11 @@ export function ExpenseEditor({ mode, expenseId, prefill, onClose }: Props) {
           <div className="field">
             <label>Date</label>
             <div className="control">
-              <input
-                type="date"
+              <DateInput
                 className="input"
                 style={{ width: "auto" }}
                 value={draft.spentOn}
-                onChange={(e) => set({ spentOn: e.target.value })}
+                onChange={(v) => set({ spentOn: v })}
               />
             </div>
           </div>

@@ -93,7 +93,7 @@ export function BrewAssignModal() {
               {pending.length > 1 ? ` · ${pending.length} pendientes` : ""}
             </div>
             <div style={{ fontSize: 15, fontWeight: 600, letterSpacing: "-0.01em" }}>
-              {new Date(session.createdAt).toLocaleString()}
+              {new Date(session.createdAt).toLocaleString("es-AR")}
             </div>
           </div>
           <button className="icon-btn" onClick={onDiscard} title="Descartar">

@@ -5,6 +5,7 @@ import { colorsForCategory } from "../lib/categoryColor";
 import { todayYmd } from "../lib/date";
 import { vars } from "../lib/style";
 import { IX, ITrash, ICal } from "./icons";
+import { DateInput } from "./DateInput";
 
 const NOTIFY_OPTIONS = [
   { label: "No notification", value: null },
@@ -227,12 +228,11 @@ export function EventEditor(props: Props) {
           <div className="field">
             <label>Fecha</label>
             <div className="control">
-              <input
-                type="date"
+              <DateInput
                 className="input"
                 style={{ width: "auto" }}
                 value={day}
-                onChange={(e) => setDay(e.target.value)}
+                onChange={setDay}
               />
             </div>
           </div>

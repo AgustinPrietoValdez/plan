@@ -2762,7 +2762,7 @@ export const localRepo: Repo = {
       `INSERT INTO coffee_beans
         (id, user_id, name, roaster, varietal, country, process, producer, roasted_on,
          weight_grams, initial_weight_grams, notes, cata_inicial, nota_final, last_tweak, finished_at, rating, flavor_tags, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [bean.id, userId, bean.name, bean.roaster, bean.varietal, bean.country, bean.process,
        bean.producer, bean.roastedOn, bean.weightGrams, bean.initialWeightGrams, bean.notes,
        bean.cataInicial, bean.notaFinal, bean.lastTweak ? JSON.stringify(bean.lastTweak) : "",

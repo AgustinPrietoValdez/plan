@@ -61,6 +61,7 @@ import { defaultSlot, useLogMeal } from "../lib/useLogMeal";
 import { useToggleBought } from "../lib/useToggleBought";
 import { useAutoExchangeRates } from "../lib/exchangeRates";
 import { fromYmd, mondayOfThisWeek, shiftWeek, todayYmd, weekLabel, ymd } from "../lib/date";
+import { DateInput } from "./DateInput";
 import {
   DIMENSION_LABELS,
   baseUnit,
@@ -1045,7 +1046,7 @@ function CloseListModal({
           <div className="field">
             <label>Fecha</label>
             <div className="control">
-              <input type="date" className="input" style={{ width: "auto" }} value={spentOn} onChange={(e) => setSpentOn(e.target.value)} />
+              <DateInput className="input" style={{ width: "auto" }} value={spentOn} onChange={setSpentOn} />
             </div>
           </div>
 

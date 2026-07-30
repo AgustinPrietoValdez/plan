@@ -14,6 +14,7 @@ import { useApp } from "../lib/store";
 import { vars } from "../lib/style";
 import type { Priority, RecurrenceRule, Subtask, Task } from "../types";
 import { RecurrencePicker } from "./RecurrencePicker";
+import { DateInput } from "./DateInput";
 import { ICheck, IPlus, ITrash, IX } from "./icons";
 
 const DURATION_PRESETS = [15, 30, 45, 60, 90, 120];
@@ -454,12 +455,11 @@ export function TaskEditor({ mode, task, prefill, onClose, onSwitchToEvent }: Pr
           <div className="field">
             <label>Scheduled</label>
             <div className="control">
-              <input
-                type="date"
+              <DateInput
                 className="input"
                 style={{ width: "auto" }}
                 value={draft.day ?? ""}
-                onChange={(e) => set({ day: e.target.value || null })}
+                onChange={(v) => set({ day: v || null })}
               />
               {draft.day && (
                 <button className="btn ghost" onClick={() => set({ day: null })}>

@@ -25,6 +25,7 @@ import { analyzeCoffee, askAboutBrew } from "../lib/coffeeAnalysis";
 import { useApp, CAFE_TABS } from "../lib/store";
 import { daysOld, freshnessStatus, FRESHNESS_COLOR, FRESHNESS_LABEL } from "../lib/coffeeFreshness";
 import { useFrameScale } from "../lib/uiScale";
+import { DateInput } from "./DateInput";
 import { fmtMoney } from "../lib/money";
 
 // El boton "Analizar" lanza una terminal con Claude: desktop-only (en mobile no hay terminal).
@@ -1566,7 +1567,7 @@ function BeanModal({ form, isEdit, saving, error, onChange, onSave, onClose }: {
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
           <Field label="Fecha de tueste">
-            <input className="input" type="date" value={form.roastedOn} onChange={(e) => onChange("roastedOn", e.target.value)} />
+            <DateInput className="input" value={form.roastedOn} onChange={(v) => onChange("roastedOn", v)} />
           </Field>
           <Field label="Cantidad actual (g)">
             <input className="input" type="number" min="0" value={form.weightGrams} onChange={(e) => onChange("weightGrams", e.target.value)} />

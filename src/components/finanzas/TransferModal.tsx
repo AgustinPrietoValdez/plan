@@ -3,6 +3,7 @@ import { CURRENCY, parseMoney } from "../../lib/money";
 import { useCreateAccountTransfer } from "../../lib/queries";
 import type { Account, SavingsGoal, TransferKind } from "../../types";
 import { IX } from "../icons";
+import { DateInput } from "../DateInput";
 
 export const KIND_LABEL: Record<TransferKind, string> = {
   transfer: "Transferencia",
@@ -189,7 +190,7 @@ export function TransferModal({
           <div className="field">
             <label>Fecha</label>
             <div className="control">
-              <input type="date" className="input" style={{ width: "auto" }} value={date} onChange={(e) => setDate(e.target.value)} />
+              <DateInput className="input" style={{ width: "auto" }} value={date} onChange={setDate} />
             </div>
           </div>
           {error && (
