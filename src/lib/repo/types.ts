@@ -5,6 +5,7 @@ import type {
   BrewDatapoint,
   BrewSession,
   Budget,
+  BudgetPeriod,
   CalendarEvent,
   Category,
   CoffeeBean,
@@ -24,7 +25,9 @@ import type {
   InventoryItem,
   MealLog,
   MealPlanEntry,
+  Merchant,
   NetWorthSnapshot,
+  PresentationKind,
   Project,
   ProjectEstado,
   Milestone,
@@ -73,16 +76,31 @@ export type ExpenseCategoryPatch = Partial<Omit<ExpenseCategory, "id" | "created
 export type IngredientCategoryCreate = Pick<IngredientCategory, "name" | "hue"> & { position?: number };
 export type IngredientCategoryPatch = Partial<Omit<IngredientCategory, "id" | "createdAt" | "version">>;
 
+export type MerchantCreate = Pick<Merchant, "name"> & {
+  note?: string;
+  position?: number;
+};
+export type MerchantPatch = Partial<Omit<Merchant, "id" | "createdAt" | "version">>;
+
 export type ExpenseCreate = Pick<
   Expense,
   "name" | "amount" | "currency" | "categoryId" | "spentOn" | "note" | "recurrence" | "recurrenceParentId"
-> & { accountId?: string | null; goalId?: string | null };
+> & { accountId?: string | null; goalId?: string | null; merchantId?: string | null };
 export type ExpensePatch = Partial<Omit<Expense, "id" | "createdAt" | "version">>;
 
-export type ExpenseLineItemCreate = Pick<ExpenseLineItem, "expenseId" | "name" | "quantity" | "unitPrice">;
+export type ExpenseLineItemCreate = Pick<ExpenseLineItem, "expenseId" | "name" | "quantity" | "unitPrice"> & {
+  ingredientId?: string | null;
+  presentationId?: string | null;
+  baseQuantity?: number;
+  addToStock?: boolean;
+};
 export type ExpenseLineItemPatch = Partial<Omit<ExpenseLineItem, "id" | "expenseId" | "createdAt" | "version">>;
 
-export type BudgetUpsert = Pick<Budget, "categoryId" | "monthlyAmount" | "currency">;
+/** `monthlyAmount` es el monto POR PERIODO (ver Budget). `period` es opcional
+ *  para no romper los call-sites viejos: si falta, se guarda "monthly". */
+export type BudgetUpsert = Pick<Budget, "categoryId" | "monthlyAmount" | "currency"> & {
+  period?: BudgetPeriod;
+};
 
 export type SavingsGoalCreate = Pick<SavingsGoal, "name" | "targetAmount"> & {
   position?: number;
@@ -129,6 +147,7 @@ export type ShoppingItemCreate = Pick<ShoppingItem, "name" | "quantity" | "weekS
   ingredientId?: string | null;
   presentationId?: string | null;
   unit?: string | null;
+  baseQuantity?: number | null;
 };
 export type ShoppingItemPatch = Partial<Omit<ShoppingItem, "id" | "createdAt" | "version">>;
 
@@ -138,7 +157,9 @@ export type SavedListPatch = Partial<Omit<SavedList, "id" | "createdAt" | "versi
 export type MealPlanEntryCreate = Pick<MealPlanEntry, "weekStart" | "recipeId" | "targetServings">;
 export type MealPlanEntryPatch = Partial<Omit<MealPlanEntry, "id" | "createdAt" | "version">>;
 
-export type InventoryCreate = Pick<InventoryItem, "ingredientId" | "presentationId" | "quantity" | "expiresOn">;
+export type InventoryCreate = Pick<InventoryItem, "ingredientId" | "presentationId" | "quantity" | "expiresOn"> & {
+  sourceLineItemId?: string | null;
+};
 export type InventoryPatch = Partial<Omit<InventoryItem, "id" | "ingredientId" | "createdAt" | "version">>;
 
 export type MealLogCreate = Pick<MealLog, "eatenOn" | "mealSlot" | "recipeId" | "servings">;
@@ -236,10 +257,12 @@ export type EventPatch = Partial<Omit<CalendarEvent, "id" | "createdAt" | "versi
 export type IngredientCreate = Pick<Ingredient, "name" | "categoryId" | "dimension" | "shelfLifeDays">;
 export type IngredientPatch = Partial<Omit<Ingredient, "id" | "createdAt" | "version">>;
 
+/** `kind` es opcional para no romper los call-sites viejos: si falta, se guarda
+ *  "package" (que es tambien el default de la columna). */
 export type IngredientPresentationCreate = Pick<
   IngredientPresentation,
   "ingredientId" | "label" | "size" | "price"
->;
+> & { kind?: PresentationKind };
 export type IngredientPresentationPatch = Partial<
   Omit<IngredientPresentation, "id" | "ingredientId" | "createdAt" | "version">
 >;
@@ -276,6 +299,11 @@ export interface Repo {
   createExpenseCategory(input: ExpenseCategoryCreate): Promise<ExpenseCategory>;
   patchExpenseCategory(id: string, patch: ExpenseCategoryPatch): Promise<ExpenseCategory>;
   deleteExpenseCategory(id: string): Promise<void>;
+
+  listMerchants(): Promise<Merchant[]>;
+  createMerchant(input: MerchantCreate): Promise<Merchant>;
+  patchMerchant(id: string, patch: MerchantPatch): Promise<Merchant>;
+  deleteMerchant(id: string): Promise<void>;
 
   listExpenses(): Promise<Expense[]>;
   createExpense(input: ExpenseCreate): Promise<Expense>;

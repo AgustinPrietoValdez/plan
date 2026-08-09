@@ -84,28 +84,62 @@ export function shiftMonth(yyyymm: string, delta: number): string {
   return `${year}-${String(month).padStart(2, "0")}`;
 }
 
-/** Monday ("YYYY-MM-DD") of the current real-world week. */
-export function mondayOfThisWeek(): string {
-  const d = fromYmd(todayYmd());
-  const dow = (d.getDay() + 6) % 7; // 0 = Monday
+/** The app's week runs **Saturday → Friday** (that's when the shopping gets
+ *  done). Everything week-shaped — shopping lists, the meal plan, weekly
+ *  budgets — starts here, so there is exactly one definition.
+ *
+ *  Note `startOfWeek()` above is a *different*, Sunday-based helper used only by
+ *  the calendar month grid. Don't cross the two. */
+export function weekStartOf(day: string = todayYmd()): string {
+  const d = fromYmd(day);
+  const dow = (d.getDay() + 1) % 7; // 0 = Saturday
   d.setDate(d.getDate() - dow);
   return ymd(d);
 }
 
-/** Shift a "YYYY-MM-DD" (Monday) week start by `deltaWeeks` weeks. */
+/** Shift a "YYYY-MM-DD" (Saturday) week start by `deltaWeeks` weeks. */
 export function shiftWeek(weekStart: string, deltaWeeks: number): string {
   const d = fromYmd(weekStart);
   d.setDate(d.getDate() + deltaWeeks * 7);
   return ymd(d);
 }
 
-/** "dd/mm – dd/mm" label for the week starting at `weekStart` (Monday..Sunday). */
+/** "dd/mm – dd/mm" label for the week starting at `weekStart` (Saturday..Friday).
+ *  Computed with real dates: the old string arithmetic (`Number(ed) - 1`) printed
+ *  "00" whenever the week ended on the 1st of a month. */
 export function weekLabel(weekStart: string): string {
-  const [, m, d] = weekStart.split("-");
-  const end = shiftWeek(weekStart, 1);
-  const [, em, ed] = end.split("-");
-  const endD = String(Number(ed) - 1).padStart(2, "0"); // Sunday
-  return `${d}/${m} – ${endD}/${em}`;
+  const start = fromYmd(weekStart);
+  const end = addDays(start, 6);
+  const dd = (d: Date) => String(d.getDate()).padStart(2, "0");
+  const mm = (d: Date) => String(d.getMonth() + 1).padStart(2, "0");
+  return `${dd(start)}/${mm(start)} – ${dd(end)}/${mm(end)}`;
+}
+
+/** The month ("YYYY-MM") a week belongs to: the one holding **most** of its
+ *  seven days. Since a week splits as k / 7-k, the majority month is always the
+ *  one containing day 4 — so no week is ever counted in two months, and the
+ *  weeks of a year partition cleanly across the twelve. */
+export function monthOfWeek(weekStart: string): string {
+  return ymd(addDays(fromYmd(weekStart), 3)).slice(0, 7);
+}
+
+/** Week starts (Saturdays) that belong to `yyyymm` under `monthOfWeek`. 4 or 5. */
+export function weekStartsInMonth(yyyymm: string): string[] {
+  const first = fromYmd(`${yyyymm}-01`);
+  const out: string[] = [];
+  // Start one week before the 1st: a week beginning in the previous month can
+  // still land here (e.g. Sat 31/10 -> 6 days in November).
+  let w = shiftWeek(weekStartOf(ymd(first)), -1);
+  for (let i = 0; i < 8; i++) {
+    if (monthOfWeek(w) === yyyymm) out.push(w);
+    w = shiftWeek(w, 1);
+  }
+  return out;
+}
+
+/** How many weeks belong to `yyyymm` (4 or 5). The denominator for weekly budgets. */
+export function weeksInMonth(yyyymm: string): number {
+  return weekStartsInMonth(yyyymm).length;
 }
 
 /** ISO-ish week number (Jan 1 = start of week 1), matching Topbar's calendar-view label. */

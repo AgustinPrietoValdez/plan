@@ -2,38 +2,138 @@ import { useEffect, useMemo, useState } from "react";
 import {
   useCreateShoppingItem,
   useDeleteShoppingItem,
+  useExpenseLineItems,
+  useExpenses,
+  useFinanzasSettings,
   useIngredientPresentations,
   useIngredients,
   usePatchShoppingItem,
   useShoppingItems,
 } from "../../lib/queries";
-import { findMergeTarget } from "../../lib/compras";
-import { mondayOfThisWeek } from "../../lib/date";
-import { fmtMoney, fmtUsdFromDkk } from "../../lib/money";
+import { findMergeTarget, mergeQuantities } from "../../lib/compras";
+import { weekStartOf } from "../../lib/date";
+import { DEFAULT_RATES_PER_USD, fmtMoney, fmtUsdFromDkk } from "../../lib/money";
+import { buildPriceHistory, estimatedUnitPrice, type PriceEntry } from "../../lib/priceHistory";
+import { baseUnit, formatQuantity, parseQuantity } from "../../lib/units";
 import { useUsdRate } from "../../lib/useUsdRate";
 import { useToggleBought } from "../../lib/useToggleBought";
-import type { IngredientPresentation, ShoppingItem } from "../../types";
+import type {
+  Ingredient,
+  IngredientDimension,
+  IngredientPresentation,
+  ShoppingItem,
+} from "../../types";
+
+// Variantes "a granel": `price` es por unidad base (g / ml / u) y la cantidad
+// real vive en `baseQuantity`, no en `quantity`. Ver src/types + lib/compras.
+const BULK_PRICE_UNIT: Record<IngredientDimension, { label: string; perBase: number }> = {
+  weight: { label: "kg", perBase: 1000 },
+  volume: { label: "L", perBase: 1000 },
+  count: { label: "u", perBase: 1 },
+};
+
+/** costo = precio del paquete x paquetes, o precio por unidad base x cantidad.
+ *  null cuando no hay precio, o cuando el item a granel no tiene cantidad (asi
+ *  queda fuera del total en vez de contar 0).
+ *
+ *  `perBaseUnit` es el precio por unidad base sacado de las compras reales (ver
+ *  lib/priceHistory): cuando lo hay le gana al `price` del catalogo, que es un
+ *  numero tipeado a mano. Mismo criterio que ComprasView en escritorio. */
+function itemCost(
+  it: ShoppingItem,
+  p: IngredientPresentation | null | undefined,
+  perBaseUnit?: number | null,
+): number | null {
+  if (!p) return null;
+  if (p.kind === "bulk") {
+    const price = perBaseUnit ?? p.price;
+    if (price == null || it.baseQuantity == null) return null;
+    return price * it.baseQuantity;
+  }
+  // Paquete: el historial da precio por unidad base -> x el tamaño del paquete.
+  if (perBaseUnit != null && p.size > 0) return perBaseUnit * p.size * it.quantity;
+  if (p.price == null) return null;
+  return p.price * it.quantity;
+}
+
+/** Precio por unidad base según lo que realmente se pagó (promedio de 3 meses, o
+ *  la compra más reciente). `null` = este ingrediente todavía no aparece en
+ *  ningún gasto, y ahí manda el precio de catálogo de la variante.
+ *
+ *  Se pregunta por `history.has()` en vez de dejar que `estimatedUnitPrice` caiga
+ *  solo al catálogo: ese fallback toma el mínimo entre TODAS las variantes del
+ *  ingrediente, que para un item que ya eligió la suya sería el precio de otra. */
+function historyUnitPrice(
+  ingredientId: string | null,
+  history: Map<string, PriceEntry[]>,
+  presentations: IngredientPresentation[],
+): number | null {
+  if (!ingredientId || !history.has(ingredientId)) return null;
+  return estimatedUnitPrice(ingredientId, history, presentations);
+}
+
+/** Texto del chip de una variante: precio del paquete, o precio por kg/L/u. */
+function presentationChipDetail(p: IngredientPresentation, dim: IngredientDimension): string {
+  // La plata de la app es DKK/da-DK: `fmtMoney` (como en el resto del archivo y
+  // en ComprasView), no un "$" con agrupación es-AR pegada a mano.
+  if (p.kind !== "bulk") return p.price != null ? ` · ${fmtMoney(p.price)}` : "";
+  if (p.price == null) return " · a granel";
+  const u = BULK_PRICE_UNIT[dim];
+  return ` · ${fmtMoney(p.price * u.perBase)}/${u.label}`;
+}
 
 export function ShoppingListView() {
   const itemsQ = useShoppingItems();
   const presentationsQ = useIngredientPresentations();
+  const ingredientsQ = useIngredients();
   const patchItem = usePatchShoppingItem();
   const deleteItem = useDeleteShoppingItem();
   const toggleBought = useToggleBought();
   const usdRate = useUsdRate();
   const [sheetOpen, setSheetOpen] = useState(false);
 
-  const weekStart = mondayOfThisWeek();
+  // Historial de precios: mismo cálculo que en escritorio (lib/priceHistory),
+  // con las cotizaciones vivas de Finanzas para normalizar gastos en otra moneda.
+  const lineItemsQ = useExpenseLineItems();
+  const expensesQ = useExpenses();
+  const finSettingsQ = useFinanzasSettings();
+  const rates = finSettingsQ.data?.ratesPerUsd;
+  const ratesPerUsd = useMemo(
+    () => ({
+      USD: 1,
+      DKK: rates?.DKK ?? DEFAULT_RATES_PER_USD.DKK,
+      EUR: rates?.EUR ?? DEFAULT_RATES_PER_USD.EUR,
+      ARS: rates?.ARS ?? DEFAULT_RATES_PER_USD.ARS,
+    }),
+    [rates?.DKK, rates?.EUR, rates?.ARS],
+  );
+  const priceHistory = useMemo(
+    () => buildPriceHistory(lineItemsQ.data ?? [], expensesQ.data ?? [], ratesPerUsd),
+    [lineItemsQ.data, expensesQ.data, ratesPerUsd],
+  );
+
+  const weekStart = weekStartOf();
   const items = useMemo(() => (itemsQ.data ?? []).filter((i) => i.weekStart === weekStart), [itemsQ.data, weekStart]);
-  const priceById = useMemo(() => {
-    const m = new Map<string, number | null>();
-    for (const p of presentationsQ.data ?? []) m.set(p.id, p.price);
+  const presentations = useMemo(() => presentationsQ.data ?? [], [presentationsQ.data]);
+  const presById = useMemo(() => {
+    const m = new Map<string, IngredientPresentation>();
+    for (const p of presentationsQ.data ?? []) m.set(p.id, p);
     return m;
   }, [presentationsQ.data]);
-  const itemPrice = (it: ShoppingItem): number | null => {
-    if (!it.presentationId) return null;
-    const unit = priceById.get(it.presentationId);
-    return unit == null ? null : unit * it.quantity;
+  const ingById = useMemo(() => {
+    const m = new Map<string, Ingredient>();
+    for (const i of ingredientsQ.data ?? []) m.set(i.id, i);
+    return m;
+  }, [ingredientsQ.data]);
+  const presOf = (it: ShoppingItem) => (it.presentationId ? presById.get(it.presentationId) ?? null : null);
+  const itemPrice = (it: ShoppingItem): number | null =>
+    itemCost(it, presOf(it), historyUnitPrice(it.ingredientId, priceHistory, presentations));
+  /** Para items a granel, cuanto se compra ("750 g"); null = item por paquete. */
+  const bulkLabel = (it: ShoppingItem): string | null => {
+    if (presOf(it)?.kind !== "bulk") return null;
+    if (it.baseQuantity == null) return "a granel";
+    const dim = it.ingredientId ? ingById.get(it.ingredientId)?.dimension : undefined;
+    return dim ? formatQuantity(it.baseQuantity, dim) : String(it.baseQuantity);
   };
   const { pending, bought } = useMemo(() => {
     const pending: ShoppingItem[] = [];
@@ -54,7 +154,7 @@ export function ShoppingListView() {
 
   const clearBought = () => {
     if (bought.length === 0) return;
-    if (!window.confirm(`Vaciar ${bought.length} producto(s) comprado(s)?`)) return;
+    if (!window.confirm(`Vaciar ${bought.length} ítem(s) comprado(s)?`)) return;
     for (const it of bought) {
       deleteItem.mutateAsync(it.id).catch((err) =>
         window.alert(err instanceof Error ? err.message : "No se pudo borrar un ítem"),
@@ -83,6 +183,7 @@ export function ShoppingListView() {
               key={it.id}
               item={it}
               price={itemPrice(it)}
+              bulkLabel={bulkLabel(it)}
               usdRate={usdRate}
               onToggle={() => toggleBought(it, !it.bought)}
               onSetQty={(n) => setQtyAbs(it, n)}
@@ -106,6 +207,7 @@ export function ShoppingListView() {
               key={it.id}
               item={it}
               price={itemPrice(it)}
+              bulkLabel={bulkLabel(it)}
               usdRate={usdRate}
               onToggle={() => toggleBought(it, !it.bought)}
               onSetQty={(n) => setQtyAbs(it, n)}
@@ -151,15 +253,38 @@ function AddSheet({ onClose }: { onClose: () => void }) {
     ? ingredients.filter((i) => i.name.toLowerCase().includes(search.trim().toLowerCase()))
     : ingredients;
 
-  const weekStart = mondayOfThisWeek();
-  const addMerged = (add: { name: string; quantity: number; ingredientId?: string | null; presentationId?: string | null }) => {
+  const weekStart = weekStartOf();
+  const addMerged = (add: {
+    name: string;
+    quantity: number;
+    baseQuantity?: number | null;
+    ingredientId?: string | null;
+    presentationId?: string | null;
+  }) => {
     const item = { ...add, weekStart };
     const current = (itemsQ.data ?? []).filter((i) => i.weekStart === weekStart);
     const target = findMergeTarget(current, item);
     const p = target
-      ? patchItem.mutateAsync({ id: target.id, patch: { quantity: target.quantity + add.quantity } })
+      ? patchItem.mutateAsync({ id: target.id, patch: mergeQuantities(target, item) })
       : createItem.mutateAsync(item);
     p.catch((err) => window.alert(err instanceof Error ? err.message : "No se pudo agregar"));
+  };
+
+  /** A granel no se agrega "1": hay que preguntar cuanto, en unidad base. */
+  const addPresentation = (ing: Ingredient, p: IngredientPresentation) => {
+    const base = { name: `${ing.name} (${p.label})`, quantity: 1, ingredientId: ing.id, presentationId: p.id };
+    if (p.kind !== "bulk") {
+      addMerged(base);
+      return;
+    }
+    const raw = window.prompt(`¿Cuánto de "${ing.name} (${p.label})"? En ${baseUnit(ing.dimension)}.`, "");
+    if (raw == null) return;
+    const amount = parseQuantity(raw);
+    if (amount == null || amount <= 0) {
+      window.alert("No entendí esa cantidad.");
+      return;
+    }
+    addMerged({ ...base, baseQuantity: amount });
   };
 
   return (
@@ -206,17 +331,10 @@ function AddSheet({ onClose }: { onClose: () => void }) {
                             key={p.id}
                             type="button"
                             className="m-quick-chip"
-                            onClick={() =>
-                              addMerged({
-                                name: `${i.name} (${p.label})`,
-                                quantity: 1,
-                                ingredientId: i.id,
-                                presentationId: p.id,
-                              })
-                            }
+                            onClick={() => addPresentation(i, p)}
                           >
                             {p.label}
-                            {p.price != null && ` · $${p.price.toLocaleString("es-AR")}`}
+                            {presentationChipDetail(p, i.dimension)}
                           </button>
                         ))
                       )}
@@ -235,6 +353,7 @@ function AddSheet({ onClose }: { onClose: () => void }) {
 function ItemRow({
   item,
   price,
+  bulkLabel,
   usdRate,
   onToggle,
   onSetQty,
@@ -242,6 +361,8 @@ function ItemRow({
 }: {
   item: ShoppingItem;
   price: number | null;
+  /** Item a granel: cuanto se compra ("750 g"). null = item por paquete. */
+  bulkLabel: string | null;
   usdRate: number;
   onToggle: () => void;
   onSetQty: (n: number) => void;
@@ -266,18 +387,26 @@ function ItemRow({
           <span className="m-item-price"> {fmtMoney(price)} · ≈{fmtUsdFromDkk(price, usdRate)}</span>
         )}
       </span>
-      <div className="m-stepper">
-        <button type="button" onClick={() => onSetQty(item.quantity - 1)} aria-label="Menos">−</button>
-        <input
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onBlur={commit}
-          onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-          inputMode="numeric"
-          aria-label="Cantidad"
-        />
-        <button type="button" onClick={() => onSetQty(item.quantity + 1)} aria-label="Más">+</button>
-      </div>
+      {bulkLabel != null ? (
+        // A granel se compra un peso/volumen: "quantity ± 1" no significa nada.
+        // El monto se edita desde la app de escritorio.
+        <span style={{ fontVariantNumeric: "tabular-nums", color: "var(--fg-muted)", whiteSpace: "nowrap" }}>
+          {bulkLabel}
+        </span>
+      ) : (
+        <div className="m-stepper">
+          <button type="button" onClick={() => onSetQty(item.quantity - 1)} aria-label="Menos">−</button>
+          <input
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+            inputMode="numeric"
+            aria-label="Cantidad"
+          />
+          <button type="button" onClick={() => onSetQty(item.quantity + 1)} aria-label="Más">+</button>
+        </div>
+      )}
       <button className="m-del" type="button" onClick={onDelete} aria-label="Borrar">
         ✕
       </button>

@@ -786,6 +786,12 @@ pub fn run() {
             sql: include_str!("../migrations/0042_coffee_wishlist.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 43,
+            description: "despensa: variantes a granel, comercios, gasto<->ingrediente con stock e historial de precios, presupuestos semanales, semana sabado->viernes",
+            sql: include_str!("../migrations/0043_pantry_prices_weekly_budgets.sql"),
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()

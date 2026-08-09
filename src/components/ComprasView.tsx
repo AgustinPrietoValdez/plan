@@ -5,15 +5,12 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type DragEvent,
   type MouseEvent,
   type ReactNode,
 } from "react";
 import {
-  useAccounts,
-  useCreateExpense,
-  useCreateExpenseLineItem,
-  useExpenseCategories,
   useCreateIngredient,
   useCreateIngredientPresentation,
   useCreateRecipe,
@@ -30,6 +27,10 @@ import {
   useDeleteRecipeIngredient,
   useDeleteInventory,
   useDeleteShoppingItem,
+  useExpenseLineItems,
+  useExpenses,
+  useFinanzasSettings,
+  useMerchants,
   useIngredientPresentations,
   useIngredientCategories,
   useIngredients,
@@ -51,17 +52,25 @@ import {
   aggregateCategoryNeed,
   categoryNeedToShoppingItems,
   findMergeTarget,
+  mergeQuantities,
   neededToShoppingItems,
   planWeeklyMeals,
 } from "../lib/compras";
 import type { ShoppingItemCreate } from "../lib/repo";
-import { CURRENCY, fmtMoney, fmtUsdFromDkk } from "../lib/money";
+import { CURRENCY, DEFAULT_RATES_PER_USD, fmtMoney, fmtMoneyIn, fmtUsdFromDkk } from "../lib/money";
+import {
+  avgPriceLast3Months,
+  buildPriceHistory,
+  byMerchant,
+  cheapestMerchant,
+  estimatedUnitPrice,
+  type PriceEntry,
+} from "../lib/priceHistory";
 import { useUsdRate } from "../lib/useUsdRate";
 import { defaultSlot, useLogMeal } from "../lib/useLogMeal";
 import { useToggleBought } from "../lib/useToggleBought";
 import { useAutoExchangeRates } from "../lib/exchangeRates";
-import { fromYmd, mondayOfThisWeek, shiftWeek, todayYmd, weekLabel, ymd } from "../lib/date";
-import { DateInput } from "./DateInput";
+import { fromYmd, shiftWeek, todayYmd, weekLabel, weekStartOf, ymd } from "../lib/date";
 import {
   DIMENSION_LABELS,
   baseUnit,
@@ -78,6 +87,7 @@ import type {
   MealPlanEntry,
   MealSlot,
   MealType,
+  PresentationKind,
   Recipe,
   RecipeIngredient,
   ShoppingItem,
@@ -95,6 +105,180 @@ import { ICheck, IChevD, IChevL, IChevR, IEdit, IPlus, ITrash, IX } from "./icon
 // igual que FinanzasView.tsx / CafeView.tsx.
 function fluid(base: number): string {
   return `calc(var(--s, 2) * ${base}px)`;
+}
+
+// Los modales de esta vista son `.modal`, que NO escala con el `--s` del frame
+// sino con `--home-s` (ver components.css). Todo px nuevo que viva adentro de un
+// modal pasa por acá — igual que BudgetManager.tsx / ExpenseEditor.tsx.
+function m(base: number): string {
+  return `calc(var(--home-s, 1) * ${base}px)`;
+}
+
+// `className="input"` solo tiene CSS adentro de un `.field` (ver `.field .input`
+// en components.css): suelto no es más que un control nativo del browser. Estos
+// dos objetos le devuelven la misma chrome, cada uno en su sistema de escala —
+// mismo patrón que `fieldChrome` en BudgetView.tsx / `boxInput` en MerchantManager.tsx.
+const modalInputChrome: CSSProperties = {
+  border: "1px solid var(--line)",
+  background: "var(--bg-elev)",
+  borderRadius: m(6),
+  padding: `${m(6)} ${m(8)}`,
+  fontSize: m(13),
+  fontFamily: "inherit",
+  color: "var(--fg)",
+  outline: 0,
+};
+
+const fluidInputChrome: CSSProperties = {
+  border: "1px solid var(--line)",
+  background: "var(--bg-elev)",
+  borderRadius: fluid(6),
+  padding: `${fluid(5)} ${fluid(7)}`,
+  fontSize: fluid(12),
+  fontFamily: "inherit",
+  color: "var(--fg)",
+  outline: 0,
+};
+
+/** Ratios de cambio vivos (los de Finanzas), con el default del módulo de moneda
+ *  como piso. Mismo patrón que BudgetView.tsx: el historial de precios normaliza
+ *  a CURRENCY y necesita convertir gastos cargados en otra moneda. */
+function useRatesPerUsd(): Record<string, number> {
+  const finSettingsQ = useFinanzasSettings();
+  const rates = finSettingsQ.data?.ratesPerUsd;
+  return useMemo(
+    () => ({
+      USD: 1,
+      DKK: rates?.DKK ?? DEFAULT_RATES_PER_USD.DKK,
+      EUR: rates?.EUR ?? DEFAULT_RATES_PER_USD.EUR,
+      ARS: rates?.ARS ?? DEFAULT_RATES_PER_USD.ARS,
+    }),
+    [rates?.DKK, rates?.EUR, rates?.ARS],
+  );
+}
+
+/** Historial de precios por ingrediente, armado desde los gastos reales.
+ *  Es la única fuente de verdad de "cuánto sale esto": el `price` del catálogo
+ *  es un número tipeado a mano y sólo se usa cuando todavía no compraste nunca. */
+function usePriceHistory(): Map<string, PriceEntry[]> {
+  const lineItemsQ = useExpenseLineItems();
+  const expensesQ = useExpenses();
+  const ratesPerUsd = useRatesPerUsd();
+  return useMemo(
+    () => buildPriceHistory(lineItemsQ.data ?? [], expensesQ.data ?? [], ratesPerUsd),
+    [lineItemsQ.data, expensesQ.data, ratesPerUsd],
+  );
+}
+
+/** Precio por unidad base según lo que REALMENTE se pagó (promedio 3 meses, o la
+ *  compra más reciente). `null` cuando el ingrediente todavía no aparece en
+ *  ningún gasto — ahí manda el precio de catálogo de la variante.
+ *
+ *  Se chequea `history.has()` a propósito en vez de dejar que
+ *  `estimatedUnitPrice` caiga solo al catálogo: su fallback toma el MÍNIMO entre
+ *  todas las variantes del ingrediente, que para un item que ya eligió su
+ *  variante sería un precio de otra. */
+function historyUnitPrice(
+  ingredientId: string | null,
+  history: Map<string, PriceEntry[]>,
+  presentations: IngredientPresentation[],
+): number | null {
+  if (!ingredientId || !history.has(ingredientId)) return null;
+  return estimatedUnitPrice(ingredientId, history, presentations);
+}
+
+// ---------------- Variantes a granel ----------------
+// Una variante "a granel" (salmon en la pescaderia: 750 g esta vez, 500 g la que
+// viene) no tiene tamaño fijo: `size` no se lee nunca y `price` es el precio POR
+// UNIDAD BASE (por g / ml / u). Nadie piensa "119 kr el gramo", asi que la UI
+// pide y muestra el precio por la unidad natural de la dimension (kg / L / u) y
+// convierte al entrar y salir.
+const BULK_PRICE_UNIT: Record<IngredientDimension, { label: string; perBase: number }> = {
+  weight: { label: "kg", perBase: 1000 },
+  volume: { label: "L", perBase: 1000 },
+  count: { label: "u", perBase: 1 },
+};
+
+/** Precio por unidad base -> el numero que ve el usuario (por kg / L / u). */
+function bulkPriceToDisplay(price: number, dim: IngredientDimension): number {
+  return price * BULK_PRICE_UNIT[dim].perBase;
+}
+/** Lo que tipeo el usuario (por kg / L / u) -> precio por unidad base. */
+function bulkPriceToBase(price: number, dim: IngredientDimension): number {
+  return price / BULK_PRICE_UNIT[dim].perBase;
+}
+
+/** Texto de una variante a granel para chips y detalles: "a granel · 119/kg"
+ *  (o solo "a granel" cuando todavia no tiene precio). Un `formatQuantity` del
+ *  `size` mostraria "0 g", que es basura. */
+function bulkSummary(p: IngredientPresentation, dim: IngredientDimension): string {
+  if (p.price == null) return "a granel";
+  // Texto de display, no un valor de input: va por `fmtMoney` como el resto de la
+  // vista (`rawNumber` es sólo para lo que se vuelve a parsear con parseQuantity).
+  return `a granel · ${fmtMoney(bulkPriceToDisplay(p.price, dim))}/${BULK_PRICE_UNIT[dim].label}`;
+}
+
+/** Costo estimado de un item de la lista segun su variante.
+ *  package -> precio del paquete x cuantos paquetes (lo de siempre).
+ *  bulk    -> precio por unidad base x la cantidad real (`baseQuantity`).
+ *  Un item a granel sin cantidad cargada devuelve null: queda fuera del total en
+ *  vez de contar 0.
+ *
+ *  `perBaseUnit` es el precio por unidad base salido del historial de compras
+ *  reales (ver lib/priceHistory). Cuando lo hay manda sobre `p.price`, que es un
+ *  numero tipeado a mano en el catalogo: asi el total de la lista se parece a lo
+ *  que vas a pagar y no a lo que alguna vez creiste que salia. */
+function itemCost(
+  it: Pick<ShoppingItem, "quantity" | "baseQuantity">,
+  p: IngredientPresentation | null | undefined,
+  perBaseUnit?: number | null,
+): number | null {
+  if (!p) return null;
+  if (p.kind === "bulk") {
+    const price = perBaseUnit ?? p.price;
+    if (price == null || it.baseQuantity == null) return null;
+    return price * it.baseQuantity;
+  }
+  // Paquete: el historial da precio por unidad base, asi que hay que volver a
+  // multiplicar por el tamaño del paquete. Sin tamaño no se puede, cae al precio.
+  if (perBaseUnit != null && p.size > 0) return perBaseUnit * p.size * it.quantity;
+  if (p.price == null) return null;
+  return p.price * it.quantity;
+}
+
+/** Lee una cantidad a granel tipeada a mano. Acepta la unidad base sin sufijo
+ *  ("750"), con sufijo ("750 g") o la unidad grande ("0,75 kg", "1/2 L").
+ *  Devuelve la cantidad en unidad base, o null si no se entiende. */
+function parseBulkAmount(input: string, dim: IngredientDimension): number | null {
+  const s = input.trim().toLowerCase();
+  if (!s) return null;
+  // De sufijo mas largo a mas corto: "ml" antes que "l", "kg" antes que "g".
+  const units = [...unitOptions(dim)].sort((a, b) => b.unit.length - a.unit.length);
+  for (const u of units) {
+    const sym = u.unit.toLowerCase();
+    if (s.endsWith(sym)) {
+      const n = parseQuantity(s.slice(0, s.length - sym.length));
+      return n != null && n > 0 ? toBase(n, u.unit) : null;
+    }
+  }
+  const n = parseQuantity(s);
+  return n != null && n > 0 ? n : null;
+}
+
+/** Pregunta cuanto se compra de una variante a granel (arrastrar a la lista o al
+ *  inventario). null = cancelo o tipeo cualquier cosa. */
+function promptBulkAmount(ing: Ingredient, p: IngredientPresentation): number | null {
+  const raw = window.prompt(
+    `¿Cuánto de "${ing.name} (${p.label})"? En ${baseUnit(ing.dimension)}, o con unidad ("0,75 ${BULK_PRICE_UNIT[ing.dimension].label}").`,
+    "",
+  );
+  if (raw == null) return null;
+  const amount = parseBulkAmount(raw, ing.dimension);
+  if (amount == null) {
+    window.alert("No entendí esa cantidad.");
+    return null;
+  }
+  return amount;
 }
 
 const MEAL_TYPE_LABELS: Record<MealType, string> = {
@@ -220,7 +404,7 @@ export function ComprasView() {
           </span>
           <div style={{ flex: 1, minWidth: 0 }}>
             <h2 style={{ margin: 0, fontSize: fluid(22), fontWeight: 600, letterSpacing: "-0.02em", lineHeight: 1.15 }}>Compras</h2>
-            <div style={{ fontSize: fluid(13), color: "var(--fg-muted)", marginTop: 2 }}>
+            <div style={{ fontSize: fluid(13), color: "var(--fg-muted)", marginTop: fluid(2) }}>
               Ingredientes, recetas y listas · anti-desperdicio
             </div>
           </div>
@@ -228,16 +412,16 @@ export function ComprasView() {
           {tab !== "ajustes" && (
             <div style={{ display: "flex", alignItems: "center", gap: fluid(5), marginRight: fluid(4) }}>
               <button className="icon-btn" title="Semana anterior" onClick={() => setWeekStart(shiftWeek(weekStart, -1))}>
-                <IChevL size={13} />
+                <IChevL size={13} style={{ width: fluid(13), height: fluid(13) }} />
               </button>
               <span style={{ fontSize: fluid(13.5), fontWeight: 600, fontVariantNumeric: "tabular-nums", minWidth: fluid(90), textAlign: "center" }}>
                 {weekLabel(weekStart)}
               </span>
               <button className="icon-btn" title="Semana siguiente" onClick={() => setWeekStart(shiftWeek(weekStart, 1))}>
-                <IChevR size={13} />
+                <IChevR size={13} style={{ width: fluid(13), height: fluid(13) }} />
               </button>
-              {weekStart !== mondayOfThisWeek() && (
-                <button className="btn ghost" onClick={() => setWeekStart(mondayOfThisWeek())}>
+              {weekStart !== weekStartOf() && (
+                <button className="btn ghost" onClick={() => setWeekStart(weekStartOf())}>
                   Hoy
                 </button>
               )}
@@ -251,7 +435,7 @@ export function ComprasView() {
           )}
           {tab !== "ajustes" && (
             <button className="btn primary" onClick={onPrimary}>
-              <IPlus size={13} /> {tab === "listas" ? "Agregar ingrediente" : "Agregar receta"}
+              <IPlus size={13} style={{ width: fluid(13), height: fluid(13) }} /> {tab === "listas" ? "Agregar ingrediente" : "Agregar receta"}
             </button>
           )}
         </div>
@@ -382,11 +566,11 @@ function AjustesPanel() {
             min={0}
             value={form.expiryWarnDays}
             onChange={(e) => setForm((f) => ({ ...f, expiryWarnDays: Math.max(0, Number(e.target.value) || 0) }))}
-            style={{ width: fluid(60) }}
+            style={{ ...fluidInputChrome, width: fluid(60) }}
           />
           días antes
         </label>
-        <div style={{ fontSize: fluid(12), color: "var(--fg-muted)", marginTop: 4 }}>Horarios para preguntar "¿qué vas a comer?"</div>
+        <div style={{ fontSize: fluid(12), color: "var(--fg-muted)", marginTop: fluid(4) }}>Horarios para preguntar "¿qué vas a comer?"</div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: fluid(8) }}>
           {MEAL_SLOTS.map((slot) => (
             <label key={slot.id} style={optionRowStyle}>
@@ -397,6 +581,7 @@ function AjustesPanel() {
                 type="time"
                 value={form.mealTimes[slot.id]}
                 onChange={(e) => setForm((f) => ({ ...f, mealTimes: { ...f.mealTimes, [slot.id]: e.target.value } }))}
+                style={fluidInputChrome}
               />
             </label>
           ))}
@@ -416,7 +601,7 @@ function AjustesPanel() {
                 min={0}
                 value={mealTargets[bucket]}
                 onChange={(e) => updateMealTarget(bucket, Number(e.target.value) || 0)}
-                style={{ width: fluid(60) }}
+                style={{ ...fluidInputChrome, width: fluid(60) }}
               />
             </label>
           ))}
@@ -466,9 +651,11 @@ function RecipeIngredientAdder({
     setAmount("");
   };
 
+  // Sólo se renderiza adentro del RecipeModal, así que escala con `--home-s`
+  // (helper `m`), no con el `--s` del frame.
   if (ingredients.length === 0 && categories.length === 0) {
     return (
-      <div style={{ fontSize: fluid(12), color: "var(--fg-subtle)" }}>
+      <div style={{ fontSize: m(12), color: "var(--fg-subtle)" }}>
         Cargá ingredientes en la pestaña Ingredientes para poder agregarlos.
       </div>
     );
@@ -480,17 +667,17 @@ function RecipeIngredientAdder({
         e.preventDefault();
         add();
       }}
-      style={{ display: "flex", gap: fluid(6), alignItems: "center", flexWrap: "wrap", marginTop: 2 }}
+      style={{ display: "flex", gap: m(6), alignItems: "center", flexWrap: "wrap", marginTop: m(2) }}
     >
       <select
         className="input"
         value={mode}
         onChange={(e) => setMode(e.target.value as "ingrediente" | "categoria")}
-        style={{ width: fluid(110) }}
-        title="Ingrediente concreto o categoria generica"
+        style={{ ...modalInputChrome, width: m(110) }}
+        title="Ingrediente concreto o categoría genérica"
       >
         <option value="ingrediente">Ingrediente</option>
-        <option value="categoria">Categoria</option>
+        <option value="categoria">Categoría</option>
       </select>
       {mode === "ingrediente" ? (
         <select
@@ -500,7 +687,7 @@ function RecipeIngredientAdder({
             setIngredientId(e.target.value);
             setUnit("");
           }}
-          style={{ flex: 1, minWidth: fluid(160) }}
+          style={{ ...modalInputChrome, flex: 1, minWidth: m(160) }}
         >
           <option value="">Elegí ingrediente…</option>
           {ingredients.map((i) => (
@@ -514,7 +701,7 @@ function RecipeIngredientAdder({
           className="input"
           value={categoryId}
           onChange={(e) => setCategoryId(e.target.value)}
-          style={{ flex: 1, minWidth: fluid(160) }}
+          style={{ ...modalInputChrome, flex: 1, minWidth: m(160) }}
         >
           <option value="">Elegí categoría…</option>
           {categories.map((c) => (
@@ -529,10 +716,15 @@ function RecipeIngredientAdder({
         placeholder={mode === "categoria" ? "Cantidad" : "Cant. (admite 1/2)"}
         value={amount}
         onChange={(e) => setAmount(e.target.value)}
-        style={{ width: fluid(120) }}
+        style={{ ...modalInputChrome, width: m(120) }}
       />
       {mode === "ingrediente" && selected && units.length > 1 ? (
-        <select className="input" value={effectiveUnit} onChange={(e) => setUnit(e.target.value)}>
+        <select
+          className="input"
+          value={effectiveUnit}
+          onChange={(e) => setUnit(e.target.value)}
+          style={modalInputChrome}
+        >
           {units.map((u) => (
             <option key={u.unit} value={u.unit}>
               {u.label}
@@ -540,14 +732,14 @@ function RecipeIngredientAdder({
           ))}
         </select>
       ) : mode === "ingrediente" && selected ? (
-        <span style={{ fontSize: fluid(12), color: "var(--fg-muted)", width: fluid(24) }}>{units[0]?.label}</span>
+        <span style={{ fontSize: m(12), color: "var(--fg-muted)", width: m(24) }}>{units[0]?.label}</span>
       ) : null}
       <button
         className="btn"
         type="submit"
         disabled={mode === "categoria" ? !categoryId || !amount.trim() : !selected || !amount.trim()}
       >
-        <IPlus size={11} /> Agregar
+        <IPlus size={11} style={{ width: m(11), height: m(11) }} /> Agregar
       </button>
     </form>
   );
@@ -568,8 +760,8 @@ const ListasPanel = forwardRef<ListasPanelHandle>(function ListasPanel(_props, r
   const deleteIngredient = useDeleteIngredient();
   const toggleBought = useToggleBought();
   const usdRate = useUsdRate();
+  const priceHistory = usePriceHistory();
 
-  const [showClose, setShowClose] = useState(false);
   const [showCategoryManager, setShowCategoryManager] = useState(false);
   const [showAddIngredient, setShowAddIngredient] = useState(false);
   const [editingIngredientId, setEditingIngredientId] = useState<string | null>(null);
@@ -598,27 +790,24 @@ const ListasPanel = forwardRef<ListasPanelHandle>(function ListasPanel(_props, r
     return m;
   }, [presentations]);
 
-  const priceById = useMemo(() => {
-    const m = new Map<string, number | null>();
-    for (const p of presentations) m.set(p.id, p.price);
-    return m;
-  }, [presentations]);
-
   const editingIngredient = editingIngredientId ? ingredientById.get(editingIngredientId) ?? null : null;
 
   const pending = items.filter((i) => !i.bought);
   const bought = items.filter((i) => i.bought);
 
-  const itemPrice = (it: ShoppingItem): number | null => {
-    if (!it.presentationId) return null;
-    const unit = priceById.get(it.presentationId);
-    return unit == null ? null : unit * it.quantity;
-  };
+  const itemPrice = (it: ShoppingItem): number | null =>
+    it.presentationId
+      ? itemCost(
+          it,
+          presentationById.get(it.presentationId),
+          historyUnitPrice(it.ingredientId, priceHistory, presentations),
+        )
+      : null;
   const total = items.reduce((s, it) => s + (itemPrice(it) ?? 0), 0);
 
   const addToList = (it: ShoppingItemCreate) => {
     const target = findMergeTarget(items, it);
-    if (target) patchItem.mutate({ id: target.id, patch: { quantity: target.quantity + it.quantity } });
+    if (target) patchItem.mutate({ id: target.id, patch: mergeQuantities(target, it) });
     else createItem.mutate(it);
   };
 
@@ -626,6 +815,22 @@ const ListasPanel = forwardRef<ListasPanelHandle>(function ListasPanel(_props, r
     const ing = ingredientById.get(ingredientId);
     const p = presentationById.get(presentationId);
     if (!ing || !p) return;
+    // A granel `quantity: 1` no dice nada: lo que se compra es un peso/volumen,
+    // asi que hay que preguntarlo y guardarlo en `baseQuantity`.
+    if (p.kind === "bulk") {
+      const amount = promptBulkAmount(ing, p);
+      if (amount == null) return;
+      addToList({
+        name: `${ing.name} (${p.label})`,
+        quantity: 1,
+        baseQuantity: amount,
+        ingredientId: ing.id,
+        presentationId: p.id,
+        unit: null,
+        weekStart,
+      });
+      return;
+    }
     addToList({
       name: `${ing.name} (${p.label})`,
       quantity: 1,
@@ -639,6 +844,10 @@ const ListasPanel = forwardRef<ListasPanelHandle>(function ListasPanel(_props, r
   const setQtyAbs = (it: ShoppingItem, n: number) => {
     const next = Math.max(1, n);
     if (next !== it.quantity) patchItem.mutate({ id: it.id, patch: { quantity: next } });
+  };
+
+  const setBaseQtyAbs = (it: ShoppingItem, n: number) => {
+    if (n > 0 && n !== it.baseQuantity) patchItem.mutate({ id: it.id, patch: { baseQuantity: n } });
   };
 
   const deleteBought = () => {
@@ -688,6 +897,15 @@ const ListasPanel = forwardRef<ListasPanelHandle>(function ListasPanel(_props, r
       const { ingredientId, presentationId } = JSON.parse(raw);
       const p = presentationById.get(presentationId);
       if (ingredientId && p) {
+        // A granel no hay `size`: usar p.size crearia un lote de 0 g.
+        if (p.kind === "bulk") {
+          const ing = ingredientById.get(ingredientId);
+          if (!ing) return;
+          const amount = promptBulkAmount(ing, p);
+          if (amount == null) return;
+          createInventory.mutate({ ingredientId, presentationId: p.id, quantity: amount, expiresOn: null });
+          return;
+        }
         createInventory.mutate({ ingredientId, presentationId: p.id, quantity: p.size, expiresOn: null });
       }
     } catch {
@@ -697,14 +915,6 @@ const ListasPanel = forwardRef<ListasPanelHandle>(function ListasPanel(_props, r
 
   return (
     <>
-      {showClose && (
-        <CloseListModal
-          bought={bought}
-          priceById={priceById}
-          onClose={() => setShowClose(false)}
-          onClearBought={deleteBought}
-        />
-      )}
       {showCategoryManager && <IngredientCategoryManager onClose={() => setShowCategoryManager(false)} />}
       {showAddIngredient && <AddIngredientModal categories={categories} onClose={() => setShowAddIngredient(false)} />}
       {editingIngredient && (
@@ -712,6 +922,7 @@ const ListasPanel = forwardRef<ListasPanelHandle>(function ListasPanel(_props, r
           ingredient={editingIngredient}
           presentations={presByIngredient.get(editingIngredient.id) ?? []}
           categories={categories}
+          priceEntries={priceHistory.get(editingIngredient.id) ?? []}
           onClose={() => setEditingIngredientId(null)}
           onDelete={() => { deleteIngredient.mutate(editingIngredient.id); setEditingIngredientId(null); }}
         />
@@ -721,16 +932,31 @@ const ListasPanel = forwardRef<ListasPanelHandle>(function ListasPanel(_props, r
         {/* IZQUIERDA — arriba la lista de esta semana, abajo el inventario (50/50) */}
         <div style={{ display: "flex", flexDirection: "column", gap: fluid(8), minWidth: 0, minHeight: 0 }}>
           <div style={{ display: "flex", flexDirection: "column", gap: fluid(8), flex: 1, minHeight: 0 }}>
+            {/* Acá vivía "Cerrar lista / registrar gasto", que creaba el gasto
+                desde la lista. Se borró: la lista es sólo un plan visual, y el
+                gasto (con él, el stock y el historial de precios) se carga en
+                Finanzas. Registrarlo desde acá era una segunda puerta de
+                entrada, compitiendo con la de Finanzas, y encima inventaba los
+                precios a partir del catálogo en vez de guardar lo que se pagó
+                de verdad. Lo que queda es vaciar lo tildado. */}
             <SectionTitle
               right={
-                <button className="btn ghost" onClick={() => setShowClose(true)} disabled={bought.length === 0} title="Registrar lo comprado como gasto en Finanzas">
-                  Cerrar lista / registrar gasto
+                <button
+                  className="btn ghost"
+                  onClick={() => { if (window.confirm(`Vaciar ${bought.length} ítem(s) comprado(s)?`)) deleteBought(); }}
+                  disabled={bought.length === 0}
+                  title="Sacar de la lista lo que ya tildaste (no toca el inventario ni Finanzas)"
+                >
+                  Vaciar comprados
                 </button>
               }
             >
               Lista · {items.length}
               {total > 0 && (
-                <span style={{ marginLeft: fluid(8), color: "var(--fg)", fontWeight: 700, textTransform: "none" }}>
+                <span
+                  title="Estimado con el promedio de los últimos 3 meses de compras reales; si todavía no compraste el ingrediente, con el precio del catálogo."
+                  style={{ marginLeft: fluid(8), color: "var(--fg)", fontWeight: 700, textTransform: "none" }}
+                >
                   {fmtMoney(total)} <span style={{ color: "var(--fg-muted)", fontWeight: 500 }}>≈ {fmtUsdFromDkk(total, usdRate)}</span>
                 </span>
               )}
@@ -751,14 +977,14 @@ const ListasPanel = forwardRef<ListasPanelHandle>(function ListasPanel(_props, r
                 boxSizing: "border-box",
                 borderRadius: fluid(10),
                 overflowY: "auto",
-                border: dragOver ? "2px dashed var(--accent)" : "2px dashed transparent",
+                border: dragOver ? `${fluid(2)} dashed var(--accent)` : `${fluid(2)} dashed transparent`,
                 background: dragOver ? "var(--accent-soft)" : undefined,
                 transition: "border-color .1s, background .1s",
               }}
             >
               {items.length === 0 && (
-                <div style={{ fontSize: fluid(12.5), color: "var(--fg-subtle)", padding: `${fluid(8)} 2px` }}>
-                  La lista de esta semana esta vacia. Arrastra una variante desde Ingredientes.
+                <div style={{ fontSize: fluid(12.5), color: "var(--fg-subtle)", padding: `${fluid(8)} ${fluid(2)}` }}>
+                  La lista de esta semana está vacía. Arrastrá una variante desde Ingredientes.
                 </div>
               )}
               {pending.map((it) => (
@@ -770,6 +996,7 @@ const ListasPanel = forwardRef<ListasPanelHandle>(function ListasPanel(_props, r
                   price={itemPrice(it)}
                   onToggle={() => toggleBought(it, true)}
                   onSetQty={(n) => setQtyAbs(it, n)}
+                  onSetBaseQty={(n) => setBaseQtyAbs(it, n)}
                   onDelete={() => deleteItem.mutate(it.id)}
                 />
               ))}
@@ -787,6 +1014,7 @@ const ListasPanel = forwardRef<ListasPanelHandle>(function ListasPanel(_props, r
                   price={itemPrice(it)}
                   onToggle={() => toggleBought(it, false)}
                   onSetQty={(n) => setQtyAbs(it, n)}
+                  onSetBaseQty={(n) => setBaseQtyAbs(it, n)}
                   onDelete={() => deleteItem.mutate(it.id)}
                 />
               ))}
@@ -810,14 +1038,16 @@ const ListasPanel = forwardRef<ListasPanelHandle>(function ListasPanel(_props, r
                 boxSizing: "border-box",
                 borderRadius: fluid(10),
                 overflowY: "auto",
-                border: dragOverInv ? "2px dashed var(--accent)" : "2px dashed transparent",
+                border: dragOverInv ? `${fluid(2)} dashed var(--accent)` : `${fluid(2)} dashed transparent`,
                 background: dragOverInv ? "var(--accent-soft)" : undefined,
                 transition: "border-color .1s, background .1s",
               }}
             >
               {inventory.length === 0 && (
-                <div style={{ fontSize: fluid(12.5), color: "var(--fg-subtle)", padding: `${fluid(8)} 2px` }}>
-                  Sin stock cargado. Arrastra una variante desde Ingredientes para sumarla.
+                <div style={{ fontSize: fluid(12.5), color: "var(--fg-subtle)", padding: `${fluid(8)} ${fluid(2)}` }}>
+                  Sin stock cargado. El inventario se llena cuando cargás el gasto en Finanzas con el
+                  ingrediente vinculado — tildar la lista no suma stock. También podés arrastrar una
+                  variante desde Ingredientes.
                 </div>
               )}
               {[...inventoryGroups.entries()].map(([ingId, lots]) => {
@@ -847,8 +1077,8 @@ const ListasPanel = forwardRef<ListasPanelHandle>(function ListasPanel(_props, r
           <SectionTitle>Ingredientes · {ingredients.length}</SectionTitle>
           <div className="cal-scroll" style={{ display: "flex", flexDirection: "column", gap: fluid(8), flex: 1, minHeight: 0, padding: fluid(6), boxSizing: "border-box", overflowY: "auto" }}>
             {ingredients.length === 0 && (
-              <div style={{ fontSize: fluid(12.5), color: "var(--fg-subtle)", padding: `${fluid(8)} 2px` }}>
-                Todavia no cargaste ingredientes. Usa "Agregar ingrediente" arriba.
+              <div style={{ fontSize: fluid(12.5), color: "var(--fg-subtle)", padding: `${fluid(8)} ${fluid(2)}` }}>
+                Todavía no cargaste ingredientes. Usá "Agregar ingrediente" arriba.
               </div>
             )}
             {ingredients.map((ing) => (
@@ -867,218 +1097,6 @@ const ListasPanel = forwardRef<ListasPanelHandle>(function ListasPanel(_props, r
     </>
   );
 });
-
-// ---------------- Cerrar lista / registrar gasto ----------------
-
-function CloseListModal({
-  bought,
-  priceById,
-  onClose,
-  onClearBought,
-}: {
-  bought: ShoppingItem[];
-  priceById: Map<string, number | null>;
-  onClose: () => void;
-  onClearBought: () => void;
-}) {
-  const categoriesQ = useExpenseCategories();
-  const accountsQ = useAccounts();
-  const createExpense = useCreateExpense();
-  const createLineItem = useCreateExpenseLineItem();
-
-  const categories = useMemo(
-    () => (categoriesQ.data ?? []).filter((c) => !c.archived),
-    [categoriesQ.data],
-  );
-  // Cuentas que pagan gastos; si ninguna tiene la capacidad, mostrar todas.
-  const accounts = useMemo(() => {
-    const active = (accountsQ.data ?? []).filter((a) => !a.archived);
-    const paying = active.filter((a) => a.paysExpenses);
-    return paying.length > 0 ? paying : active;
-  }, [accountsQ.data]);
-
-  const unitPriceOf = (it: ShoppingItem): number | null =>
-    it.presentationId ? priceById.get(it.presentationId) ?? null : null;
-
-  const priced = bought.filter((it) => unitPriceOf(it) != null);
-  const missingPrice = bought.length - priced.length;
-  const total = priced.reduce((s, it) => s + (unitPriceOf(it) ?? 0) * it.quantity, 0);
-
-  const today = todayYmd();
-  const defaultNote = useMemo(() => {
-    const d = fromYmd(today);
-    const dd = String(d.getDate()).padStart(2, "0");
-    const mm = String(d.getMonth() + 1).padStart(2, "0");
-    return `Compras ${dd}/${mm}/${d.getFullYear()}`;
-  }, [today]);
-
-  const [categoryId, setCategoryId] = useState("");
-  const [accountId, setAccountId] = useState("");
-  const [spentOn, setSpentOn] = useState(today);
-  const [note, setNote] = useState(defaultNote);
-  const [clearAfter, setClearAfter] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  const confirm = async () => {
-    if (busy) return;
-    setBusy(true);
-    setError(null);
-    const timeout = new Promise<never>((_, rej) =>
-      setTimeout(() => rej(new Error("Timeout — reintentá si sigue pasando")), 10_000)
-    );
-    try {
-      await Promise.race([
-        (async () => {
-          const account = accountId ? accounts.find((a) => a.id === accountId) ?? null : null;
-          const currency = account ? account.currency : CURRENCY;
-          const expense = await createExpense.mutateAsync({
-            name: note.trim() || defaultNote,
-            amount: total,
-            currency,
-            categoryId: categoryId || null,
-            accountId: accountId || null,
-            spentOn,
-            note: note.trim() || defaultNote,
-            recurrence: null,
-            recurrenceParentId: null,
-          });
-          for (const it of priced) {
-            await createLineItem.mutateAsync({
-              expenseId: expense.id,
-              name: it.name,
-              quantity: it.quantity,
-              unitPrice: unitPriceOf(it) ?? 0,
-            });
-          }
-        })(),
-        timeout,
-      ]);
-      if (clearAfter) onClearBought();
-      onClose();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "No se pudo registrar el gasto");
-      setBusy(false);
-    }
-  };
-
-  const onBackdropMouseDown = (e: MouseEvent) => {
-    if (e.target === e.currentTarget) onClose();
-  };
-
-  return (
-    <div className="modal-backdrop" onMouseDown={onBackdropMouseDown}>
-      <div className="modal" style={{ width: "calc(var(--home-s, 1) * 460px)" }} onMouseDown={(e) => e.stopPropagation()}>
-        <div className="modal-head">
-          <span style={{ flex: 1, fontSize: 15, fontWeight: 600, letterSpacing: "-0.01em" }}>
-            Cerrar lista / registrar gasto
-          </span>
-          <button className="icon-btn" onClick={onClose} title="Cerrar">
-            <IX size={14} />
-          </button>
-        </div>
-
-        <div className="modal-body">
-          <div className="field">
-            <label>Comprados · {bought.length}</label>
-            <div style={{ display: "flex", flexDirection: "column", gap: 3, maxHeight: 180, overflowY: "auto" }}>
-              {bought.map((it) => {
-                const unit = unitPriceOf(it);
-                return (
-                  <div
-                    key={it.id}
-                    style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 8, alignItems: "center", fontSize: 12.5, color: "var(--fg-muted)" }}
-                  >
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name}</span>
-                    <span style={{ fontVariantNumeric: "tabular-nums" }}>{it.quantity}×</span>
-                    <span style={{ color: unit == null ? "var(--fg-subtle)" : "var(--fg)", fontVariantNumeric: "tabular-nums" }}>
-                      {unit == null ? "sin precio" : fmtMoney(unit * it.quantity)}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 6 }}>
-              <span style={{ fontSize: 12, color: "var(--fg-muted)" }}>Total</span>
-              <span style={{ fontSize: 16, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{fmtMoney(total)}</span>
-            </div>
-            {missingPrice > 0 && (
-              <div style={{ fontSize: 11, color: "var(--warn)", marginTop: 2 }}>
-                {missingPrice} ítem(s) sin precio no suman al total ni se registran como detalle.
-              </div>
-            )}
-          </div>
-
-          <div className="field">
-            <label>Categoría</label>
-            <div className="control">
-              <select className="input" style={{ width: "auto" }} value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
-                <option value="">(ninguna)</option>
-                {categories.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {accounts.length > 0 && (
-            <div className="field">
-              <label>Cuenta</label>
-              <div className="control">
-                <select className="input" style={{ width: "auto" }} value={accountId} onChange={(e) => setAccountId(e.target.value)}>
-                  <option value="">(ninguna)</option>
-                  {accounts.map((a) => (
-                    <option key={a.id} value={a.id}>{a.name} · {a.currency}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          )}
-
-          <div className="field">
-            <label>Fecha</label>
-            <div className="control">
-              <DateInput className="input" style={{ width: "auto" }} value={spentOn} onChange={setSpentOn} />
-            </div>
-          </div>
-
-          <div className="field">
-            <label>Nota</label>
-            <input type="text" className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder={defaultNote} />
-          </div>
-
-          <div className="field">
-            <label style={{ display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-              <input type="checkbox" checked={clearAfter} onChange={(e) => setClearAfter(e.target.checked)} style={{ width: 16, height: 16 }} />
-              Vaciar los comprados de la lista
-            </label>
-          </div>
-          {error && (
-            <div style={{ fontSize: 12, color: "var(--danger)" }}>{error}</div>
-          )}
-        </div>
-
-        <div className="modal-foot">
-          <span />
-          <div className="actions">
-            <button className="btn ghost" onClick={onClose} disabled={busy}>Cancelar</button>
-            <button className="btn primary" onClick={() => void confirm()} disabled={busy}>
-              <ICheck size={12} stroke={2.4} /> Registrar gasto
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 function InventoryGroup({
   name,
@@ -1129,18 +1147,20 @@ function InventoryGroup({
     <div style={{ background: "var(--bg-elev)", border: `1px solid ${groupWarn ? "var(--warn)" : "var(--line)"}`, borderRadius: fluid(10) }}>
       <div style={{ display: "flex", alignItems: "center", gap: fluid(10), padding: `${fluid(10)} ${fluid(12)}` }}>
         <span style={{ display: "inline-flex", cursor: "pointer", transform: open ? "rotate(0deg)" : "rotate(-90deg)", transition: "transform .15s" }} onClick={() => setOpen((o) => !o)}>
-          <IChevD size={13} />
+          <IChevD size={13} style={{ width: fluid(13), height: fluid(13) }} />
         </span>
-        <span style={{ fontSize: fluid(14), fontWeight: 600, flex: 1, cursor: "pointer" }} onClick={() => setOpen((o) => !o)}>{name}</span>
-        <span style={{ fontSize: fluid(11.5), color: "var(--fg-muted)" }}>{count} {count === 1 ? "lote" : "lotes"}</span>
-        <span style={{ fontSize: fluid(13), color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums" }}>{totalLabel}</span>
+        {/* El nombre es texto del usuario: se recorta con ellipsis para que no
+            empuje el form de "− restar" fuera de la tarjeta. */}
+        <span style={{ fontSize: fluid(14), fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "pointer" }} onClick={() => setOpen((o) => !o)}>{name}</span>
+        <span style={{ fontSize: fluid(11.5), color: "var(--fg-muted)", whiteSpace: "nowrap", flex: "0 0 auto" }}>{count} {count === 1 ? "lote" : "lotes"}</span>
+        <span style={{ fontSize: fluid(13), color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", flex: "0 0 auto" }}>{totalLabel}</span>
         <form onSubmit={(e) => { e.preventDefault(); subtract(); }} style={{ display: "flex", alignItems: "center", gap: fluid(4) }}>
           <input
             className="input"
             placeholder={ingredient ? `cant. (${baseUnit(ingredient.dimension)})` : "cant."}
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
-            style={{ width: fluid(88), fontSize: fluid(12), padding: `${fluid(3)} ${fluid(6)}` }}
+            style={{ ...fluidInputChrome, width: fluid(88), fontSize: fluid(12), padding: `${fluid(3)} ${fluid(6)}` }}
           />
           <button className="btn ghost" type="submit" disabled={!amount.trim()} title="Restar del stock total (consume primero el lote que vence antes)">
             − restar
@@ -1186,8 +1206,8 @@ function LotRow({
 
   return (
     <div style={{ display: "flex", alignItems: "center", gap: fluid(10), padding: `${fluid(6)} 0`, borderBottom: "1px solid var(--line)" }}>
-      <span style={{ flex: 1, fontSize: fluid(13) }}>{pres?.label ?? "Suelto"}</span>
-      <span style={{ fontSize: fluid(12.5), color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums" }}>
+      <span style={{ flex: 1, minWidth: 0, fontSize: fluid(13), overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{pres?.label ?? "Suelto"}</span>
+      <span style={{ fontSize: fluid(12.5), color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", flex: "0 0 auto" }}>
         {ingredient ? formatQuantity(lot.quantity, ingredient.dimension) : lot.quantity}
       </span>
       {lot.expiresOn && (
@@ -1196,7 +1216,7 @@ function LotRow({
         </span>
       )}
       <IconBtn title="Quitar lote" onClick={() => onDelete(lot.id)}>
-        <IX size={11} />
+        <IX size={11} style={{ width: fluid(11), height: fluid(11) }} />
       </IconBtn>
     </div>
   );
@@ -1312,14 +1332,14 @@ const PlanPanel = forwardRef<PlanPanelHandle>(function PlanPanel(_props, ref) {
 
   const generatePlan = () => {
     if (recipes.length === 0) {
-      window.alert("Todavia no cargaste recetas.");
+      window.alert("Todavía no cargaste recetas.");
       return;
     }
     if (targets.breakfast_snack <= 0 && targets.lunch_dinner <= 0) {
-      window.alert('Configura cuantas comidas necesitas por semana en Ajustes > "Plan semanal" primero.');
+      window.alert('Configurá cuántas comidas necesitás por semana en Ajustes > "Plan semanal" primero.');
       return;
     }
-    if (!window.confirm(`Esto reemplaza el plan de "${weekLabel(weekStart)}" por uno generado automaticamente. ¿Continuar?`)) return;
+    if (!window.confirm(`Esto reemplaza el plan de "${weekLabel(weekStart)}" por uno generado automáticamente. ¿Continuar?`)) return;
     for (const e of entries) deleteEntry.mutate(e.id);
     const times = planWeeklyMeals(recipes, targets);
     for (const [recipeId, n] of times) {
@@ -1355,6 +1375,11 @@ const PlanPanel = forwardRef<PlanPanelHandle>(function PlanPanel(_props, ref) {
     });
     const need = aggregateNeed(planEntries);
     const needByCategory = aggregateCategoryNeed(planEntries);
+    // Cuánto pedía el plan ANTES de descontar el inventario: sin esto, "el plan
+    // ya está cubierto" y "el plan no tiene ingredientes" terminan en el mismo
+    // cartel, que es justo la confusión que aparece ahora que el stock entra por
+    // Finanzas y no por tildar la lista.
+    const plannedIngredients = need.size + needByCategory.size;
     // subtract what's already at home (inventory) — skip lots that already
     // expired, since spoiled-but-undeleted stock isn't actually usable
     const today = todayYmd();
@@ -1381,10 +1406,16 @@ const PlanPanel = forwardRef<PlanPanelHandle>(function PlanPanel(_props, ref) {
     const current = shoppingItemsQ.data ?? [];
     for (const it of items) {
       const target = findMergeTarget(current, it);
-      if (target) patchShoppingItem.mutate({ id: target.id, patch: { quantity: target.quantity + it.quantity } });
+      if (target) patchShoppingItem.mutate({ id: target.id, patch: mergeQuantities(target, it) });
       else createShoppingItem.mutate(it);
     }
-    window.alert(items.length > 0 ? `Generé ${items.length} ítem(s) en la lista (pestaña Listas).` : "El plan no tiene ingredientes para comprar.");
+    window.alert(
+      items.length > 0
+        ? `Generé ${items.length} ítem(s) en la lista (pestaña Listas).`
+        : plannedIngredients > 0
+          ? "No hace falta comprar nada: el Inventario ya cubre todo lo que pide el plan."
+          : "El plan no tiene ingredientes para comprar.",
+    );
   };
 
   const onPlanDrop = (e: DragEvent<HTMLDivElement>) => {
@@ -1444,7 +1475,7 @@ const PlanPanel = forwardRef<PlanPanelHandle>(function PlanPanel(_props, ref) {
           <SectionTitle
             right={
               <button className="btn ghost" onClick={generateList} disabled={entries.length === 0}>
-                <IPlus size={11} /> Generar lista de compra
+                <IPlus size={11} style={{ width: fluid(11), height: fluid(11) }} /> Generar lista de compra
               </button>
             }
           >
@@ -1466,14 +1497,14 @@ const PlanPanel = forwardRef<PlanPanelHandle>(function PlanPanel(_props, ref) {
               boxSizing: "border-box",
               borderRadius: fluid(10),
               overflowY: "auto",
-              border: dragOver ? "2px dashed var(--accent)" : "2px dashed transparent",
+              border: dragOver ? `${fluid(2)} dashed var(--accent)` : `${fluid(2)} dashed transparent`,
               background: dragOver ? "var(--accent-soft)" : undefined,
               transition: "border-color .1s, background .1s",
             }}
           >
             {entries.length === 0 && (
-              <div style={{ fontSize: fluid(12.5), color: "var(--fg-subtle)", padding: `${fluid(8)} 2px` }}>
-                Todavía no elegiste recetas para esta semana. Arrastra una receta desde Recetas.
+              <div style={{ fontSize: fluid(12.5), color: "var(--fg-subtle)", padding: `${fluid(8)} ${fluid(2)}` }}>
+                Todavía no elegiste recetas para esta semana. Arrastrá una receta desde Recetas.
               </div>
             )}
             {entries.map((e) => (
@@ -1490,7 +1521,7 @@ const PlanPanel = forwardRef<PlanPanelHandle>(function PlanPanel(_props, ref) {
           </div>
 
           <div style={{ fontSize: fluid(11), color: "var(--fg-subtle)" }}>
-            Al generar la lista se restan los ingredientes que ya tenés en el Inventario y se eligen las presentaciones de menor desperdicio.
+            Al generar la lista se restan los ingredientes que ya tenés en el Inventario y se eligen las variantes de menor desperdicio.
           </div>
         </div>
 
@@ -1499,8 +1530,8 @@ const PlanPanel = forwardRef<PlanPanelHandle>(function PlanPanel(_props, ref) {
           <SectionTitle>Recetas · {recipes.length}</SectionTitle>
           <div className="cal-scroll" style={{ display: "flex", flexDirection: "column", gap: fluid(8), flex: 1, minHeight: fluid(120), padding: fluid(6), boxSizing: "border-box", overflowY: "auto" }}>
             {recipes.length === 0 && (
-              <div style={{ fontSize: fluid(12.5), color: "var(--fg-subtle)", padding: `${fluid(8)} 2px` }}>
-                Todavía no cargaste recetas. Usa "Agregar receta" arriba.
+              <div style={{ fontSize: fluid(12.5), color: "var(--fg-subtle)", padding: `${fluid(8)} ${fluid(2)}` }}>
+                Todavía no cargaste recetas. Usá "Agregar receta" arriba.
               </div>
             )}
             {recipes.map((r) => (
@@ -1557,7 +1588,7 @@ function RecipeCard({
         <Pill tone={MEAL_TYPE_TONE[recipe.mealType]}>{MEAL_TYPE_LABELS[recipe.mealType]}</Pill>
         <span onClick={(e) => e.stopPropagation()}>
           <IconBtn danger title={`Borrar ${recipe.name}`} onClick={onDelete}>
-            <ITrash size={13} />
+            <ITrash size={13} style={{ width: fluid(13), height: fluid(13) }} />
           </IconBtn>
         </span>
       </div>
@@ -1626,7 +1657,7 @@ function PlanEntryCard({
             Comí
           </button>
           <IconBtn title="Quitar del plan" onClick={onDelete}>
-            <IX size={11} />
+            <IX size={11} style={{ width: fluid(11), height: fluid(11) }} />
           </IconBtn>
         </div>
       </div>
@@ -1692,13 +1723,13 @@ function RecipeModal({
     <div className="modal-backdrop" onMouseDown={onBackdropMouseDown}>
       <div className="modal" style={{ width: "calc(var(--home-s, 1) * 640px)", maxWidth: "90vw", maxHeight: "85vh", display: "flex", flexDirection: "column" }} onMouseDown={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <span style={{ flex: 1, fontSize: 15, fontWeight: 600, letterSpacing: "-0.01em" }}>Receta</span>
+          <span style={{ flex: 1, fontSize: m(15), fontWeight: 600, letterSpacing: "-0.01em" }}>Receta</span>
           <button className="icon-btn" onClick={close} title="Cerrar">
-            <IX size={14} />
+            <IX size={14} style={{ width: m(14), height: m(14) }} />
           </button>
         </div>
-        <div className="modal-body" style={{ overflowY: "auto", display: "flex", flexDirection: "column", gap: 14 }}>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <div className="modal-body" style={{ overflowY: "auto", display: "flex", flexDirection: "column", gap: m(14) }}>
+          <div style={{ display: "flex", gap: m(8), alignItems: "center", flexWrap: "wrap" }}>
             <input
               className="input"
               value={name}
@@ -1706,17 +1737,18 @@ function RecipeModal({
               onChange={(e) => setName(e.target.value)}
               onBlur={commitName}
               onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-              style={{ flex: 1, minWidth: 180, fontSize: 15, fontWeight: 600 }}
+              style={{ ...modalInputChrome, flex: 1, minWidth: m(180), fontSize: m(15), fontWeight: 600 }}
             />
             <select
               className="input"
               value={recipe.mealType}
               onChange={(e) => patchRecipe.mutate({ id: recipe.id, patch: { mealType: e.target.value as MealType } })}
+              style={modalInputChrome}
             >
               <option value="lunch_dinner">{MEAL_TYPE_LABELS.lunch_dinner}</option>
               <option value="breakfast_snack">{MEAL_TYPE_LABELS.breakfast_snack}</option>
             </select>
-            <label style={{ fontSize: 12, color: "var(--fg-muted)", display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <label style={{ fontSize: m(12), color: "var(--fg-muted)", display: "inline-flex", alignItems: "center", gap: m(6) }}>
               Porciones
               <input
                 className="input"
@@ -1724,30 +1756,32 @@ function RecipeModal({
                 min={1}
                 value={recipe.servings}
                 onChange={(e) => patchRecipe.mutate({ id: recipe.id, patch: { servings: Math.max(1, Number(e.target.value) || 1) } })}
-                style={{ width: 64 }}
+                style={{ ...modalInputChrome, width: m(64) }}
               />
             </label>
           </div>
 
-          {/* ingredients */}
-          <section style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {/* ingredientes */}
+          <section style={{ display: "flex", flexDirection: "column", gap: m(8) }}>
             <SectionTitle>Ingredientes (para {recipe.servings} porc.)</SectionTitle>
             {recipeIngredients.length === 0 && (
-              <div style={{ fontSize: 12, color: "var(--fg-subtle)" }}>Sin ingredientes.</div>
+              <div style={{ fontSize: m(12), color: "var(--fg-subtle)" }}>Sin ingredientes.</div>
             )}
             {recipeIngredients.map((ri) => {
               const ing = ri.ingredientId ? ingredientById.get(ri.ingredientId) : undefined;
               const cat = ri.categoryId ? categoryById.get(ri.categoryId) : undefined;
               return (
-                <div key={ri.id} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13 }}>
+                <div key={ri.id} style={{ display: "flex", alignItems: "center", gap: m(10), fontSize: m(13) }}>
                   {ing && <Pill tone={DIMENSION_TONE[ing.dimension]}>{DIMENSION_LABELS[ing.dimension]}</Pill>}
-                  {cat && <Pill tone="var(--fg-muted)">generico</Pill>}
-                  <span style={{ flex: 1 }}>{ing?.name ?? (cat ? `[${cat.name}]` : "—")}</span>
-                  <span style={{ color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums" }}>
+                  {cat && <Pill tone="var(--fg-muted)">genérico</Pill>}
+                  <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {ing?.name ?? (cat ? `[${cat.name}]` : "—")}
+                  </span>
+                  <span style={{ color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", flex: "0 0 auto" }}>
                     {ing ? formatQuantity(ri.quantity, ing.dimension) : ri.quantity}
                   </span>
                   <IconBtn title="Quitar ingrediente" onClick={() => deleteRI.mutate(ri.id)}>
-                    <IX size={11} />
+                    <IX size={11} style={{ width: m(11), height: m(11) }} />
                   </IconBtn>
                 </div>
               );
@@ -1759,12 +1793,12 @@ function RecipeModal({
             />
           </section>
 
-          {/* steps */}
-          <section style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {/* pasos */}
+          <section style={{ display: "flex", flexDirection: "column", gap: m(8) }}>
             <SectionTitle>Pasos</SectionTitle>
             {recipe.steps.map((s, idx) => (
-              <div key={`${idx}|${s}`} style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
-                <span style={{ width: 22, height: 22, display: "inline-flex", alignItems: "center", justifyContent: "center", borderRadius: "50%", background: "var(--accent-soft)", color: "var(--accent)", fontSize: 11, fontWeight: 700, marginTop: 6, fontVariantNumeric: "tabular-nums" }}>{idx + 1}</span>
+              <div key={`${idx}|${s}`} style={{ display: "flex", alignItems: "flex-start", gap: m(8) }}>
+                <span style={{ width: m(22), height: m(22), flex: "0 0 auto", display: "inline-flex", alignItems: "center", justifyContent: "center", borderRadius: "50%", background: "var(--accent-soft)", color: "var(--accent)", fontSize: m(11), fontWeight: 700, marginTop: m(6), fontVariantNumeric: "tabular-nums" }}>{idx + 1}</span>
                 <textarea
                   className="input"
                   defaultValue={s}
@@ -1777,11 +1811,11 @@ function RecipeModal({
                     else next.splice(idx, 1);
                     updateSteps(next);
                   }}
-                  style={{ flex: 1, resize: "vertical" }}
+                  style={{ ...modalInputChrome, flex: 1, minWidth: 0, resize: "vertical" }}
                 />
-                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                  <button className="btn ghost" style={{ padding: "1px 6px", fontSize: 11 }} onClick={() => moveStep(idx, -1)} disabled={idx === 0}>↑</button>
-                  <button className="btn ghost" style={{ padding: "1px 6px", fontSize: 11 }} onClick={() => moveStep(idx, 1)} disabled={idx === recipe.steps.length - 1}>↓</button>
+                <div style={{ display: "flex", flexDirection: "column", gap: m(2), flex: "0 0 auto" }}>
+                  <button className="btn ghost" style={{ padding: `${m(1)} ${m(6)}`, fontSize: m(11) }} onClick={() => moveStep(idx, -1)} disabled={idx === 0}>↑</button>
+                  <button className="btn ghost" style={{ padding: `${m(1)} ${m(6)}`, fontSize: m(11) }} onClick={() => moveStep(idx, 1)} disabled={idx === recipe.steps.length - 1}>↓</button>
                 </div>
               </div>
             ))}
@@ -1793,17 +1827,17 @@ function RecipeModal({
                 updateSteps([...recipe.steps, v]);
                 setStepDraft("");
               }}
-              style={{ display: "flex", gap: 6 }}
+              style={{ display: "flex", gap: m(6) }}
             >
               <input
                 className="input"
                 placeholder="Agregar paso…"
                 value={stepDraft}
                 onChange={(e) => setStepDraft(e.target.value)}
-                style={{ flex: 1 }}
+                style={{ ...modalInputChrome, flex: 1, minWidth: 0 }}
               />
               <button className="btn" type="submit" disabled={!stepDraft.trim()}>
-                <IPlus size={11} /> Paso
+                <IPlus size={11} style={{ width: m(11), height: m(11) }} /> Paso
               </button>
             </form>
           </section>
@@ -1858,9 +1892,9 @@ function AddIngredientModal({ categories, onClose }: { categories: IngredientCat
     <div className="modal-backdrop" onMouseDown={onBackdropMouseDown}>
       <div className="modal" style={{ width: "calc(var(--home-s, 1) * 420px)" }} onMouseDown={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <span style={{ flex: 1, fontSize: 15, fontWeight: 600, letterSpacing: "-0.01em" }}>Nuevo ingrediente</span>
+          <span style={{ flex: 1, fontSize: m(15), fontWeight: 600, letterSpacing: "-0.01em" }}>Nuevo ingrediente</span>
           <button className="icon-btn" onClick={onClose} title="Cerrar">
-            <IX size={14} />
+            <IX size={14} style={{ width: m(14), height: m(14) }} />
           </button>
         </div>
         <div className="modal-body">
@@ -1906,7 +1940,7 @@ function AddIngredientModal({ categories, onClose }: { categories: IngredientCat
               placeholder="Opcional"
               value={shelf}
               onChange={(e) => setShelf(e.target.value)}
-              style={{ width: 120 }}
+              style={{ width: m(120) }}
             />
           </div>
         </div>
@@ -1920,7 +1954,7 @@ function AddIngredientModal({ categories, onClose }: { categories: IngredientCat
               disabled={name.trim().length === 0}
               style={name.trim().length === 0 ? { opacity: 0.5, cursor: "not-allowed" } : undefined}
             >
-              <ICheck size={12} stroke={2.4} /> Crear
+              <ICheck size={12} stroke={2.4} style={{ width: m(12), height: m(12) }} /> Crear
             </button>
           </div>
         </div>
@@ -1938,12 +1972,15 @@ function EditIngredientModal({
   ingredient,
   presentations,
   categories,
+  priceEntries,
   onClose,
   onDelete,
 }: {
   ingredient: Ingredient;
   presentations: IngredientPresentation[];
   categories: IngredientCategory[];
+  /** Compras reales de este ingrediente, más nueva primero (lib/priceHistory). */
+  priceEntries: PriceEntry[];
   onClose: () => void;
   onDelete: () => void;
 }) {
@@ -1980,17 +2017,33 @@ function EditIngredientModal({
   const [newLabel, setNewLabel] = useState("");
   const [newAmount, setNewAmount] = useState("");
   const [newPrice, setNewPrice] = useState("");
+  const [newKind, setNewKind] = useState<PresentationKind>("package");
 
   const addVariant = () => {
+    const typedPrice = newPrice.trim() ? parseQuantity(newPrice) : null;
+    const price = typedPrice != null && Number.isFinite(typedPrice) ? typedPrice : null;
+    // A granel no hay tamaño que cargar y el precio va por unidad base.
+    if (newKind === "bulk") {
+      createPresentation.mutate({
+        ingredientId: ingredient.id,
+        label: newLabel.trim() || "a granel",
+        size: 0,
+        price: price != null ? bulkPriceToBase(price, ingredient.dimension) : null,
+        kind: "bulk",
+      });
+      setNewLabel("");
+      setNewAmount("");
+      setNewPrice("");
+      return;
+    }
     const size = parseQuantity(newAmount);
     if (size == null || size <= 0) return;
-    const price = newPrice.trim() ? parseQuantity(newPrice) : null;
     const label = newLabel.trim() || `${newAmount} ${baseUnit(ingredient.dimension)}`;
     createPresentation.mutate({
       ingredientId: ingredient.id,
       label,
       size,
-      price: price != null && Number.isFinite(price) ? price : null,
+      price,
     });
     setNewLabel("");
     setNewAmount("");
@@ -2001,12 +2054,12 @@ function EditIngredientModal({
     <div className="modal-backdrop" onMouseDown={onBackdropMouseDown}>
       <div className="modal" style={{ width: "calc(var(--home-s, 1) * 480px)", maxHeight: "85vh", display: "flex", flexDirection: "column" }} onMouseDown={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <span style={{ flex: 1, fontSize: 15, fontWeight: 600, letterSpacing: "-0.01em" }}>Editar ingrediente</span>
+          <span style={{ flex: 1, fontSize: m(15), fontWeight: 600, letterSpacing: "-0.01em" }}>Editar ingrediente</span>
           <button className="icon-btn" onClick={close} title="Cerrar">
-            <IX size={14} />
+            <IX size={14} style={{ width: m(14), height: m(14) }} />
           </button>
         </div>
-        <div className="modal-body" style={{ overflowY: "auto", display: "flex", flexDirection: "column", gap: 14 }}>
+        <div className="modal-body" style={{ overflowY: "auto", display: "flex", flexDirection: "column", gap: m(14) }}>
           <div className="field">
             <label>Nombre</label>
             <input
@@ -2061,14 +2114,14 @@ function EditIngredientModal({
               value={shelf}
               onChange={(e) => setShelf(e.target.value)}
               onBlur={commitShelf}
-              style={{ width: 120 }}
+              style={{ width: m(120) }}
             />
           </div>
 
-          <section style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <section style={{ display: "flex", flexDirection: "column", gap: m(8) }}>
             <SectionTitle>Variantes</SectionTitle>
             {presentations.length === 0 && (
-              <div style={{ fontSize: 12, color: "var(--fg-subtle)" }}>Sin variantes todavía.</div>
+              <div style={{ fontSize: m(12), color: "var(--fg-subtle)" }}>Sin variantes todavía.</div>
             )}
             {presentations.map((p) => (
               <VariantRow
@@ -2080,16 +2133,36 @@ function EditIngredientModal({
             ))}
             <form
               onSubmit={(e) => { e.preventDefault(); addVariant(); }}
-              style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}
+              style={{ display: "flex", gap: m(6), alignItems: "center", flexWrap: "wrap" }}
             >
-              <input className="input" placeholder="Etiqueta (ej. 1L)" value={newLabel} onChange={(e) => setNewLabel(e.target.value)} style={{ flex: 1, minWidth: 100, fontSize: 12.5 }} />
-              <input className="input" placeholder={`Cant. (${baseUnit(ingredient.dimension)})`} value={newAmount} onChange={(e) => setNewAmount(e.target.value)} style={{ width: 90, fontSize: 12.5 }} />
-              <input className="input" placeholder="Precio" value={newPrice} onChange={(e) => setNewPrice(e.target.value)} style={{ width: 80, fontSize: 12.5 }} />
-              <button className="btn" type="submit" disabled={!newAmount.trim()} style={{ fontSize: 11.5 }}>
-                <IPlus size={10} /> Variante
+              <select
+                className="input"
+                value={newKind}
+                onChange={(e) => setNewKind(e.target.value as PresentationKind)}
+                style={{ ...modalInputChrome, fontSize: m(12.5) }}
+                title="Paquete de tamaño fijo, o venta por peso/volumen"
+              >
+                <option value="package">Paquete</option>
+                <option value="bulk">A granel</option>
+              </select>
+              <input className="input" placeholder={newKind === "bulk" ? "Etiqueta (ej. pescadería)" : "Etiqueta (ej. 1L)"} value={newLabel} onChange={(e) => setNewLabel(e.target.value)} style={{ ...modalInputChrome, flex: 1, minWidth: m(100), fontSize: m(12.5) }} />
+              {newKind === "package" && (
+                <input className="input" placeholder={`Cant. (${baseUnit(ingredient.dimension)})`} value={newAmount} onChange={(e) => setNewAmount(e.target.value)} style={{ ...modalInputChrome, width: m(90), fontSize: m(12.5) }} />
+              )}
+              <input
+                className="input"
+                placeholder={newKind === "bulk" ? `Precio por ${BULK_PRICE_UNIT[ingredient.dimension].label}` : "Precio"}
+                value={newPrice}
+                onChange={(e) => setNewPrice(e.target.value)}
+                style={{ ...modalInputChrome, width: newKind === "bulk" ? m(120) : m(80), fontSize: m(12.5) }}
+              />
+              <button className="btn" type="submit" disabled={newKind === "package" && !newAmount.trim()} style={{ fontSize: m(11.5) }}>
+                <IPlus size={10} style={{ width: m(10), height: m(10) }} /> Variante
               </button>
             </form>
           </section>
+
+          <PriceHistorySection entries={priceEntries} dimension={ingredient.dimension} />
         </div>
         <div className="modal-foot">
           <button
@@ -2108,6 +2181,222 @@ function EditIngredientModal({
   );
 }
 
+// ---------------- Historial de precios ----------------
+
+/** Fecha corta para la tabla: "01/08/26". La columna es angosta pero el año
+ *  importa (hay historial viejo), asi que va dd/mm/aa y la fecha entera en el
+ *  `title` de la fila. */
+function shortDate(day: string): string {
+  return `${day.slice(8, 10)}/${day.slice(5, 7)}/${day.slice(2, 4)}`;
+}
+
+/** Lo que REALMENTE se pagó por este ingrediente, gasto por gasto.
+ *
+ *  Todo se muestra por kg / L / u (`pricePerBaseUnit` viene por g / ml / u):
+ *  es la única cifra comparable entre un paquete de 1 kg y 750 g de la
+ *  pescadería, y por eso pesa más que el total pagado.
+ *
+ *  Se alimenta sólo de gastos reales, así que vacío significa "todavía no
+ *  cargaste ninguno", no "falta configurar algo" — el empty state lo dice. */
+function PriceHistorySection({
+  entries,
+  dimension,
+}: {
+  entries: PriceEntry[];
+  dimension: IngredientDimension;
+}) {
+  const merchantsQ = useMerchants();
+  const unit = BULK_PRICE_UNIT[dimension];
+  /** precio por unidad base -> el numero que se muestra (por kg / L / u) */
+  const perUnit = (pricePerBaseUnit: number): string =>
+    `${fmtMoney(pricePerBaseUnit * unit.perBase)}/${unit.label}`;
+
+  const merchantName = useMemo(() => {
+    const byId = new Map((merchantsQ.data ?? []).map((x) => [x.id, x.name]));
+    return (id: string | null): string => (id ? byId.get(id) ?? "comercio borrado" : "sin comercio");
+  }, [merchantsQ.data]);
+
+  const avg = useMemo(() => avgPriceLast3Months(entries, todayYmd()), [entries]);
+  const cheapest = useMemo(() => cheapestMerchant(entries), [entries]);
+  const merchantCount = useMemo(() => byMerchant(entries).size, [entries]);
+  const range = useMemo(() => {
+    if (entries.length === 0) return null;
+    const prices = entries.map((e) => e.pricePerBaseUnit);
+    return { min: Math.min(...prices), max: Math.max(...prices) };
+  }, [entries]);
+
+  // 5 columnas: fecha · comercio · cantidad · total · precio por unidad. Sólo el
+  // comercio es elástico (minmax(0,1fr) para que pueda achicarse a cero y cortar
+  // con ellipsis) — asi la tabla nunca empuja el ancho del modal.
+  const cols = "auto minmax(0,1fr) auto auto auto";
+  const cell = { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } as const;
+
+  return (
+    <section style={{ display: "flex", flexDirection: "column", gap: m(8) }}>
+      <SectionTitle>Historial de precios</SectionTitle>
+
+      {entries.length === 0 || range == null ? (
+        <div style={{ fontSize: m(12), color: "var(--fg-subtle)", lineHeight: 1.5 }}>
+          Todavía no hay compras de este ingrediente. Se llena cuando cargás un gasto con este
+          ingrediente en el detalle (Finanzas → el gasto → líneas): de ahí salen el precio, el
+          comercio y el stock.
+        </div>
+      ) : (
+        <>
+          {/* Resumen: el promedio grande, y al lado SIEMPRE cuántas compras lo
+              sostienen — un promedio de una sola compra no es un promedio. */}
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: m(5),
+              padding: `${m(9)} ${m(11)}`,
+              background: "var(--bg-sunken)",
+              border: "1px solid var(--line)",
+              borderRadius: m(8),
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "baseline", gap: m(8), flexWrap: "wrap" }}>
+              <span
+                style={{
+                  fontSize: m(10.5),
+                  textTransform: "uppercase",
+                  letterSpacing: ".05em",
+                  fontWeight: 700,
+                  color: "var(--fg-muted)",
+                }}
+              >
+                prom. 3m
+              </span>
+              {avg ? (
+                <>
+                  <strong style={{ fontSize: m(17), fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+                    {perUnit(avg.avg)}
+                  </strong>
+                  <span
+                    style={{
+                      fontSize: m(11.5),
+                      fontWeight: 600,
+                      color: avg.samples === 1 ? "var(--warn)" : "var(--fg-muted)",
+                    }}
+                  >
+                    {avg.samples === 1 ? "1 sola compra — no es un promedio todavía" : `${avg.samples} compras`}
+                  </span>
+                </>
+              ) : (
+                <span style={{ fontSize: m(12.5), color: "var(--fg-muted)" }}>
+                  sin compras en los últimos 3 meses · la última fue{" "}
+                  <strong style={{ fontVariantNumeric: "tabular-nums" }}>{perUnit(entries[0].pricePerBaseUnit)}</strong>{" "}
+                  el {shortDate(entries[0].spentOn)}
+                </span>
+              )}
+            </div>
+            <div style={{ fontSize: m(11.5), color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums" }}>
+              mín {perUnit(range.min)} · máx {perUnit(range.max)}
+              <span style={{ color: "var(--fg-subtle)" }}>
+                {" "}· {entries.length} {entries.length === 1 ? "compra" : "compras"} en total
+              </span>
+            </div>
+          </div>
+
+          {/* Dónde conviene comprarlo: es para lo que existen los comercios, va
+              destacado y no escondido en la tabla. */}
+          {cheapest && cheapest.merchantId ? (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: m(8),
+                padding: `${m(7)} ${m(11)}`,
+                borderRadius: m(8),
+                background: "color-mix(in oklch, var(--ok) 14%, var(--bg))",
+                border: "1px solid color-mix(in oklch, var(--ok) 45%, transparent)",
+              }}
+            >
+              <span style={{ width: m(7), height: m(7), borderRadius: "50%", background: "var(--ok)", flex: "none" }} />
+              <span style={{ fontSize: m(12.5), flex: 1, minWidth: 0, ...cell }}>
+                Más barato en <strong>{merchantName(cheapest.merchantId)}</strong>
+                {merchantCount > 1 ? ` · de ${merchantCount} comercios` : ""}
+              </span>
+              <strong
+                style={{ fontSize: m(13), color: "var(--ok)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}
+              >
+                {perUnit(cheapest.price)}
+              </strong>
+            </div>
+          ) : (
+            <div style={{ fontSize: m(11.5), color: "var(--fg-subtle)" }}>
+              Cargá el comercio en el gasto y acá te digo dónde te sale más barato.
+            </div>
+          )}
+
+          {/* Tabla, la más nueva primero. */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: cols,
+              gap: `0 ${m(8)}`,
+              fontSize: m(10),
+              textTransform: "uppercase",
+              letterSpacing: ".04em",
+              fontWeight: 600,
+              color: "var(--fg-subtle)",
+              paddingBottom: m(4),
+              borderBottom: "1px solid var(--line)",
+            }}
+          >
+            <span>fecha</span>
+            <span>comercio</span>
+            <span style={{ textAlign: "right" }}>cant.</span>
+            <span style={{ textAlign: "right" }}>total</span>
+            <span style={{ textAlign: "right", color: "var(--fg-muted)" }}>precio/{unit.label}</span>
+          </div>
+          <div className="cal-scroll" style={{ maxHeight: m(180), overflowY: "auto", overflowX: "hidden" }}>
+            {entries.map((e) => {
+              const converted = e.currency !== CURRENCY;
+              return (
+                <div
+                  key={e.lineItemId}
+                  title={
+                    converted
+                      ? `${e.spentOn} · pagado en ${e.currency}, convertido a ${CURRENCY} con la cotización de hoy`
+                      : e.spentOn
+                  }
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: cols,
+                    gap: `0 ${m(8)}`,
+                    alignItems: "center",
+                    padding: `${m(5)} 0`,
+                    borderBottom: "1px solid var(--line)",
+                    fontSize: m(11.5),
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  <span style={{ color: "var(--fg-muted)", ...cell }}>{shortDate(e.spentOn)}</span>
+                  <span style={{ ...cell, color: e.merchantId ? "var(--fg)" : "var(--fg-subtle)" }}>
+                    {merchantName(e.merchantId)}
+                  </span>
+                  <span style={{ textAlign: "right", color: "var(--fg-muted)", ...cell }}>
+                    {formatQuantity(e.baseQuantity, dimension)}
+                  </span>
+                  <span style={{ textAlign: "right", color: "var(--fg-subtle)", ...cell }}>
+                    {fmtMoneyIn(e.totalPaid, e.currency)}
+                    {converted && "*"}
+                  </span>
+                  <strong style={{ textAlign: "right", fontSize: m(12.5), fontWeight: 700, ...cell }}>
+                    {perUnit(e.pricePerBaseUnit)}
+                  </strong>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
 function VariantRow({
   presentation,
   dimension,
@@ -2118,9 +2407,14 @@ function VariantRow({
   onDelete: () => void;
 }) {
   const patchPresentation = usePatchIngredientPresentation();
+  const isBulk = presentation.kind === "bulk";
   const [label, setLabel] = useState(presentation.label);
   const [amount, setAmount] = useState(rawNumber(presentation.size));
-  const [price, setPrice] = useState(presentation.price != null ? rawNumber(presentation.price) : "");
+  const [price, setPrice] = useState(
+    presentation.price != null
+      ? rawNumber(isBulk ? bulkPriceToDisplay(presentation.price, dimension) : presentation.price)
+      : "",
+  );
 
   const commitLabel = () => {
     const t = label.trim();
@@ -2135,18 +2429,58 @@ function VariantRow({
   const commitPrice = () => {
     const trimmed = price.trim();
     const n = trimmed ? parseQuantity(trimmed) : null;
-    const next = n != null && Number.isFinite(n) ? n : null;
+    const typed = n != null && Number.isFinite(n) ? n : null;
+    // A granel se tipea por kg / L / u pero se guarda por unidad base.
+    const next = typed != null && isBulk ? bulkPriceToBase(typed, dimension) : typed;
     if (next !== presentation.price) patchPresentation.mutate({ id: presentation.id, patch: { price: next } });
+  };
+  // Cambiar de paquete a granel (o al reves) cambia que significa `price`:
+  // precio del paquete <-> precio por unidad base. Se convierte usando el tamaño
+  // del paquete para no perder el dato de un click; si no hay tamaño, se limpia.
+  const changeKind = (kind: PresentationKind) => {
+    if (kind === presentation.kind) return;
+    const nextPrice =
+      presentation.price != null && presentation.size > 0
+        ? kind === "bulk"
+          ? presentation.price / presentation.size
+          : presentation.price * presentation.size
+        : null;
+    patchPresentation.mutate({ id: presentation.id, patch: { kind, price: nextPrice } });
+    setPrice(
+      nextPrice == null
+        ? ""
+        : rawNumber(kind === "bulk" ? bulkPriceToDisplay(nextPrice, dimension) : nextPrice),
+    );
   };
 
   return (
-    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-      <input className="input" value={label} onChange={(e) => setLabel(e.target.value)} onBlur={commitLabel} style={{ flex: 1, minWidth: 90, fontSize: 12.5 }} />
-      <input className="input" value={amount} onChange={(e) => setAmount(e.target.value)} onBlur={commitAmount} style={{ width: 75, fontSize: 12.5 }} />
-      <span style={{ fontSize: 11, color: "var(--fg-muted)", width: 22 }}>{baseUnit(dimension)}</span>
-      <input className="input" placeholder="Precio" value={price} onChange={(e) => setPrice(e.target.value)} onBlur={commitPrice} style={{ width: 70, fontSize: 12.5 }} />
+    // Fila angosta adentro de un `.modal` de 480px: las columnas de números son
+    // fijas pero pueden encogerse (`minWidth: 0`), así una etiqueta larga no
+    // empuja el precio fuera del modal.
+    <div style={{ display: "flex", gap: m(6), alignItems: "center", flexWrap: "wrap" }}>
+      <input className="input" value={label} onChange={(e) => setLabel(e.target.value)} onBlur={commitLabel} style={{ ...modalInputChrome, flex: 1, minWidth: m(90), fontSize: m(12.5) }} />
+      <select
+        className="input"
+        value={presentation.kind}
+        onChange={(e) => changeKind(e.target.value as PresentationKind)}
+        style={{ ...modalInputChrome, fontSize: m(12.5), flexShrink: 1, minWidth: 0 }}
+        title="Paquete de tamaño fijo, o venta por peso/volumen"
+      >
+        <option value="package">Paquete</option>
+        <option value="bulk">A granel</option>
+      </select>
+      {isBulk ? (
+        // Sin tamaño: a granel se compra la cantidad que uno quiera.
+        <span style={{ fontSize: m(11), color: "var(--fg-muted)", whiteSpace: "nowrap" }}>por {BULK_PRICE_UNIT[dimension].label}</span>
+      ) : (
+        <>
+          <input className="input" value={amount} onChange={(e) => setAmount(e.target.value)} onBlur={commitAmount} style={{ ...modalInputChrome, width: m(75), minWidth: 0, fontSize: m(12.5) }} />
+          <span style={{ fontSize: m(11), color: "var(--fg-muted)", width: m(22) }}>{baseUnit(dimension)}</span>
+        </>
+      )}
+      <input className="input" placeholder="Precio" value={price} onChange={(e) => setPrice(e.target.value)} onBlur={commitPrice} style={{ ...modalInputChrome, width: m(70), minWidth: 0, fontSize: m(12.5) }} />
       <IconBtn danger title="Quitar variante" onClick={onDelete}>
-        <IX size={11} />
+        <IX size={11} style={{ width: m(11), height: m(11) }} />
       </IconBtn>
     </div>
   );
@@ -2174,8 +2508,26 @@ function IngredientCard({
   const [pAmount, setPAmount] = useState("");
   const [pUnit, setPUnit] = useState(units[0].unit);
   const [pPrice, setPPrice] = useState("");
+  const [pKind, setPKind] = useState<PresentationKind>("package");
 
   const addPresentation = () => {
+    // A granel no hay tamaño que cargar y el precio va por unidad base.
+    if (pKind === "bulk") {
+      const typed = pPrice.trim() ? parseQuantity(pPrice) : null;
+      const price = typed != null && Number.isFinite(typed) ? bulkPriceToBase(typed, ingredient.dimension) : null;
+      createPresentation.mutate({
+        ingredientId: ingredient.id,
+        label: pLabel.trim() || "a granel",
+        size: 0,
+        price,
+        kind: "bulk",
+      });
+      setPLabel("");
+      setPAmount("");
+      setPPrice("");
+      setShowAddPresentation(false);
+      return;
+    }
     const amount = parseQuantity(pAmount);
     if (amount == null || amount <= 0) return;
     const size = toBase(amount, pUnit);
@@ -2204,14 +2556,14 @@ function IngredientCard({
           {DIMENSION_LABELS[ingredient.dimension]}
         </Pill>
         <IconBtn title={`Editar ${ingredient.name}`} onClick={onEdit}>
-          <IEdit size={13} />
+          <IEdit size={13} style={{ width: fluid(13), height: fluid(13) }} />
         </IconBtn>
         <IconBtn danger title={`Borrar ${ingredient.name}`} onClick={onDelete}>
-          <ITrash size={13} />
+          <ITrash size={13} style={{ width: fluid(13), height: fluid(13) }} />
         </IconBtn>
       </div>
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: fluid(6), marginTop: 2 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: fluid(6), marginTop: fluid(2) }}>
         {presentations.map((p) => (
           <span
             key={p.id}
@@ -2233,14 +2585,16 @@ function IngredientCard({
               cursor: "grab",
             }}
           >
-            {p.label}
-            <span style={{ color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums" }}>· {formatQuantity(p.size, ingredient.dimension)}</span>
+            <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.label}</span>
+            <span style={{ color: "var(--fg-muted)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+              · {p.kind === "bulk" ? bulkSummary(p, ingredient.dimension) : formatQuantity(p.size, ingredient.dimension)}
+            </span>
             <button
               onClick={(e) => { e.stopPropagation(); deletePresentation.mutate(p.id); }}
-              title="Quitar presentación"
-              style={{ background: "none", border: 0, padding: 0, marginLeft: 2, cursor: "pointer", color: "var(--fg-subtle)", display: "flex" }}
+              title="Quitar variante"
+              style={{ background: "none", border: 0, padding: 0, marginLeft: fluid(2), cursor: "pointer", color: "var(--fg-subtle)", display: "flex" }}
             >
-              <IX size={10} />
+              <IX size={10} style={{ width: fluid(10), height: fluid(10) }} />
             </button>
           </span>
         ))}
@@ -2249,29 +2603,49 @@ function IngredientCard({
           style={{ borderRadius: 999, border: "1px dashed var(--line-strong)" }}
           onClick={() => setShowAddPresentation((v) => !v)}
         >
-          <IPlus size={10} /> Variante
+          <IPlus size={10} style={{ width: fluid(10), height: fluid(10) }} /> Variante
         </button>
       </div>
 
       {showAddPresentation && (
         <form
           onSubmit={(e) => { e.preventDefault(); addPresentation(); }}
-          style={{ display: "flex", gap: fluid(6), alignItems: "center", flexWrap: "wrap", marginTop: 2 }}
+          style={{ display: "flex", gap: fluid(6), alignItems: "center", flexWrap: "wrap", marginTop: fluid(2) }}
         >
-          <input className="input" placeholder="Etiqueta" value={pLabel} onChange={(e) => setPLabel(e.target.value)} style={{ flex: 1, minWidth: fluid(100), fontSize: fluid(12) }} />
-          <input className="input" placeholder="Cantidad" value={pAmount} onChange={(e) => setPAmount(e.target.value)} style={{ width: fluid(75), fontSize: fluid(12) }} />
-          {units.length > 1 ? (
-            <select className="input" value={pUnit} onChange={(e) => setPUnit(e.target.value)} style={{ fontSize: fluid(12) }}>
-              {units.map((u) => (
-                <option key={u.unit} value={u.unit}>{u.label}</option>
-              ))}
-            </select>
-          ) : (
-            <span style={{ fontSize: fluid(11), color: "var(--fg-muted)" }}>{units[0].label}</span>
+          <select
+            className="input"
+            value={pKind}
+            onChange={(e) => setPKind(e.target.value as PresentationKind)}
+            style={{ ...fluidInputChrome, fontSize: fluid(12) }}
+            title="Paquete de tamaño fijo, o venta por peso/volumen"
+          >
+            <option value="package">Paquete</option>
+            <option value="bulk">A granel</option>
+          </select>
+          <input className="input" placeholder="Etiqueta" value={pLabel} onChange={(e) => setPLabel(e.target.value)} style={{ ...fluidInputChrome, flex: 1, minWidth: fluid(100), fontSize: fluid(12) }} />
+          {pKind === "package" && (
+            <>
+              <input className="input" placeholder="Cantidad" value={pAmount} onChange={(e) => setPAmount(e.target.value)} style={{ ...fluidInputChrome, width: fluid(75), fontSize: fluid(12) }} />
+              {units.length > 1 ? (
+                <select className="input" value={pUnit} onChange={(e) => setPUnit(e.target.value)} style={{ ...fluidInputChrome, fontSize: fluid(12) }}>
+                  {units.map((u) => (
+                    <option key={u.unit} value={u.unit}>{u.label}</option>
+                  ))}
+                </select>
+              ) : (
+                <span style={{ fontSize: fluid(11), color: "var(--fg-muted)" }}>{units[0].label}</span>
+              )}
+            </>
           )}
-          <input className="input" placeholder="Precio" value={pPrice} onChange={(e) => setPPrice(e.target.value)} style={{ width: fluid(75), fontSize: fluid(12) }} />
-          <button className="btn" type="submit" disabled={!pAmount.trim()}>
-            <ICheck size={10} /> Guardar
+          <input
+            className="input"
+            placeholder={pKind === "bulk" ? `Precio por ${BULK_PRICE_UNIT[ingredient.dimension].label}` : "Precio"}
+            value={pPrice}
+            onChange={(e) => setPPrice(e.target.value)}
+            style={{ ...fluidInputChrome, width: pKind === "bulk" ? fluid(115) : fluid(75), fontSize: fluid(12) }}
+          />
+          <button className="btn" type="submit" disabled={pKind === "package" && !pAmount.trim()}>
+            <ICheck size={10} style={{ width: fluid(10), height: fluid(10) }} /> Guardar
           </button>
         </form>
       )}
@@ -2286,6 +2660,7 @@ function ListCard({
   price,
   onToggle,
   onSetQty,
+  onSetBaseQty,
   onDelete,
 }: {
   item: ShoppingItem;
@@ -2294,8 +2669,14 @@ function ListCard({
   price: number | null;
   onToggle: () => void;
   onSetQty: (n: number) => void;
+  onSetBaseQty: (n: number) => void;
   onDelete: () => void;
 }) {
+  // A granel "quantity ± 1" no significa nada (siempre es 1 "compra"): lo que se
+  // edita es el peso/volumen, asi que el stepper se reemplaza por un campo de
+  // cantidad en unidad base.
+  const isBulk = presentation?.kind === "bulk";
+  const dim = ingredient?.dimension ?? "count";
   const [text, setText] = useState(String(item.quantity));
   useEffect(() => setText(String(item.quantity)), [item.quantity]);
   const commit = () => {
@@ -2304,9 +2685,26 @@ function ListCard({
     setText(String(n));
   };
 
+  const [baseText, setBaseText] = useState(item.baseQuantity != null ? rawNumber(item.baseQuantity) : "");
+  useEffect(() => setBaseText(item.baseQuantity != null ? rawNumber(item.baseQuantity) : ""), [item.baseQuantity]);
+  const commitBase = () => {
+    const n = parseBulkAmount(baseText, dim);
+    if (n == null) setBaseText(item.baseQuantity != null ? rawNumber(item.baseQuantity) : "");
+    else {
+      onSetBaseQty(n);
+      setBaseText(rawNumber(n));
+    }
+  };
+
   const title = ingredient && presentation ? `${ingredient.name} - ${presentation.label}` : ingredient?.name ?? item.name;
   const detailParts: string[] = [];
-  if (ingredient && presentation) detailParts.push(formatQuantity(presentation.size, ingredient.dimension));
+  if (ingredient && presentation) {
+    if (presentation.kind === "bulk") {
+      detailParts.push(item.baseQuantity != null ? formatQuantity(item.baseQuantity, ingredient.dimension) : "a granel");
+    } else {
+      detailParts.push(formatQuantity(presentation.size, ingredient.dimension));
+    }
+  }
   if (price != null) detailParts.push(fmtMoney(price));
 
   return (
@@ -2318,7 +2716,7 @@ function ListCard({
         alignItems: "center",
         padding: `${fluid(10)} ${fluid(12)}`,
         boxSizing: "border-box",
-        background: item.bought ? "rgba(102,187,106,0.12)" : "var(--bg-elev)",
+        background: item.bought ? "color-mix(in oklch, var(--ok) 12%, var(--bg-elev))" : "var(--bg-elev)",
         border: item.bought ? "1px solid var(--ok)" : "1px solid var(--line)",
         borderRadius: fluid(10),
       }}
@@ -2339,7 +2737,7 @@ function ListCard({
           cursor: "pointer",
         }}
       >
-        <ICheck size={13} stroke={2.6} />
+        <ICheck size={13} stroke={2.6} style={{ width: fluid(13), height: fluid(13) }} />
       </button>
 
       <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: fluid(6) }}>
@@ -2355,21 +2753,37 @@ function ListCard({
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: fluid(6) }}>
-        <div style={{ display: "flex", alignItems: "center", gap: fluid(2) }}>
-          <button className="btn ghost" style={{ padding: `${fluid(2)} ${fluid(7)}`, fontSize: fluid(13) }} onClick={() => onSetQty(item.quantity - 1)} title="Menos">−</button>
-          <input
-            className="input"
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onBlur={commit}
-            onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-            inputMode="numeric"
-            style={{ width: fluid(40), textAlign: "center", padding: `${fluid(3)} ${fluid(4)}`, fontVariantNumeric: "tabular-nums" }}
-          />
-          <button className="btn ghost" style={{ padding: `${fluid(2)} ${fluid(7)}`, fontSize: fluid(13) }} onClick={() => onSetQty(item.quantity + 1)} title="Más">+</button>
-        </div>
+        {isBulk ? (
+          <div style={{ display: "flex", alignItems: "center", gap: fluid(4) }}>
+            <input
+              className="input"
+              value={baseText}
+              onChange={(e) => setBaseText(e.target.value)}
+              onBlur={commitBase}
+              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+              title={`Cantidad a granel (en ${baseUnit(dim)})`}
+              placeholder={baseUnit(dim)}
+              style={{ ...fluidInputChrome, width: fluid(58), textAlign: "right", padding: `${fluid(3)} ${fluid(4)}`, fontVariantNumeric: "tabular-nums" }}
+            />
+            <span style={{ fontSize: fluid(11), color: "var(--fg-muted)" }}>{baseUnit(dim)}</span>
+          </div>
+        ) : (
+          <div style={{ display: "flex", alignItems: "center", gap: fluid(2) }}>
+            <button className="btn ghost" style={{ padding: `${fluid(2)} ${fluid(7)}`, fontSize: fluid(13) }} onClick={() => onSetQty(item.quantity - 1)} title="Menos">−</button>
+            <input
+              className="input"
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onBlur={commit}
+              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+              inputMode="numeric"
+              style={{ ...fluidInputChrome, width: fluid(40), textAlign: "center", padding: `${fluid(3)} ${fluid(4)}`, fontVariantNumeric: "tabular-nums" }}
+            />
+            <button className="btn ghost" style={{ padding: `${fluid(2)} ${fluid(7)}`, fontSize: fluid(13) }} onClick={() => onSetQty(item.quantity + 1)} title="Más">+</button>
+          </div>
+        )}
         <IconBtn title="Eliminar" onClick={onDelete}>
-          <ITrash size={12} />
+          <ITrash size={12} style={{ width: fluid(12), height: fluid(12) }} />
         </IconBtn>
       </div>
     </div>

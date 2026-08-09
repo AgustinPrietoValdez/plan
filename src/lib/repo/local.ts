@@ -5,6 +5,7 @@ import type {
   BrewDatapoint,
   BrewSession,
   Budget,
+  BudgetPeriod,
   CalendarEvent,
   Category,
   CoffeeBean,
@@ -32,11 +33,13 @@ import type {
   IngredientDimension,
   IngredientPresentation,
   InventoryItem,
+  PresentationKind,
   MealLog,
   MealPlanEntry,
   MealSlot,
   MealTimes,
   MealType,
+  Merchant,
   Recipe,
   RecipeIngredient,
   SavedList,
@@ -80,6 +83,8 @@ import type {
   RecipeIngredientCreate,
   SavedListCreate,
   MealPlanEntryCreate,
+  MerchantCreate,
+  MerchantPatch,
   InventoryCreate,
   MealLogCreate,
   ComprasSettingsUpsert,
@@ -88,6 +93,7 @@ import type {
   TaskCreate,
 } from "./types";
 import { convertViaUsd, CURRENCY, DEFAULT_RATES_PER_USD } from "../money";
+import { fromYmd, ymd } from "../date";
 
 interface DbTaskRow {
   id: string;
@@ -215,6 +221,7 @@ async function enqueue(
     | "categories"
     | "expense_categories"
     | "ingredient_categories"
+    | "merchants"
     | "expenses"
     | "budgets"
     | "savings_goals"
@@ -402,6 +409,238 @@ async function evaluateGoalPurchase(
     const updated = fromDbSavingsGoal(updatedRows[0]);
     await enqueue(userId, "update", "savings_goals", goalId, savingsGoalToWire(updated, userId));
   }
+}
+
+// ── Stock desde gastos (Compras) ──────────────────────────────────────────────
+//
+// Cargar un gasto real es la ÚNICA vía por la que entra stock a la despensa (la
+// lista de compras quedó puramente visual). Esto vive acá, en el repo, y no en
+// un hook de React, porque `sync.ts` y `realtime.ts` escriben derecho en SQLite
+// sin correr ningún efecto de React: una línea cargada en el celular tiene que
+// producir su lote también en el escritorio.
+//
+// REGLA: `source_line_item_id` es una ETIQUETA DE PROCEDENCIA, no una clave de
+// proyección. Los deltas se aplican en el momento de escribir; los lotes nunca
+// se re-derivan a partir de las líneas. Misma forma que
+// `adjustAccountBalance`: leer lo viejo -> escribir -> aplicar el delta.
+//
+//   create  -> +base (un solo lote, no N)
+//   patch   -> delta = baseNuevo − baseViejo (leído de la DB, no de un cache)
+//   delete  -> −base, ANTES del soft-delete (después la fila ya no se lee)
+
+/** Tolerancia para comparar cantidades en unidad base (g / ml / u). */
+const STOCK_EPS = 0.0001;
+
+/** Cuánto stock aporta esta línea, en unidad base. 0 = no aporta nada. */
+function lineStockBase(li: Pick<ExpenseLineItem, "addToStock" | "ingredientId" | "baseQuantity">): number {
+  if (!li.addToStock || !li.ingredientId) return 0;
+  return li.baseQuantity > 0 ? li.baseQuantity : 0;
+}
+
+/** Vencimiento del lote = `expenses.spent_on` + `ingredients.shelf_life_days`.
+ *  Anclado en la FECHA DEL GASTO y no en hoy: si el gasto se carga dos días
+ *  tarde (o con fecha vieja a propósito), el lote tiene que vencer contando
+ *  desde el día en que se compró. */
+async function lotExpiryFor(
+  db: Db,
+  userId: string,
+  expenseId: string,
+  ingredientId: string,
+): Promise<string | null> {
+  const ingRows = await db.select<{ shelf_life_days: number | null }[]>(
+    "SELECT shelf_life_days FROM ingredients WHERE id = ? AND user_id = ? LIMIT 1",
+    [ingredientId, userId],
+  );
+  const shelfLife = ingRows[0]?.shelf_life_days;
+  if (shelfLife === null || shelfLife === undefined) return null;
+  const expRows = await db.select<{ spent_on: string }[]>(
+    "SELECT spent_on FROM expenses WHERE id = ? AND user_id = ? LIMIT 1",
+    [expenseId, userId],
+  );
+  const spentOn = expRows[0]?.spent_on;
+  if (!spentOn) return null;
+  const d = fromYmd(spentOn);
+  d.setDate(d.getDate() + shelfLife);
+  return ymd(d);
+}
+
+/** Re-fecha los lotes que salieron de las líneas de un gasto al que le cambiaron
+ *  la fecha. El vencimiento se calcula UNA vez, al escribir la línea
+ *  (`lotExpiryFor`), así que mover el gasto de día dejaba lotes venciendo desde
+ *  la fecha vieja. Misma forma que `adjustAccountBalance`: leer de la DB ->
+ *  escribir -> encolar.
+ *
+ *  Sólo re-fecha: no toca cantidades (un lote a medio comer conserva lo que le
+ *  queda) ni resucita lotes que el usuario ya consumió o borró. Un ingrediente
+ *  sin `shelf_life_days` sigue sin vencimiento. */
+async function redateLotsForExpense(
+  db: Db,
+  userId: string,
+  expenseId: string,
+  spentOn: string,
+): Promise<void> {
+  const rows = await db.select<DbInventoryRow[]>(
+    `SELECT inv.* FROM inventory inv
+       JOIN expense_line_items li
+         ON li.id = inv.source_line_item_id AND li.user_id = inv.user_id
+     WHERE li.expense_id = ? AND inv.user_id = ?
+       AND inv.deleted_at IS NULL AND li.deleted_at IS NULL`,
+    [expenseId, userId],
+  );
+  if (rows.length === 0) return;
+  // Varias líneas del mismo gasto suelen compartir ingrediente: una lectura por
+  // ingrediente, no por lote.
+  const shelfLives = new Map<string, number | null>();
+  for (const row of rows) {
+    const lot = fromDbInventory(row);
+    if (!shelfLives.has(lot.ingredientId)) {
+      const ingRows = await db.select<{ shelf_life_days: number | null }[]>(
+        "SELECT shelf_life_days FROM ingredients WHERE id = ? AND user_id = ? LIMIT 1",
+        [lot.ingredientId, userId],
+      );
+      shelfLives.set(lot.ingredientId, ingRows[0]?.shelf_life_days ?? null);
+    }
+    const shelfLife = shelfLives.get(lot.ingredientId) ?? null;
+    let expiresOn: string | null = null;
+    if (shelfLife !== null) {
+      const d = fromYmd(spentOn);
+      d.setDate(d.getDate() + shelfLife);
+      expiresOn = ymd(d);
+    }
+    if (expiresOn === lot.expiresOn) continue;
+    const updated: InventoryItem = {
+      ...lot,
+      expiresOn,
+      updatedAt: now(),
+      version: lot.version + 1,
+    };
+    await db.execute(
+      "UPDATE inventory SET expires_on = ?, updated_at = ?, version = ? WHERE id = ? AND user_id = ?",
+      [updated.expiresOn, updated.updatedAt, updated.version, lot.id, userId],
+    );
+    await enqueue(userId, "update", "inventory", lot.id, inventoryToWire(updated, userId));
+  }
+}
+
+/** El lote vivo que quedó de esta línea, si todavía queda alguno. */
+async function findSourceLot(db: Db, userId: string, lineItemId: string) {
+  const rows = await db.select<DbInventoryRow[]>(
+    "SELECT * FROM inventory WHERE source_line_item_id = ? AND user_id = ? AND deleted_at IS NULL LIMIT 1",
+    [lineItemId, userId],
+  );
+  return rows[0] ? fromDbInventory(rows[0]) : null;
+}
+
+/** UN solo lote por línea (no N): la línea ya trae la cantidad total en unidad
+ *  base, partirla en lotes de a paquete no agregaría información y multiplicaría
+ *  las filas a sincronizar. */
+async function insertLotForLine(
+  db: Db,
+  userId: string,
+  li: ExpenseLineItem,
+  quantity: number,
+): Promise<void> {
+  if (!li.ingredientId || quantity <= STOCK_EPS) return;
+  const ts = now();
+  const lot: InventoryItem = {
+    id: newId(),
+    ingredientId: li.ingredientId,
+    presentationId: li.presentationId,
+    quantity,
+    expiresOn: await lotExpiryFor(db, userId, li.expenseId, li.ingredientId),
+    sourceLineItemId: li.id,
+    createdAt: ts,
+    updatedAt: ts,
+    deletedAt: null,
+    version: 1,
+  };
+  await db.execute(
+    `INSERT INTO inventory
+      (id, user_id, ingredient_id, presentation_id, quantity, expires_on, source_line_item_id, created_at, updated_at, deleted_at, version)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [lot.id, userId, lot.ingredientId, lot.presentationId, lot.quantity, lot.expiresOn,
+     lot.sourceLineItemId, lot.createdAt, lot.updatedAt, null, 1],
+  );
+  await enqueue(userId, "insert", "inventory", lot.id, inventoryToWire(lot, userId));
+}
+
+/** Aplica un delta con signo (en unidad base) al lote que generó `li`.
+ *
+ *  delta > 0 -> se suma al lote sobreviviente; si ya no existe, se crea uno.
+ *  delta < 0 -> se resta `min(|delta|, lot.quantity)` y se borra al llegar a ~0.
+ *               EL SOBRANTE SE ABSORBE EN SILENCIO Y NUNCA SE TOCA OTRO LOTE:
+ *               `useLogMeal` consume FIFO por vencimiento sobre todo el
+ *               ingrediente, así que el consumo no es atribuible a una línea —
+ *               si el lote ya se comió, la baja ya ocurrió de hecho. */
+async function applyLineStockDelta(
+  db: Db,
+  userId: string,
+  li: ExpenseLineItem,
+  delta: number,
+): Promise<void> {
+  if (!li.ingredientId || Math.abs(delta) <= STOCK_EPS) return;
+  const lot = await findSourceLot(db, userId, li.id);
+
+  if (delta > 0) {
+    if (!lot) {
+      await insertLotForLine(db, userId, li, delta);
+      return;
+    }
+    const updated: InventoryItem = {
+      ...lot,
+      presentationId: li.presentationId,
+      quantity: lot.quantity + delta,
+      updatedAt: now(),
+      version: lot.version + 1,
+    };
+    await db.execute(
+      `UPDATE inventory SET presentation_id = ?, quantity = ?, updated_at = ?, version = ?
+       WHERE id = ? AND user_id = ?`,
+      [updated.presentationId, updated.quantity, updated.updatedAt, updated.version, lot.id, userId],
+    );
+    await enqueue(userId, "update", "inventory", lot.id, inventoryToWire(updated, userId));
+    return;
+  }
+
+  // delta < 0
+  if (!lot) return; // ya se comió: no hay nada que devolver y no se toca otro lote
+  const take = Math.min(-delta, lot.quantity);
+  const remaining = lot.quantity - take;
+  const ts = now();
+  if (remaining <= STOCK_EPS) {
+    await db.execute(
+      "UPDATE inventory SET deleted_at = ?, updated_at = ?, version = version + 1 WHERE id = ? AND user_id = ?",
+      [ts, ts, lot.id, userId],
+    );
+    await enqueue(userId, "delete", "inventory", lot.id, null);
+    return;
+  }
+  const updated: InventoryItem = {
+    ...lot,
+    quantity: remaining,
+    updatedAt: ts,
+    version: lot.version + 1,
+  };
+  await db.execute(
+    "UPDATE inventory SET quantity = ?, updated_at = ?, version = ? WHERE id = ? AND user_id = ?",
+    [updated.quantity, updated.updatedAt, updated.version, lot.id, userId],
+  );
+  await enqueue(userId, "update", "inventory", lot.id, inventoryToWire(updated, userId));
+}
+
+/** Alta de stock para una línea recién creada. El guard de replay mira TODAS las
+ *  filas con esa etiqueta, incluso las borradas: sync/realtime pueden re-aplicar
+ *  el mismo insert y no queremos ni duplicar el lote ni resucitar uno que el
+ *  usuario ya deshizo. */
+async function createLineStock(db: Db, userId: string, li: ExpenseLineItem): Promise<void> {
+  const base = lineStockBase(li);
+  if (base <= 0) return;
+  const seen = await db.select<{ one: number }[]>(
+    "SELECT 1 AS one FROM inventory WHERE source_line_item_id = ? AND user_id = ? LIMIT 1",
+    [li.id, userId],
+  );
+  if (seen[0]) return;
+  await insertLotForLine(db, userId, li, base);
 }
 
 export const localRepo: Repo = {
@@ -759,6 +998,83 @@ export const localRepo: Repo = {
     await enqueue(userId, "delete", "expense_categories", id, null);
   },
 
+  // ---------- merchants ----------
+  async listMerchants() {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const rows = await db.select<DbMerchantRow[]>(
+      "SELECT * FROM merchants WHERE user_id = ? AND deleted_at IS NULL ORDER BY position ASC, name ASC",
+      [userId],
+    );
+    return rows.map(fromDbMerchant);
+  },
+
+  async createMerchant(input: MerchantCreate) {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const ts = now();
+    const m: Merchant = {
+      id: newId(),
+      name: input.name,
+      note: input.note ?? "",
+      position: input.position ?? 0,
+      archived: false,
+      createdAt: ts,
+      updatedAt: ts,
+      deletedAt: null,
+      version: 1,
+    };
+    await db.execute(
+      `INSERT INTO merchants
+        (id, user_id, name, note, position, archived, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [m.id, userId, m.name, m.note, m.position, 0, m.createdAt, m.updatedAt, null, 1],
+    );
+    await enqueue(userId, "insert", "merchants", m.id, merchantToWire(m, userId));
+    return m;
+  },
+
+  async patchMerchant(id: string, patch: MerchantPatch) {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const rows = await db.select<DbMerchantRow[]>(
+      "SELECT * FROM merchants WHERE id = ? AND user_id = ? AND deleted_at IS NULL LIMIT 1",
+      [id, userId],
+    );
+    if (!rows[0]) throw new Error(`Merchant ${id} not found`);
+    const existing = fromDbMerchant(rows[0]);
+    const updated: Merchant = {
+      ...existing,
+      ...patch,
+      id: existing.id,
+      createdAt: existing.createdAt,
+      updatedAt: now(),
+      version: existing.version + 1,
+    };
+    await db.execute(
+      `UPDATE merchants SET name = ?, note = ?, position = ?, archived = ?, updated_at = ?, deleted_at = ?, version = ?
+       WHERE id = ? AND user_id = ?`,
+      [
+        updated.name, updated.note, updated.position, updated.archived ? 1 : 0,
+        updated.updatedAt, updated.deletedAt, updated.version,
+        id, userId,
+      ],
+    );
+    await enqueue(userId, "update", "merchants", id, merchantToWire(updated, userId));
+    return updated;
+  },
+
+  async deleteMerchant(id: string) {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const ts = now();
+    await db.execute(
+      "UPDATE merchants SET deleted_at = ?, updated_at = ?, version = version + 1 WHERE id = ? AND user_id = ?",
+      [ts, ts, id, userId],
+    );
+    await enqueue(userId, "delete", "merchants", id, null);
+  },
+
   // ---------- expenses ----------
   async listExpenses() {
     const userId = await requireUserId();
@@ -782,6 +1098,7 @@ export const localRepo: Repo = {
       categoryId: input.categoryId,
       spentOn: input.spentOn,
       note: input.note,
+      merchantId: input.merchantId ?? null,
       accountId: input.accountId ?? null,
       goalId: input.goalId ?? null,
       recurrence: input.recurrence,
@@ -793,12 +1110,12 @@ export const localRepo: Repo = {
     };
     await db.execute(
       `INSERT INTO expenses
-        (id, user_id, name, amount, currency, category_id, spent_on, note, account_id, goal_id,
+        (id, user_id, name, amount, currency, category_id, spent_on, note, merchant_id, account_id, goal_id,
          recurrence, recurrence_parent_id, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         exp.id, userId, exp.name, exp.amount, exp.currency, exp.categoryId, exp.spentOn,
-        exp.note, exp.accountId, exp.goalId,
+        exp.note, exp.merchantId, exp.accountId, exp.goalId,
         exp.recurrence ? JSON.stringify(exp.recurrence) : null,
         exp.recurrenceParentId,
         exp.createdAt, exp.updatedAt, null, 1,
@@ -832,11 +1149,11 @@ export const localRepo: Repo = {
     };
     await db.execute(
       `UPDATE expenses SET name = ?, amount = ?, currency = ?, category_id = ?, spent_on = ?,
-         note = ?, account_id = ?, goal_id = ?, recurrence = ?, recurrence_parent_id = ?, updated_at = ?, deleted_at = ?, version = ?
+         note = ?, merchant_id = ?, account_id = ?, goal_id = ?, recurrence = ?, recurrence_parent_id = ?, updated_at = ?, deleted_at = ?, version = ?
        WHERE id = ? AND user_id = ?`,
       [
         updated.name, updated.amount, updated.currency, updated.categoryId, updated.spentOn,
-        updated.note, updated.accountId, updated.goalId,
+        updated.note, updated.merchantId, updated.accountId, updated.goalId,
         updated.recurrence ? JSON.stringify(updated.recurrence) : null,
         updated.recurrenceParentId,
         updated.updatedAt, updated.deletedAt, updated.version,
@@ -844,6 +1161,11 @@ export const localRepo: Repo = {
       ],
     );
     await enqueue(userId, "update", "expenses", id, expenseToWire(updated, userId));
+    // Los lotes que generaron las líneas de este gasto vencen contando desde su
+    // fecha, así que moverla los deja vencidos (o vivos) de mentira.
+    if (updated.spentOn !== existing.spentOn) {
+      await redateLotsForExpense(db, userId, id, updated.spentOn);
+    }
     // Auto-calc: reverse the old expense's effect, then apply the new one (each converted
     // to its own account's currency).
     const oldEffect = await toAccountCurrency(db, userId, existing.accountId, existing.amount, existing.currency);
@@ -867,6 +1189,24 @@ export const localRepo: Repo = {
       "SELECT * FROM expenses WHERE id = ? AND user_id = ? AND deleted_at IS NULL LIMIT 1",
       [id, userId],
     );
+    // Cascade: the line items belong to the expense, so soft-delete them too —
+    // one enqueue each, otherwise the server keeps orphaned rows alive and the
+    // next pull resurrects them locally.
+    const liRows = await db.select<DbExpenseLineItemRow[]>(
+      "SELECT * FROM expense_line_items WHERE expense_id = ? AND user_id = ? AND deleted_at IS NULL",
+      [id, userId],
+    );
+    // La cascada pasa por el MISMO camino de stock que borrar una línea suelta:
+    // si el gasto se va, sus lotes se van con él.
+    for (const li of liRows) {
+      const old = fromDbExpenseLineItem(li);
+      await applyLineStockDelta(db, userId, old, -lineStockBase(old));
+      await db.execute(
+        "UPDATE expense_line_items SET deleted_at = ?, updated_at = ?, version = version + 1 WHERE id = ? AND user_id = ?",
+        [ts, ts, li.id, userId],
+      );
+      await enqueue(userId, "delete", "expense_line_items", li.id, null);
+    }
     await db.execute(
       "UPDATE expenses SET deleted_at = ?, updated_at = ?, version = version + 1 WHERE id = ? AND user_id = ?",
       [ts, ts, id, userId],
@@ -900,6 +1240,10 @@ export const localRepo: Repo = {
       name: input.name,
       quantity: input.quantity,
       unitPrice: input.unitPrice,
+      ingredientId: input.ingredientId ?? null,
+      presentationId: input.presentationId ?? null,
+      baseQuantity: input.baseQuantity ?? 0,
+      addToStock: input.addToStock ?? false,
       createdAt: ts,
       updatedAt: ts,
       deletedAt: null,
@@ -907,11 +1251,17 @@ export const localRepo: Repo = {
     };
     await db.execute(
       `INSERT INTO expense_line_items
-        (id, user_id, expense_id, name, quantity, unit_price, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [li.id, userId, li.expenseId, li.name, li.quantity, li.unitPrice, li.createdAt, li.updatedAt, null, 1],
+        (id, user_id, expense_id, name, quantity, unit_price, ingredient_id, presentation_id,
+         base_quantity, add_to_stock, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [li.id, userId, li.expenseId, li.name, li.quantity, li.unitPrice,
+       li.ingredientId, li.presentationId, li.baseQuantity, li.addToStock ? 1 : 0,
+       li.createdAt, li.updatedAt, null, 1],
     );
     await enqueue(userId, "insert", "expense_line_items", li.id, expenseLineItemToWire(li, userId));
+    // Auto-calc: la línea marcada "sumar a la despensa" genera su lote acá, no
+    // en la UI — ver el bloque de comentarios sobre stock más arriba.
+    await createLineStock(db, userId, li);
     return li;
   },
 
@@ -934,11 +1284,27 @@ export const localRepo: Repo = {
       version: existing.version + 1,
     };
     await db.execute(
-      `UPDATE expense_line_items SET name = ?, quantity = ?, unit_price = ?,
+      `UPDATE expense_line_items SET name = ?, quantity = ?, unit_price = ?, ingredient_id = ?,
+         presentation_id = ?, base_quantity = ?, add_to_stock = ?,
          updated_at = ?, deleted_at = ?, version = ? WHERE id = ? AND user_id = ?`,
-      [updated.name, updated.quantity, updated.unitPrice, updated.updatedAt, updated.deletedAt, updated.version, id, userId],
+      [updated.name, updated.quantity, updated.unitPrice, updated.ingredientId,
+       updated.presentationId, updated.baseQuantity, updated.addToStock ? 1 : 0,
+       updated.updatedAt, updated.deletedAt, updated.version, id, userId],
     );
     await enqueue(userId, "update", "expense_line_items", id, expenseLineItemToWire(updated, userId));
+    // Auto-calc: el delta sale de la fila VIEJA leída de la DB (arriba), nunca
+    // de un cache de React. `addToStock` 1->0 es delta = −baseViejo y 0->1 es
+    // delta = +baseNuevo, porque `lineStockBase` ya devuelve 0 cuando está en 0.
+    const oldBase = lineStockBase(existing);
+    const newBase = lineStockBase(updated);
+    if (existing.ingredientId !== updated.ingredientId) {
+      // Cambió el ingrediente: el lote viejo es de otra cosa. Se descuenta contra
+      // la línea vieja (lo borra) y se da de alta el nuevo con la línea nueva.
+      await applyLineStockDelta(db, userId, existing, -oldBase);
+      await applyLineStockDelta(db, userId, updated, newBase);
+    } else {
+      await applyLineStockDelta(db, userId, updated, newBase - oldBase);
+    }
     return updated;
   },
 
@@ -946,6 +1312,16 @@ export const localRepo: Repo = {
     const userId = await requireUserId();
     const db = await getDb();
     const ts = now();
+    // Leer y descontar ANTES del soft-delete: después la fila ya no se lee y el
+    // lote quedaría huérfano en la despensa.
+    const rows = await db.select<DbExpenseLineItemRow[]>(
+      "SELECT * FROM expense_line_items WHERE id = ? AND user_id = ? AND deleted_at IS NULL LIMIT 1",
+      [id, userId],
+    );
+    if (rows[0]) {
+      const old = fromDbExpenseLineItem(rows[0]);
+      await applyLineStockDelta(db, userId, old, -lineStockBase(old));
+    }
     await db.execute(
       "UPDATE expense_line_items SET deleted_at = ?, updated_at = ?, version = version + 1 WHERE id = ? AND user_id = ?",
       [ts, ts, id, userId],
@@ -978,13 +1354,14 @@ export const localRepo: Repo = {
         ...prev,
         monthlyAmount: input.monthlyAmount,
         currency: input.currency,
+        period: input.period ?? prev.period,
         updatedAt: ts,
         version: prev.version + 1,
       };
       await db.execute(
-        `UPDATE budgets SET monthly_amount = ?, currency = ?, updated_at = ?, version = ?
+        `UPDATE budgets SET monthly_amount = ?, currency = ?, period = ?, updated_at = ?, version = ?
          WHERE id = ? AND user_id = ?`,
-        [updated.monthlyAmount, updated.currency, updated.updatedAt, updated.version, updated.id, userId],
+        [updated.monthlyAmount, updated.currency, updated.period, updated.updatedAt, updated.version, updated.id, userId],
       );
       await enqueue(userId, "update", "budgets", updated.id, budgetToWire(updated, userId));
       return updated;
@@ -994,6 +1371,7 @@ export const localRepo: Repo = {
       categoryId: input.categoryId,
       monthlyAmount: input.monthlyAmount,
       currency: input.currency,
+      period: input.period ?? "monthly",
       createdAt: ts,
       updatedAt: ts,
       deletedAt: null,
@@ -1001,9 +1379,9 @@ export const localRepo: Repo = {
     };
     await db.execute(
       `INSERT INTO budgets
-        (id, user_id, category_id, monthly_amount, currency, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [created.id, userId, created.categoryId, created.monthlyAmount, created.currency,
+        (id, user_id, category_id, monthly_amount, currency, period, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [created.id, userId, created.categoryId, created.monthlyAmount, created.currency, created.period,
        created.createdAt, created.updatedAt, null, 1],
     );
     await enqueue(userId, "insert", "budgets", created.id, budgetToWire(created, userId));
@@ -1652,6 +2030,7 @@ export const localRepo: Repo = {
       ingredientId: input.ingredientId ?? null,
       presentationId: input.presentationId ?? null,
       unit: input.unit ?? null,
+      baseQuantity: input.baseQuantity ?? null,
       weekStart: input.weekStart,
       createdAt: ts,
       updatedAt: ts,
@@ -1660,11 +2039,11 @@ export const localRepo: Repo = {
     };
     await db.execute(
       `INSERT INTO shopping_items
-        (id, user_id, name, quantity, bought, position, ingredient_id, presentation_id, unit, week_start, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, user_id, name, quantity, bought, position, ingredient_id, presentation_id, unit, base_quantity, week_start, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         item.id, userId, item.name, item.quantity, 0, item.position,
-        item.ingredientId, item.presentationId, item.unit, item.weekStart,
+        item.ingredientId, item.presentationId, item.unit, item.baseQuantity, item.weekStart,
         item.createdAt, item.updatedAt, null, 1,
       ],
     );
@@ -1690,11 +2069,11 @@ export const localRepo: Repo = {
       version: existing.version + 1,
     };
     await db.execute(
-      `UPDATE shopping_items SET name = ?, quantity = ?, bought = ?, position = ?, ingredient_id = ?, presentation_id = ?, unit = ?, week_start = ?, updated_at = ?, deleted_at = ?, version = ?
+      `UPDATE shopping_items SET name = ?, quantity = ?, bought = ?, position = ?, ingredient_id = ?, presentation_id = ?, unit = ?, base_quantity = ?, week_start = ?, updated_at = ?, deleted_at = ?, version = ?
        WHERE id = ? AND user_id = ?`,
       [
         updated.name, updated.quantity, updated.bought ? 1 : 0, updated.position,
-        updated.ingredientId, updated.presentationId, updated.unit, updated.weekStart,
+        updated.ingredientId, updated.presentationId, updated.unit, updated.baseQuantity, updated.weekStart,
         updated.updatedAt, updated.deletedAt, updated.version,
         id, userId,
       ],
@@ -1890,6 +2269,7 @@ export const localRepo: Repo = {
       label: input.label,
       size: input.size,
       price: input.price,
+      kind: input.kind ?? "package",
       createdAt: ts,
       updatedAt: ts,
       deletedAt: null,
@@ -1897,9 +2277,9 @@ export const localRepo: Repo = {
     };
     await db.execute(
       `INSERT INTO ingredient_presentations
-        (id, user_id, ingredient_id, label, size, price, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [p.id, userId, p.ingredientId, p.label, p.size, p.price, p.createdAt, p.updatedAt, null, 1],
+        (id, user_id, ingredient_id, label, size, price, kind, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [p.id, userId, p.ingredientId, p.label, p.size, p.price, p.kind, p.createdAt, p.updatedAt, null, 1],
     );
     await enqueue(userId, "insert", "ingredient_presentations", p.id, ingredientPresentationToWire(p, userId));
     return p;
@@ -1924,10 +2304,10 @@ export const localRepo: Repo = {
       version: existing.version + 1,
     };
     await db.execute(
-      `UPDATE ingredient_presentations SET label = ?, size = ?, price = ?, updated_at = ?, deleted_at = ?, version = ?
+      `UPDATE ingredient_presentations SET label = ?, size = ?, price = ?, kind = ?, updated_at = ?, deleted_at = ?, version = ?
        WHERE id = ? AND user_id = ?`,
       [
-        updated.label, updated.size, updated.price,
+        updated.label, updated.size, updated.price, updated.kind,
         updated.updatedAt, updated.deletedAt, updated.version,
         id, userId,
       ],
@@ -2274,6 +2654,7 @@ export const localRepo: Repo = {
       presentationId: input.presentationId,
       quantity: input.quantity,
       expiresOn: input.expiresOn,
+      sourceLineItemId: input.sourceLineItemId ?? null,
       createdAt: ts,
       updatedAt: ts,
       deletedAt: null,
@@ -2281,9 +2662,10 @@ export const localRepo: Repo = {
     };
     await db.execute(
       `INSERT INTO inventory
-        (id, user_id, ingredient_id, presentation_id, quantity, expires_on, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [created.id, userId, created.ingredientId, created.presentationId, created.quantity, created.expiresOn, created.createdAt, created.updatedAt, null, 1],
+        (id, user_id, ingredient_id, presentation_id, quantity, expires_on, source_line_item_id, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [created.id, userId, created.ingredientId, created.presentationId, created.quantity, created.expiresOn,
+       created.sourceLineItemId, created.createdAt, created.updatedAt, null, 1],
     );
     await enqueue(userId, "insert", "inventory", created.id, inventoryToWire(created, userId));
     return created;
@@ -2308,10 +2690,10 @@ export const localRepo: Repo = {
       version: existing.version + 1,
     };
     await db.execute(
-      `UPDATE inventory SET presentation_id = ?, quantity = ?, expires_on = ?, updated_at = ?, deleted_at = ?, version = ?
+      `UPDATE inventory SET presentation_id = ?, quantity = ?, expires_on = ?, source_line_item_id = ?, updated_at = ?, deleted_at = ?, version = ?
        WHERE id = ? AND user_id = ?`,
       [
-        updated.presentationId, updated.quantity, updated.expiresOn,
+        updated.presentationId, updated.quantity, updated.expiresOn, updated.sourceLineItemId,
         updated.updatedAt, updated.deletedAt, updated.version,
         id, userId,
       ],
@@ -3245,6 +3627,19 @@ interface DbExpenseCategoryRow {
   version: number;
 }
 
+interface DbMerchantRow {
+  id: string;
+  user_id: string;
+  name: string;
+  note: string;
+  position: number;
+  archived: number;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+  version: number;
+}
+
 interface DbExpenseRow {
   id: string;
   user_id: string;
@@ -3254,6 +3649,7 @@ interface DbExpenseRow {
   category_id: string | null;
   spent_on: string;
   note: string;
+  merchant_id: string | null;
   account_id: string | null;
   goal_id: string | null;
   recurrence: string | null;
@@ -3270,6 +3666,7 @@ interface DbBudgetRow {
   category_id: string;
   monthly_amount: number;
   currency: string;
+  period: BudgetPeriod | null;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -3372,6 +3769,35 @@ function fromDbExpenseCategory(r: DbExpenseCategoryRow): ExpenseCategory {
   };
 }
 
+function fromDbMerchant(r: DbMerchantRow): Merchant {
+  return {
+    id: r.id,
+    name: r.name,
+    note: r.note ?? "",
+    position: r.position,
+    archived: boolFromDb(r.archived),
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    deletedAt: r.deleted_at,
+    version: r.version,
+  };
+}
+
+function merchantToWire(m: Merchant, userId: string) {
+  return {
+    id: m.id,
+    user_id: userId,
+    name: m.name,
+    note: m.note,
+    position: m.position,
+    archived: m.archived,
+    created_at: m.createdAt,
+    updated_at: m.updatedAt,
+    deleted_at: m.deletedAt,
+    version: m.version,
+  };
+}
+
 function fromDbExpense(r: DbExpenseRow): Expense {
   return {
     id: r.id,
@@ -3381,6 +3807,7 @@ function fromDbExpense(r: DbExpenseRow): Expense {
     categoryId: r.category_id,
     spentOn: r.spent_on,
     note: r.note,
+    merchantId: r.merchant_id ?? null,
     accountId: r.account_id ?? null,
     goalId: r.goal_id ?? null,
     recurrence: parseJson<RecurrenceRule | null>(r.recurrence, null),
@@ -3398,6 +3825,7 @@ function fromDbBudget(r: DbBudgetRow): Budget {
     categoryId: r.category_id,
     monthlyAmount: r.monthly_amount,
     currency: r.currency,
+    period: r.period ?? "monthly",
     createdAt: r.created_at,
     updatedAt: r.updated_at,
     deletedAt: r.deleted_at,
@@ -3431,6 +3859,7 @@ function expenseToWire(e: Expense, userId: string) {
     category_id: e.categoryId,
     spent_on: e.spentOn,
     note: e.note,
+    merchant_id: e.merchantId,
     account_id: e.accountId,
     goal_id: e.goalId,
     recurrence: e.recurrence,
@@ -3449,6 +3878,7 @@ function budgetToWire(b: Budget, userId: string) {
     category_id: b.categoryId,
     monthly_amount: b.monthlyAmount,
     currency: b.currency,
+    period: b.period,
     created_at: b.createdAt,
     updated_at: b.updatedAt,
     deleted_at: b.deletedAt,
@@ -3703,6 +4133,7 @@ interface DbShoppingItemRow {
   ingredient_id: string | null;
   presentation_id: string | null;
   unit: string | null;
+  base_quantity: number | null;
   week_start: string;
   created_at: string;
   updated_at: string;
@@ -3720,6 +4151,7 @@ function fromDbShoppingItem(r: DbShoppingItemRow): ShoppingItem {
     ingredientId: r.ingredient_id ?? null,
     presentationId: r.presentation_id ?? null,
     unit: r.unit ?? null,
+    baseQuantity: r.base_quantity ?? null,
     weekStart: r.week_start,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
@@ -3739,6 +4171,7 @@ function shoppingItemToWire(s: ShoppingItem, userId: string) {
     ingredient_id: s.ingredientId,
     presentation_id: s.presentationId,
     unit: s.unit,
+    base_quantity: s.baseQuantity,
     week_start: s.weekStart,
     created_at: s.createdAt,
     updated_at: s.updatedAt,
@@ -3838,6 +4271,7 @@ interface DbIngredientPresentationRow {
   label: string;
   size: number;
   price: number | null;
+  kind: PresentationKind | null;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -3851,6 +4285,7 @@ function fromDbIngredientPresentation(r: DbIngredientPresentationRow): Ingredien
     label: r.label,
     size: r.size,
     price: r.price,
+    kind: r.kind ?? "package",
     createdAt: r.created_at,
     updatedAt: r.updated_at,
     deletedAt: r.deleted_at,
@@ -3866,6 +4301,7 @@ function ingredientPresentationToWire(p: IngredientPresentation, userId: string)
     label: p.label,
     size: p.size,
     price: p.price,
+    kind: p.kind,
     created_at: p.createdAt,
     updated_at: p.updatedAt,
     deleted_at: p.deletedAt,
@@ -4039,6 +4475,7 @@ interface DbInventoryRow {
   presentation_id: string | null;
   quantity: number;
   expires_on: string | null;
+  source_line_item_id: string | null;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -4052,6 +4489,7 @@ function fromDbInventory(r: DbInventoryRow): InventoryItem {
     presentationId: r.presentation_id ?? null,
     quantity: r.quantity,
     expiresOn: r.expires_on,
+    sourceLineItemId: r.source_line_item_id ?? null,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
     deletedAt: r.deleted_at,
@@ -4067,6 +4505,7 @@ function inventoryToWire(i: InventoryItem, userId: string) {
     presentation_id: i.presentationId,
     quantity: i.quantity,
     expires_on: i.expiresOn,
+    source_line_item_id: i.sourceLineItemId,
     created_at: i.createdAt,
     updated_at: i.updatedAt,
     deleted_at: i.deletedAt,
@@ -4331,6 +4770,10 @@ interface DbExpenseLineItemRow {
   name: string;
   quantity: number;
   unit_price: number;
+  ingredient_id: string | null;
+  presentation_id: string | null;
+  base_quantity: number | null;
+  add_to_stock: number | null;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -4344,6 +4787,10 @@ function fromDbExpenseLineItem(r: DbExpenseLineItemRow): ExpenseLineItem {
     name: r.name,
     quantity: r.quantity,
     unitPrice: r.unit_price,
+    ingredientId: r.ingredient_id ?? null,
+    presentationId: r.presentation_id ?? null,
+    baseQuantity: r.base_quantity ?? 0,
+    addToStock: boolFromDb(r.add_to_stock ?? 0),
     createdAt: r.created_at,
     updatedAt: r.updated_at,
     deletedAt: r.deleted_at,
@@ -4359,6 +4806,10 @@ function expenseLineItemToWire(li: ExpenseLineItem, userId: string) {
     name: li.name,
     quantity: li.quantity,
     unit_price: li.unitPrice,
+    ingredient_id: li.ingredientId,
+    presentation_id: li.presentationId,
+    base_quantity: li.baseQuantity,
+    add_to_stock: li.addToStock,
     created_at: li.createdAt,
     updated_at: li.updatedAt,
     deleted_at: li.deletedAt,

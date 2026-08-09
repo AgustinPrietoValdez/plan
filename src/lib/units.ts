@@ -2,6 +2,8 @@
 // per dimension: weight→grams, volume→millilitres, count→units. The UI converts
 // to kg/L for display. Count quantities may be fractional (1/4, 1/2).
 
+import type { PresentationKind } from "../types";
+
 export type Dimension = "weight" | "volume" | "count";
 
 export const DIMENSION_LABELS: Record<Dimension, string> = {
@@ -86,7 +88,10 @@ export function unitOptions(dim: Dimension): { unit: string; label: string }[] {
 export interface PresentationLike {
   id: string;
   label: string;
+  /** Package contents in base unit. Only meaningful when kind === "package";
+   *  bulk rows never have their size read. */
   size: number; // base unit
+  kind: PresentationKind;
 }
 
 export interface WasteChoice {
@@ -99,12 +104,21 @@ export interface WasteChoice {
 /** Pick the combination of presentations that covers `needed` (base unit) with
  *  the least leftover. Bounded search: for each presentation cap the count so
  *  we never exceed needed by more than the largest presentation. Falls back to
- *  a single smallest presentation when nothing else fits. */
+ *  a single smallest presentation when nothing else fits.
+ *
+ *  Only kind === "package" rows take part: the whole search is "how many whole
+ *  packages do I buy", which is meaningless for bulk (you buy the exact amount,
+ *  so waste is always 0). We filter on `kind` explicitly rather than trusting
+ *  bulk rows to carry size = 0, because the search divides by `p.size` and
+ *  Math.max over an empty array is -Infinity. Returns null when the ingredient
+ *  has no usable package — the caller decides what to do with that. */
 export function leastWastePresentation(
   needed: number,
   presentations: PresentationLike[],
 ): WasteChoice | null {
-  const sizes = presentations.filter((p) => p.size > 0);
+  const sizes = presentations.filter((p) => p.kind === "package" && p.size > 0);
+  // Guards both unsafe paths below: Math.max(...[]) === -Infinity and the
+  // division by p.size in the DFS cap.
   if (sizes.length === 0 || needed <= 0) return null;
 
   const maxSize = Math.max(...sizes.map((p) => p.size));

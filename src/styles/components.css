@@ -838,7 +838,11 @@
   border-color: transparent;
   font-weight: 500;
 }
-.pill-select .swatch { width: 9px; height: 9px; border-radius: 3px; }
+.pill-select .swatch {
+  width: calc(var(--home-s, 1) * 9px); height: calc(var(--home-s, 1) * 9px);
+  border-radius: calc(var(--home-s, 1) * 3px);
+  flex: 0 0 auto;
+}
 
 .subtask-list { display: flex; flex-direction: column; gap: 4px; }
 .subtask-row {

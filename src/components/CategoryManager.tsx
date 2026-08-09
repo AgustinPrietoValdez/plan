@@ -30,13 +30,26 @@ export function CategoryManager({ onClose }: Props) {
   const [draftName, setDraftName] = useState("");
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
+  // Este manager se abre ENCIMA del TaskEditor / EventEditor, que también
+  // escuchan Escape en `window`: sin cortar el evento, un solo Escape cerraría
+  // los dos de una. Se escucha en captura y se corta ahí, así que todo el
+  // significado de Escape (cancelar rename / cerrar) vive acá. Sin deps a
+  // propósito: el handler tiene que ver el `editingId` de este render.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key !== "Escape") return;
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      if (editingId) {
+        setEditingId(null);
+        setDraftName("");
+        return;
+      }
+      onClose();
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  });
 
   const onBackdropMouseDown = (e: MouseEvent<HTMLDivElement>) => {
     if (e.target === e.currentTarget) onClose();
@@ -81,7 +94,10 @@ export function CategoryManager({ onClose }: Props) {
     tasks.filter((t) => t.categoryId === id && !t.done).length;
 
   return (
-    <div className="modal-backdrop" onMouseDown={onBackdropMouseDown}>
+    // z-index explícito: este modal se abre DESDE el TaskEditor / EventEditor y
+    // todos los backdrops son `z-index: 100`, así que sin esto quedaría tapado
+    // según el orden de montaje en App.tsx (con EventEditor pasaba justo eso).
+    <div className="modal-backdrop" style={{ zIndex: 110 }} onMouseDown={onBackdropMouseDown}>
       <div className="modal" style={{ width: "calc(var(--home-s, 1) * 520px)" }} onMouseDown={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <span style={{ flex: 1, fontSize: 15, fontWeight: 600, letterSpacing: "-0.01em" }}>

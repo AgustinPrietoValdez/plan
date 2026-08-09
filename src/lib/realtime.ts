@@ -45,6 +45,14 @@ export function useRealtimeSync(userId: string | undefined) {
       )
       .on(
         "postgres_changes",
+        { event: "*", schema: "public", table: "merchants", filter: `user_id=eq.${userId}` },
+        (payload) => {
+          const row = (payload.new ?? payload.old) as Record<string, unknown> | null;
+          if (row) void applyRealtime("merchants", row, qc);
+        },
+      )
+      .on(
+        "postgres_changes",
         { event: "*", schema: "public", table: "expenses", filter: `user_id=eq.${userId}` },
         (payload) => {
           const row = (payload.new ?? payload.old) as Record<string, unknown> | null;
@@ -105,6 +113,14 @@ export function useRealtimeSync(userId: string | undefined) {
         (payload) => {
           const row = (payload.new ?? payload.old) as Record<string, unknown> | null;
           if (row) void applyRealtime("ingredients", row, qc);
+        },
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "ingredient_categories", filter: `user_id=eq.${userId}` },
+        (payload) => {
+          const row = (payload.new ?? payload.old) as Record<string, unknown> | null;
+          if (row) void applyRealtime("ingredient_categories", row, qc);
         },
       )
       .on(

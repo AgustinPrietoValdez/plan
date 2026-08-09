@@ -160,6 +160,10 @@
 
 .m-item-name {
   flex: 1;
+  /* Nombre de ingrediente tipeado por el usuario: sin `min-width: 0` un token
+     largo sin espacios empuja el stepper y el borrar fuera de la pantalla. */
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-size: 16px;
   padding: 10px 0;
 }

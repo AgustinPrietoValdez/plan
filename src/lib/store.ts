@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { Task } from "../types";
-import { mondayOfThisWeek, todayYmd } from "./date";
+import { todayYmd, weekStartOf } from "./date";
 
 export type View =
   | "home"
@@ -102,9 +102,13 @@ interface AppState {
   categoryManagerOpen: boolean;
   projectManagerOpen: boolean;
   expenseCategoryManagerOpen: boolean;
+  merchantManagerOpen: boolean;
   budgetManagerOpen: boolean;
   expenseEditor: { mode: "closed" } | { mode: "edit"; expenseId: string } | { mode: "create"; prefill: Partial<{ amount: number; categoryId: string | null; spentOn: string; note: string; accountId: string | null; goalId: string | null }> };
   eventEditor: { mode: "closed" } | { mode: "edit"; eventId: string } | { mode: "create"; prefill: { day?: string } };
+  /** Presupuesto se navega SIEMPRE por mes. Que un presupuesto sea semanal es
+   *  una propiedad de la categoría (su tope se multiplica por las semanas del
+   *  mes), no un modo de navegación. */
   budgetMonth: string;
   filterCategoryId: string | null;
   sidebarOpen: boolean;
@@ -131,6 +135,8 @@ interface AppState {
   closeProjectManager: () => void;
   openExpenseCategoryManager: () => void;
   closeExpenseCategoryManager: () => void;
+  openMerchantManager: () => void;
+  closeMerchantManager: () => void;
   openBudgetManager: () => void;
   closeBudgetManager: () => void;
   openExpenseEdit: (expenseId: string) => void;
@@ -160,6 +166,7 @@ export const useApp = create<AppState>((set) => ({
   categoryManagerOpen: false,
   projectManagerOpen: false,
   expenseCategoryManagerOpen: false,
+  merchantManagerOpen: false,
   budgetManagerOpen: false,
   expenseEditor: { mode: "closed" },
   eventEditor: { mode: "closed" },
@@ -167,7 +174,7 @@ export const useApp = create<AppState>((set) => ({
   filterCategoryId: null,
   sidebarOpen: false,
   comprasTab: "listas",
-  comprasWeek: mondayOfThisWeek(),
+  comprasWeek: weekStartOf(),
   cafeTab: "inventario",
   finanzasTab: "presupuesto",
 
@@ -189,6 +196,8 @@ export const useApp = create<AppState>((set) => ({
   closeProjectManager: () => set({ projectManagerOpen: false }),
   openExpenseCategoryManager: () => set({ expenseCategoryManagerOpen: true }),
   closeExpenseCategoryManager: () => set({ expenseCategoryManagerOpen: false }),
+  openMerchantManager: () => set({ merchantManagerOpen: true }),
+  closeMerchantManager: () => set({ merchantManagerOpen: false }),
   openBudgetManager: () => set({ budgetManagerOpen: true }),
   closeBudgetManager: () => set({ budgetManagerOpen: false }),
   openExpenseEdit: (expenseId) => set({ expenseEditor: { mode: "edit", expenseId } }),

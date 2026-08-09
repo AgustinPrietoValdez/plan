@@ -50,6 +50,8 @@ export type {
   SavedListPatch,
   MealPlanEntryCreate,
   MealPlanEntryPatch,
+  MerchantCreate,
+  MerchantPatch,
   InventoryCreate,
   InventoryPatch,
   MealLogCreate,

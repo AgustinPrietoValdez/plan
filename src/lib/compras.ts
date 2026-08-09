@@ -14,7 +14,10 @@ import { fromYmd, todayYmd, ymd } from "./date";
 
 /** Find an existing (not-yet-bought) list item that the new item should merge
  *  into, so adding the same thing twice sums quantities instead of duplicating.
- *  Matches by presentation, else by ingredient (no presentation), else by name. */
+ *  Matches by presentation, else by ingredient (no presentation), else by name.
+ *  Bulk items carry a presentationId like any other, so two bulk adds of the
+ *  same variante already find each other here — what they merge is computed by
+ *  `mergeQuantities` below. */
 export function findMergeTarget(
   existing: ShoppingItem[],
   add: ShoppingItemCreate,
@@ -29,10 +32,34 @@ export function findMergeTarget(
   );
 }
 
+/** The patch that merges `add` into the target returned by `findMergeTarget`.
+ *  Package/free-text items only ever sum `quantity` (how many packages), which
+ *  is what callers have always done. Bulk items carry the real amount in
+ *  `baseQuantity` — `quantity` is INTEGER in SQLite and both editors round it,
+ *  so 750 g cannot live there — and that amount has to add too, otherwise
+ *  asking for salmon twice would silently keep only the first weight.
+ *  `baseQuantity` is left out of the patch entirely when neither side has one,
+ *  so a list with zero bulk items produces byte-identical patches. */
+export function mergeQuantities(
+  target: Pick<ShoppingItem, "quantity" | "baseQuantity">,
+  add: Pick<ShoppingItemCreate, "quantity" | "baseQuantity">,
+): { quantity: number; baseQuantity?: number } {
+  const quantity = target.quantity + add.quantity;
+  const base = (target.baseQuantity ?? 0) + (add.baseQuantity ?? 0);
+  if (base <= 0) return { quantity };
+  return { quantity, baseQuantity: base };
+}
+
 /** Build shopping-list items for a set of required ingredient quantities (base
- *  unit), choosing the presentation combination with the least waste. When an
- *  ingredient has no presentations, emit a single free-text item carrying the
- *  needed amount. `needByIngredient` maps ingredientId → required base quantity. */
+ *  unit), choosing the presentation combination with the least waste.
+ *  Three outcomes per ingredient, in order of preference:
+ *   1. some package presentation fits → one item per package, `quantity` = how
+ *      many of that package (unchanged behaviour);
+ *   2. no package but a bulk one exists → a single item pinned to that bulk
+ *      presentation with `quantity: 1` and the real amount in `baseQuantity`,
+ *      so the link to the ingredient (and its price per base unit) survives;
+ *   3. no presentations at all → free-text item, no ids.
+ *  `needByIngredient` maps ingredientId → required base quantity. */
 export function neededToShoppingItems(
   needByIngredient: Map<string, number>,
   ingredientById: Map<string, Ingredient>,
@@ -61,14 +88,33 @@ export function neededToShoppingItems(
         }
       }
     } else {
-      out.push({
-        name: `${ing.name} · ${formatQuantity(needed, ing.dimension)}`,
-        quantity: 1,
-        ingredientId: ing.id,
-        presentationId: null,
-        unit: null,
-        weekStart,
-      });
+      // No package covers this (or there is none). If the ingredient is sold
+      // loose, keep the identity: pin the bulk presentation and put the amount
+      // in baseQuantity. The name deliberately omits the amount — merges grow
+      // baseQuantity without rewriting the name, so an amount baked into the
+      // label would go stale. First bulk row wins; an ingredient with several
+      // is a data-entry oddity, not a case worth ranking.
+      const bulk = pres.find((p) => p.kind === "bulk");
+      if (bulk) {
+        out.push({
+          name: `${ing.name} (${bulk.label})`,
+          quantity: 1,
+          baseQuantity: needed,
+          ingredientId: ing.id,
+          presentationId: bulk.id,
+          unit: null,
+          weekStart,
+        });
+      } else {
+        out.push({
+          name: `${ing.name} · ${formatQuantity(needed, ing.dimension)}`,
+          quantity: 1,
+          ingredientId: ing.id,
+          presentationId: null,
+          unit: null,
+          weekStart,
+        });
+      }
     }
   }
   return out;

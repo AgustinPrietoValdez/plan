@@ -9,6 +9,12 @@ import {
 } from "../lib/queries";
 import { ICheck, IPlus, ITrash, IX } from "./icons";
 
+/** Todo lo que vive dentro de un `.modal` escala con `--home-s`: un px pelado
+ *  se ve diminuto en 2K. Ver el bloque de comentarios en components.css:764. */
+const s = (n: number) => `calc(var(--home-s, 1) * ${n}px)`;
+
+const smallBtn = { padding: `${s(4)} ${s(8)}`, fontSize: s(11.5) };
+
 interface Props {
   onClose: () => void;
 }
@@ -80,11 +86,11 @@ export function IngredientCategoryManager({ onClose }: Props) {
     <div className="modal-backdrop" onMouseDown={onBackdropMouseDown}>
       <div className="modal" style={{ width: "calc(var(--home-s, 1) * 520px)" }} onMouseDown={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <span style={{ flex: 1, fontSize: 15, fontWeight: 600, letterSpacing: "-0.01em" }}>
+          <span style={{ flex: 1, fontSize: s(15), fontWeight: 600, letterSpacing: "-0.01em" }}>
             Categorías de ingredientes
           </span>
           <button className="icon-btn" onClick={onClose} title="Cerrar">
-            <IX size={14} />
+            <IX size={14} style={{ width: s(14), height: s(14) }} />
           </button>
         </div>
 
@@ -92,12 +98,12 @@ export function IngredientCategoryManager({ onClose }: Props) {
           {categories.length === 0 && (
             <div
               style={{
-                padding: "20px 12px",
+                padding: `${s(20)} ${s(12)}`,
                 textAlign: "center",
-                fontSize: 12.5,
+                fontSize: s(12.5),
                 color: "var(--fg-subtle)",
                 border: "1px dashed var(--line)",
-                borderRadius: 8,
+                borderRadius: s(8),
               }}
             >
               No hay categorías todavía.
@@ -114,20 +120,20 @@ export function IngredientCategoryManager({ onClose }: Props) {
                 key={c.id}
                 style={{
                   border: "1px solid var(--line)",
-                  borderRadius: 8,
-                  padding: "10px 12px",
+                  borderRadius: s(8),
+                  padding: `${s(10)} ${s(12)}`,
                   background: "var(--bg-elev)",
                   display: "flex",
                   flexDirection: "column",
-                  gap: 8,
+                  gap: s(8),
                 }}
               >
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: s(10) }}>
                   <span
                     style={{
-                      width: 22,
-                      height: 22,
-                      borderRadius: 6,
+                      width: s(22),
+                      height: s(22),
+                      borderRadius: s(6),
                       background: colors.bg,
                       flex: "0 0 auto",
                     }}
@@ -147,11 +153,13 @@ export function IngredientCategoryManager({ onClose }: Props) {
                       }}
                       style={{
                         flex: 1,
+                        minWidth: 0,
                         border: "1px solid var(--accent)",
-                        borderRadius: 6,
-                        padding: "4px 8px",
-                        fontSize: 13,
+                        borderRadius: s(6),
+                        padding: `${s(4)} ${s(8)}`,
+                        fontSize: s(13),
                         fontWeight: 500,
+                        fontFamily: "inherit",
                         outline: 0,
                         background: "var(--bg-elev)",
                       }}
@@ -161,13 +169,17 @@ export function IngredientCategoryManager({ onClose }: Props) {
                       onClick={() => startRename(c.id, c.name)}
                       style={{
                         flex: 1,
+                        minWidth: 0,
                         textAlign: "left",
-                        fontSize: 13,
+                        fontSize: s(13),
                         fontWeight: 500,
                         color: "var(--fg)",
-                        padding: "4px 0",
+                        padding: `${s(4)} 0`,
                         background: "none",
                         border: 0,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
                       }}
                       title="Click para renombrar"
                     >
@@ -176,11 +188,12 @@ export function IngredientCategoryManager({ onClose }: Props) {
                   )}
                   <span
                     style={{
-                      fontSize: 11,
+                      fontSize: s(11),
                       color: "var(--fg-subtle)",
                       fontVariantNumeric: "tabular-nums",
-                      minWidth: 72,
+                      minWidth: s(72),
                       textAlign: "right",
+                      whiteSpace: "nowrap",
                     }}
                   >
                     {inUse} {inUse === 1 ? "ingrediente" : "ingredientes"}
@@ -190,7 +203,7 @@ export function IngredientCategoryManager({ onClose }: Props) {
                       <button
                         className="btn ghost"
                         onClick={() => setConfirmDeleteId(null)}
-                        style={{ padding: "4px 8px", fontSize: 11.5 }}
+                        style={smallBtn}
                       >
                         Cancelar
                       </button>
@@ -198,8 +211,7 @@ export function IngredientCategoryManager({ onClose }: Props) {
                         className="btn"
                         onClick={() => onConfirmDelete(c.id)}
                         style={{
-                          padding: "4px 8px",
-                          fontSize: 11.5,
+                          ...smallBtn,
                           color: "var(--danger)",
                           borderColor: "var(--danger)",
                         }}
@@ -214,12 +226,12 @@ export function IngredientCategoryManager({ onClose }: Props) {
                       onClick={() => setConfirmDeleteId(c.id)}
                       style={{ color: "var(--fg-subtle)" }}
                     >
-                      <ITrash size={13} />
+                      <ITrash size={13} style={{ width: s(13), height: s(13) }} />
                     </button>
                   )}
                 </div>
 
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: s(6) }}>
                   {HUE_PRESETS.map((h) => {
                     const swatch = colorsForHue(h);
                     const active = h === c.hue;
@@ -233,11 +245,13 @@ export function IngredientCategoryManager({ onClose }: Props) {
                         }
                         title={`Color ${h}`}
                         style={{
-                          width: 22,
-                          height: 22,
-                          borderRadius: 6,
+                          width: s(22),
+                          height: s(22),
+                          borderRadius: s(6),
                           background: swatch.bg,
-                          border: active ? "2px solid var(--fg)" : "1px solid rgba(0,0,0,0.06)",
+                          border: active
+                            ? "2px solid var(--fg)"
+                            : "1px solid color-mix(in srgb, var(--fg) 6%, transparent)",
                           cursor: "pointer",
                           padding: 0,
                           display: "grid",
@@ -245,7 +259,7 @@ export function IngredientCategoryManager({ onClose }: Props) {
                           color: swatch.fg,
                         }}
                       >
-                        {active && <ICheck size={10} stroke={2.6} />}
+                        {active && <ICheck size={10} stroke={2.6} style={{ width: s(10), height: s(10) }} />}
                       </button>
                     );
                   })}
@@ -257,7 +271,7 @@ export function IngredientCategoryManager({ onClose }: Props) {
 
         <div className="modal-foot">
           <button className="btn" onClick={onAdd}>
-            <IPlus size={12} /> Agregar categoría
+            <IPlus size={12} style={{ width: s(12), height: s(12) }} /> Agregar categoría
           </button>
           <div className="actions">
             <button className="btn primary" onClick={onClose}>

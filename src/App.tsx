@@ -21,6 +21,7 @@ import { CalendarView } from "./components/calendar/CalendarView";
 import { ExpenseCategoryManager } from "./components/ExpenseCategoryManager";
 import { EventEditor } from "./components/EventEditor";
 import { ExpenseEditor } from "./components/ExpenseEditor";
+import { MerchantManager } from "./components/MerchantManager";
 import { ProjectManager } from "./components/ProjectManager";
 import { Sidebar } from "./components/Sidebar";
 import { TaskEditor } from "./components/TaskEditor";
@@ -64,6 +65,8 @@ function App() {
     closeProjectManager,
     expenseCategoryManagerOpen,
     closeExpenseCategoryManager,
+    merchantManagerOpen,
+    closeMerchantManager,
     budgetManagerOpen,
     closeBudgetManager,
     expenseEditor,
@@ -207,6 +210,7 @@ function App() {
     categoryManagerOpen ||
     projectManagerOpen ||
     expenseCategoryManagerOpen ||
+    merchantManagerOpen ||
     budgetManagerOpen ||
     expenseEditor.mode !== "closed" ||
     eventEditor.mode !== "closed";
@@ -364,6 +368,15 @@ function App() {
           onSwitchToTask={() => { closeEventEditor(); openCreate({}); }}
         />
       )}
+      {/* REGLA: todos los `.modal-backdrop` comparten `z-index: 100`, así que
+          apilarlos por orden de montaje acá ata el stacking a la posición del JSX
+          en un archivo que no sabe quién abre a quién (fue justo el bug: el
+          ExpenseCategoryManager se montaba ANTES del ExpenseEditor y quedaba
+          tapado). En vez de eso, cada modal que se puede abrir DESDE otro modal
+          declara `zIndex: 110` en su propio backdrop (CategoryManager,
+          ExpenseCategoryManager, MerchantManager). El orden de montaje de acá ya
+          no importa. */}
+      {merchantManagerOpen && <MerchantManager onClose={closeMerchantManager} />}
       {!modalOpen && <BrewAssignModal />}
       </div>
     </DndContext>

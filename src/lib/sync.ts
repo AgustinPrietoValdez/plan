@@ -10,6 +10,7 @@ type Entity =
   | "projects"
   | "categories"
   | "expense_categories"
+  | "merchants"
   | "expenses"
   | "budgets"
   | "savings_goals"
@@ -20,6 +21,7 @@ type Entity =
   | "habit_logs"
   | "shopping_items"
   | "ingredients"
+  | "ingredient_categories"
   | "ingredient_presentations"
   | "recipes"
   | "recipe_ingredients"
@@ -242,6 +244,8 @@ export async function pullDeltas(userId: string, qc: QueryClient): Promise<void>
     try { any = (await pullEntity(userId, "events")) || any; } catch (e) { console.warn("events pull skipped:", e); }
     try { any = (await pullEntity(userId, "expense_line_items")) || any; } catch (e) { console.warn("expense_line_items pull skipped:", e); }
     try { any = (await pullEntity(userId, "automations")) || any; } catch (e) { console.warn("automations pull skipped:", e); }
+    try { any = (await pullEntity(userId, "merchants")) || any; } catch (e) { console.warn("merchants pull skipped:", e); }
+    try { any = (await pullEntity(userId, "ingredient_categories")) || any; } catch (e) { console.warn("ingredient_categories pull skipped:", e); }
     if (any) {
       qc.invalidateQueries({ queryKey: ["tasks"] });
       qc.invalidateQueries({ queryKey: ["projects"] });
@@ -272,6 +276,13 @@ export async function pullDeltas(userId: string, qc: QueryClient): Promise<void>
       qc.invalidateQueries({ queryKey: ["coffee_wishlist_items"] });
       qc.invalidateQueries({ queryKey: ["brew_sessions"] });
       qc.invalidateQueries({ queryKey: ["brew_datapoints"] });
+      qc.invalidateQueries({ queryKey: ["merchants"] });
+      // Faltaban: sin esto las filas llegaban a SQLite pero React Query seguia
+      // sirviendo la cache vieja hasta el siguiente remount.
+      qc.invalidateQueries({ queryKey: ["expense_line_items"] });
+      qc.invalidateQueries({ queryKey: ["events"] });
+      qc.invalidateQueries({ queryKey: ["automations"] });
+      qc.invalidateQueries({ queryKey: ["ingredient_categories"] });
     }
     if (currentStatus === "syncing") setStatus("idle");
   } catch (e) {
@@ -367,15 +378,26 @@ async function upsertLocal(
         row.deleted_at, row.version,
       ],
     );
+  } else if (entity === "merchants") {
+    await db.execute(
+      `INSERT OR REPLACE INTO merchants
+        (id, user_id, name, note, position, archived, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        row.id, row.user_id, row.name ?? "", row.note ?? "", row.position ?? 0,
+        row.archived ? 1 : 0, row.created_at, row.updated_at,
+        row.deleted_at, row.version,
+      ],
+    );
   } else if (entity === "expenses") {
     await db.execute(
       `INSERT OR REPLACE INTO expenses
-        (id, user_id, name, amount, currency, category_id, spent_on, note, account_id, goal_id,
+        (id, user_id, name, amount, currency, category_id, spent_on, note, merchant_id, account_id, goal_id,
          recurrence, recurrence_parent_id, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         row.id, row.user_id, row.name ?? "", row.amount, row.currency, row.category_id,
-        row.spent_on, row.note, row.account_id ?? null, row.goal_id ?? null,
+        row.spent_on, row.note, row.merchant_id ?? null, row.account_id ?? null, row.goal_id ?? null,
         row.recurrence ? JSON.stringify(row.recurrence) : null,
         row.recurrence_parent_id, row.created_at, row.updated_at,
         row.deleted_at, row.version,
@@ -384,10 +406,11 @@ async function upsertLocal(
   } else if (entity === "budgets") {
     await db.execute(
       `INSERT OR REPLACE INTO budgets
-        (id, user_id, category_id, monthly_amount, currency, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, user_id, category_id, monthly_amount, currency, period, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         row.id, row.user_id, row.category_id, row.monthly_amount, row.currency,
+        row.period ?? "monthly",
         row.created_at, row.updated_at, row.deleted_at, row.version,
       ],
     );
@@ -467,12 +490,13 @@ async function upsertLocal(
   } else if (entity === "shopping_items") {
     await db.execute(
       `INSERT OR REPLACE INTO shopping_items
-        (id, user_id, name, quantity, bought, position, ingredient_id, presentation_id, unit, week_start, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, user_id, name, quantity, bought, position, ingredient_id, presentation_id, unit, base_quantity, week_start, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         row.id, row.user_id, row.name, row.quantity,
         row.bought ? 1 : 0, row.position,
-        row.ingredient_id ?? null, row.presentation_id ?? null, row.unit ?? null, row.week_start,
+        row.ingredient_id ?? null, row.presentation_id ?? null, row.unit ?? null,
+        row.base_quantity ?? null, row.week_start,
         row.created_at, row.updated_at, row.deleted_at, row.version,
       ],
     );
@@ -486,13 +510,25 @@ async function upsertLocal(
         row.created_at, row.updated_at, row.deleted_at, row.version,
       ],
     );
+  } else if (entity === "ingredient_categories") {
+    await db.execute(
+      `INSERT OR REPLACE INTO ingredient_categories
+        (id, user_id, name, hue, position, archived, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        row.id, row.user_id, row.name ?? "", row.hue ?? 180, row.position ?? 0,
+        row.archived ? 1 : 0, row.created_at, row.updated_at,
+        row.deleted_at ?? null, row.version ?? 1,
+      ],
+    );
   } else if (entity === "ingredient_presentations") {
     await db.execute(
       `INSERT OR REPLACE INTO ingredient_presentations
-        (id, user_id, ingredient_id, label, size, price, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, user_id, ingredient_id, label, size, price, kind, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         row.id, row.user_id, row.ingredient_id, row.label, row.size, row.price ?? null,
+        row.kind ?? "package",
         row.created_at, row.updated_at, row.deleted_at, row.version,
       ],
     );
@@ -541,10 +577,11 @@ async function upsertLocal(
   } else if (entity === "inventory") {
     await db.execute(
       `INSERT OR REPLACE INTO inventory
-        (id, user_id, ingredient_id, presentation_id, quantity, expires_on, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, user_id, ingredient_id, presentation_id, quantity, expires_on, source_line_item_id, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         row.id, row.user_id, row.ingredient_id, row.presentation_id ?? null, row.quantity, row.expires_on ?? null,
+        row.source_line_item_id ?? null,
         row.created_at, row.updated_at, row.deleted_at, row.version,
       ],
     );
@@ -676,11 +713,14 @@ async function upsertLocal(
     await db.execute(
       `INSERT OR REPLACE INTO expense_line_items
         (id, user_id, expense_id, name, quantity, unit_price,
+         ingredient_id, presentation_id, base_quantity, add_to_stock,
          created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         row.id, row.user_id, row.expense_id, row.name ?? "",
         row.quantity ?? 1, row.unit_price ?? 0,
+        row.ingredient_id ?? null, row.presentation_id ?? null,
+        row.base_quantity ?? 0, row.add_to_stock ? 1 : 0,
         row.created_at, row.updated_at, row.deleted_at, row.version,
       ],
     );

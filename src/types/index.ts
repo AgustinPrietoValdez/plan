@@ -112,6 +112,18 @@ export interface IngredientCategory {
   version: number;
 }
 
+export interface Merchant {
+  id: string;
+  name: string;
+  note: string;
+  position: number;
+  archived: boolean;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+  version: number;
+}
+
 export interface Expense {
   id: string;
   name: string;
@@ -120,6 +132,7 @@ export interface Expense {
   categoryId: string | null;
   spentOn: string;
   note: string;
+  merchantId: string | null; // comercio donde se compro (null = sin comercio)
   accountId: string | null; // cuenta que pago el gasto (null = sin cuenta)
   goalId: string | null; // objetivo de ahorro que compra este gasto (Ahorros > Registrar compra)
   recurrence: RecurrenceRule | null;
@@ -136,17 +149,31 @@ export interface ExpenseLineItem {
   name: string;
   quantity: number;
   unitPrice: number;
+  ingredientId: string | null; // catalogo: ingrediente comprado en esta linea (null = linea libre)
+  presentationId: string | null; // presentacion elegida del ingrediente (null = sin presentacion)
+  /** Cantidad total adquirida en unidad base (g / ml / u). Es lo que normaliza el
+   *  precio: precioPorUnidadBase = (quantity * unitPrice) / baseQuantity.
+   *  0 en lineas que no son de ingredientes (Netflix, un restaurante, ...). */
+  baseQuantity: number;
+  /** true = al guardar el gasto esta linea genera un lote de inventario. */
+  addToStock: boolean;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
   version: number;
 }
 
+export type BudgetPeriod = "monthly" | "weekly";
+
 export interface Budget {
   id: string;
   categoryId: string;
+  /** Monto por periodo (mensual o semanal segun `period`). La columna sigue
+   *  llamandose monthly_amount a proposito: renombrarla romperia el formato de
+   *  wire de sync sin ninguna ganancia. */
   monthlyAmount: number;
   currency: string;
+  period: BudgetPeriod;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
@@ -204,7 +231,11 @@ export interface ShoppingItem {
   ingredientId: string | null;
   presentationId: string | null;
   unit: string | null;
-  weekStart: string; // lunes de la semana a la que pertenece esta lista (YYYY-MM-DD)
+  /** Cantidad real en unidad base (g / ml / u) para items a granel; `quantity` es
+   *  INTEGER y los editores la redondean, asi que 750 g no entra ahi.
+   *  null = item por paquete, se usa `quantity`. */
+  baseQuantity: number | null;
+  weekStart: string; // sabado de la semana a la que pertenece esta lista (YYYY-MM-DD)
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
@@ -217,6 +248,10 @@ export interface SavedListItem {
   ingredientId?: string | null;
   presentationId?: string | null;
   unit?: string | null;
+  /** Cantidad en unidad base, para items de variante "bulk" (a granel), donde
+   *  `quantity` es siempre 1 y no dice nada. Sin esto, guardar y restaurar una
+   *  lista con un item a granel perdia el peso. */
+  baseQuantity?: number | null;
 }
 
 export interface SavedList {
@@ -243,12 +278,25 @@ export interface Ingredient {
   version: number;
 }
 
+export type PresentationKind = "package" | "bulk";
+
 export interface IngredientPresentation {
   id: string;
   ingredientId: string;
   label: string;
+  /** Tamano del paquete en unidad base. SOLO se lee cuando kind === "package";
+   *  en "bulk" NUNCA se lee (se compra por peso/volumen, no hay tamano fijo). */
   size: number;
+  /** kind === "package" -> precio del paquete entero.
+   *  kind === "bulk"    -> precio POR UNIDAD BASE (por g / ml / u). */
   price: number | null;
+  /** "package" = paquete de tamano fijo (como hasta ahora).
+   *  "bulk"    = se compra por peso/volumen (ej. salmon en la pescaderia).
+   *  Una sola formula sirve para los dos casos:
+   *    costo = kind === "bulk" ? price * baseQuantity : price * count
+   *  (en "package" `price` YA es el precio del paquete entero, asi que NO se
+   *  multiplica por `size` — hacerlo inflaria cada precio existente x1000). */
+  kind: PresentationKind;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
@@ -298,6 +346,9 @@ export interface InventoryItem {
   presentationId: string | null;
   quantity: number;
   expiresOn: string | null;
+  /** Linea de gasto que genero este lote (null = lote cargado a mano). Sin esto,
+   *  editar o borrar la linea duplicaria o dejaria huerfano el stock. */
+  sourceLineItemId: string | null;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, type ReactNode } from "react";
 import { addDays, daysBetween, DOW_LONG_ES, fromYmd, MONTH_LONG_ES, MONTH_SHORT_ES, todayYmd, ymd } from "../lib/date";
+import { budgetAmountFor, expenseInScopeFor, sumBudgetsFor, type BudgetScope } from "../lib/budgetPeriod";
 import { useFrameScale } from "../lib/uiScale";
 import { useApp } from "../lib/store";
 import {
@@ -109,17 +110,35 @@ export function HomeView() {
     EUR: finSettingsQ.data?.ratesPerUsd.EUR ?? DEFAULT_RATES_PER_USD.EUR,
     ARS: finSettingsQ.data?.ratesPerUsd.ARS ?? DEFAULT_RATES_PER_USD.ARS,
   };
+  // Home siempre muestra el mes corriente. Los presupuestos pueden ser semanales,
+  // así que el tope se resuelve para ESTE mes (4 o 5 semanas) en vez de leer
+  // `monthlyAmount` crudo — para quien sólo tiene presupuestos mensuales da igual.
+  const budgetScope: BudgetScope = { kind: "month", yyyymm: budgetMonth };
   const monthExpenses = expenses.filter((e) => !e.deletedAt && (e.spentOn ?? "").slice(0, 7) === budgetMonth);
-  const monthExpensesForPie = monthExpenses.map((e) => ({
-    ...e,
-    amount: convertViaUsd(e.amount, e.currency, CURRENCY, ratesPerUsd),
-    currency: CURRENCY,
-  }));
+  // Las barras por categoría comparan gasto contra el tope de esa categoría, así
+  // que cada gasto se filtra con el periodo del presupuesto de SU categoría: uno
+  // semanal se mide en semanas enteras, no en días del calendario (si no, el tope
+  // de 5 semanas se compara contra 31 días y vuelve el bug que esto arregla).
+  const periodOfCategory = new Map(budgets.map((b) => [b.categoryId, b.period]));
+  const monthExpensesForPie = expenses
+    .filter((e) => !e.deletedAt && expenseInScopeFor(
+      e.spentOn ?? "",
+      budgetScope,
+      (e.categoryId ? periodOfCategory.get(e.categoryId) : undefined) ?? "monthly",
+    ))
+    .map((e) => ({
+      ...e,
+      amount: convertViaUsd(e.amount, e.currency, CURRENCY, ratesPerUsd),
+      currency: CURRENCY,
+    }));
+  // Topes ya resueltos para el mes que se ve — SpendingPie los lee crudos.
+  const scopedBudgets = budgets.map((b) => ({ categoryId: b.categoryId, monthlyAmount: budgetAmountFor(b, budgetScope) }));
   // Piechart limit excludes hidden categories' own budget cap too, so hiding one
   // actually shrinks the denominator and the remaining %s recalculate (not just the arcs).
-  const chartBudgetLimit = budgets
-    .filter((b) => !expenseCategories.find((c) => c.id === b.categoryId)?.hiddenFromChart)
-    .reduce((s, b) => s + b.monthlyAmount, 0);
+  const chartBudgetLimit = sumBudgetsFor(
+    budgets.filter((b) => !expenseCategories.find((c) => c.id === b.categoryId)?.hiddenFromChart),
+    budgetScope,
+  );
   // Same "exclude hidden categories" filter as chartBudgetLimit — otherwise a hidden
   // category's spending inflates the numerator without a matching denominator and the
   // % shown here disagrees with the donut's own center total (which filters the same way).
@@ -173,7 +192,7 @@ export function HomeView() {
             <div style={{ fontSize: fluid(22), fontWeight: 600, letterSpacing: "-0.02em", lineHeight: 1.15 }}>
               Buen {greetingDay}, Agus
             </div>
-            <div style={{ fontSize: fluid(13), color: "var(--fg-muted)", marginTop: 2 }}>
+            <div style={{ fontSize: fluid(13), color: "var(--fg-muted)", marginTop: fluid(2) }}>
               Tenés <b style={{ color: "var(--fg)" }}>{pendingCount} {pendingCount === 1 ? "tarea" : "tareas"}</b> y{" "}
               <b style={{ color: "var(--fg)" }}>{todayEventsCount} {todayEventsCount === 1 ? "evento" : "eventos"}</b> hoy
               {" · "}{expiringSoon.length} ingredientes por vencer esta semana
@@ -274,7 +293,7 @@ export function HomeView() {
                   sizePx={donutSize}
                   scale={s}
                   limit={chartBudgetLimit > 0 ? chartBudgetLimit : undefined}
-                  budgets={budgets}
+                  budgets={scopedBudgets}
                   legendVariant="bars"
                   centerLabel={chartBudgetLimit > 0 ? `de ${fmtNumber(chartBudgetLimit)} kr` : undefined}
                 />
@@ -456,10 +475,10 @@ function TaskRow({ task, dotColor, onCheck }: { task: Task; dotColor: string; on
           width: fluid(16), height: fluid(16), borderRadius: fluid(5), flex: "0 0 auto", padding: 0, cursor: done ? "default" : "pointer",
           border: done ? "1.4px solid var(--ok)" : "1.4px solid var(--line-strong)",
           background: done ? "var(--ok)" : "none",
-          color: "#fff", display: "grid", placeItems: "center",
+          color: "var(--bg-elev)", display: "grid", placeItems: "center",
         }}
       >
-        {done && <ICheck size={10} stroke={2.4} />}
+        {done && <ICheck size={10} stroke={2.4} style={{ width: fluid(10), height: fluid(10) }} />}
       </button>
       <span style={{ width: fluid(8), height: fluid(8), borderRadius: "50%", background: dotColor, flexShrink: 0 }} />
       <span style={{ fontSize: fluid(13.5), fontWeight: 500, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: done ? "line-through" : undefined, color: done ? "var(--fg-subtle)" : "var(--fg)" }}>

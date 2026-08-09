@@ -6,6 +6,11 @@ import { IEye, IEyeOff } from "./icons";
 
 interface CategoryBudget {
   categoryId: string | null;
+  /** Tope ya resuelto para el periodo que se está mostrando, NO el `monthlyAmount`
+   *  crudo del `Budget`. Un presupuesto semanal de 300 llega acá como 1500 en un
+   *  mes de 5 semanas y como 300 si se está viendo una semana — la conversión la
+   *  hace el que llama, con `budgetAmountFor()` de lib/budgetPeriod. Este
+   *  componente sólo compara números: no sabe de mensual vs. semanal. */
   monthlyAmount: number;
 }
 
@@ -154,12 +159,14 @@ export function SpendingPie({ expenses, categories, layout = "column", size = SI
     return (
       <div
         style={{
-          padding: "32px 12px",
+          // Mismo idioma de escala que la leyenda de abajo: este bloque se
+          // renderiza tanto en Home (2x) como en Finanzas, y no recibe `scale`.
+          padding: "clamp(20px, 2.5vw, 44px) clamp(8px, 1vw, 18px)",
           textAlign: "center",
-          fontSize: 12.5,
+          fontSize: "clamp(11px, 1.1vw, 18px)",
           color: "var(--fg-subtle)",
           border: "1px dashed var(--line)",
-          borderRadius: 10,
+          borderRadius: "clamp(8px, 0.8vw, 14px)",
         }}
       >
         No expenses this month yet.

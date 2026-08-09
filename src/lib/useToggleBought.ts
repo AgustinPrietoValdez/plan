@@ -1,68 +1,24 @@
-import {
-  useCreateInventory,
-  useDeleteInventory,
-  useIngredientPresentations,
-  useIngredients,
-  usePatchShoppingItem,
-} from "./queries";
-import { repo } from "./repo";
-import { fromYmd, todayYmd, ymd } from "./date";
+import { usePatchShoppingItem } from "./queries";
 import type { ShoppingItem } from "../types";
 
-/** Toggle a shopping item's "bought" flag. When the item is linked to a
- *  presentation, marking it bought adds that many inventory lots (one per
- *  unit, each with its own expiry from the ingredient's shelf life); un-marking
- *  removes that many still-full lots of the same presentation.
+/** Toggle a shopping item's "bought" flag. Nothing more.
  *
- *  Returns a promise so callers can disable the toggle control while it's in
- *  flight — a rapid re-toggle before the previous call finished used to read
- *  a stale inventory snapshot and corrupt/miss lots. */
+ *  La lista de compras es PURAMENTE VISUAL: tildar un item ya no toca la
+ *  despensa. El stock entra por una sola puerta — cargar el gasto real y
+ *  vincular sus líneas al ingrediente (ver el bloque de stock en
+ *  `repo/local.ts`) — y eso vive en el repo, no en un hook, porque sync y
+ *  realtime escriben derecho en SQLite sin correr efectos de React.
+ *
+ *  Lo que había acá antes creaba un lote por unidad al tildar y los borraba al
+ *  destildar, con el vencimiento contado desde HOY: cargar la compra un día
+ *  tarde ya daba una fecha equivocada, y no había ni precio ni comercio.
+ *
+ *  Sigue devolviendo una promesa (misma firma que antes) para que los llamadores
+ *  puedan deshabilitar el control mientras está en vuelo. */
 export function useToggleBought() {
   const patchItem = usePatchShoppingItem();
-  const createInventory = useCreateInventory();
-  const deleteInventory = useDeleteInventory();
-  const ingredientsQ = useIngredients();
-  const presentationsQ = useIngredientPresentations();
 
   return async (item: ShoppingItem, nextBought: boolean) => {
     await patchItem.mutateAsync({ id: item.id, patch: { bought: nextBought } });
-    if (!item.ingredientId || !item.presentationId) return;
-    const pres = (presentationsQ.data ?? []).find((p) => p.id === item.presentationId);
-    if (!pres) return;
-    const count = Math.max(1, Math.round(item.quantity));
-
-    if (nextBought) {
-      let expiresOn: string | null = null;
-      const ing = (ingredientsQ.data ?? []).find((i) => i.id === item.ingredientId);
-      if (ing?.shelfLifeDays != null) {
-        const d = fromYmd(todayYmd());
-        d.setDate(d.getDate() + ing.shelfLifeDays);
-        expiresOn = ymd(d);
-      }
-      for (let k = 0; k < count; k++) {
-        await createInventory.mutateAsync({
-          ingredientId: item.ingredientId,
-          presentationId: pres.id,
-          quantity: pres.size,
-          expiresOn,
-        });
-      }
-    } else {
-      // undo: remove up to `count` still-full lots of this presentation (newest
-      // first). Read straight from the repo instead of the React Query cache —
-      // the cache snapshot captured at render time can be stale (a just-created
-      // lot from the "mark bought" branch hasn't been refetched yet), which
-      // would otherwise delete the wrong lot or none at all.
-      const freshInventory = await repo.listInventory();
-      const lots = freshInventory
-        .filter(
-          (l) =>
-            l.ingredientId === item.ingredientId &&
-            l.presentationId === item.presentationId &&
-            Math.abs(l.quantity - pres.size) < 0.0001,
-        )
-        .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-      for (const lot of lots.slice(0, count)) await deleteInventory.mutateAsync(lot.id);
-    }
   };
 }

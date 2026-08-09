@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { colorsForHue } from "../lib/categoryColor";
 import { useSession } from "../lib/auth";
-import { shiftMonth } from "../lib/date";
+import { shiftMonth, weeksInMonth } from "../lib/date";
+import {
+  budgetAmountFor,
+  expenseInScope,
+  expenseInScopeFor,
+  sumBudgetsFor,
+  type BudgetScope,
+} from "../lib/budgetPeriod";
 import { CURRENCY, convertViaUsd, DEFAULT_RATES_PER_USD, fmtMoney, fmtMoneyIn, parseMoney } from "../lib/money";
 import { formatRule } from "../lib/recurrence";
 import { useMaterializeRecurringExpenses } from "../lib/materializeRecurringExpenses";
@@ -56,9 +63,8 @@ function ymToParts(yyyymm: string): { month: string; year: string } {
   return { month: MONTHS[m - 1], year: String(y) };
 }
 
-function expenseInMonth(e: Expense, yyyymm: string): boolean {
-  return e.spentOn.slice(0, 7) === yyyymm;
-}
+// El filtro por periodo vive en lib/budgetPeriod (expenseInScope /
+// expenseInScopeFor) — antes había una copia local `expenseInMonth` acá.
 
 const sectionLabelStyle = {
   fontSize: fluid(11),
@@ -117,18 +123,18 @@ function InlineExpenseRow({
         <span style={{ fontSize: fluid(10), color: "var(--fg-subtle)", textTransform: "uppercase", letterSpacing: ".05em", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
           {d} {MONTHS[Number(m) - 1].slice(0, 3).toLowerCase()}
         </span>
-        <span style={{ width: fluid(10), height: fluid(10), borderRadius: 3, background: colors.bg }} />
+        <span style={{ width: fluid(10), height: fluid(10), borderRadius: fluid(3), background: colors.bg }} />
         <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: fluid(6) }}>
           <span style={{ fontSize: fluid(12.5), fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {displayName}
           </span>
-          {expense.recurrence && <IRecurring size={11} stroke={2} />}
+          {expense.recurrence && <IRecurring size={11} stroke={2} style={{ width: fluid(11), height: fluid(11) }} />}
         </div>
         <span style={{ fontSize: fluid(12.5), fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
           {fmtMoneyIn(expense.amount, expense.currency)}
         </span>
         <span style={{ color: "var(--fg-subtle)", display: "flex", justifyContent: "center" }}>
-          {expanded ? <IChevU size={12} /> : <IChevD size={12} />}
+          {expanded ? <IChevU size={12} style={{ width: fluid(12), height: fluid(12) }} /> : <IChevD size={12} style={{ width: fluid(12), height: fluid(12) }} />}
         </span>
       </div>
 
@@ -140,7 +146,7 @@ function InlineExpenseRow({
         >
           {/* Note */}
           <div>
-            <div style={{ fontSize: fluid(10), textTransform: "uppercase", letterSpacing: ".05em", fontWeight: 600, color: "var(--fg-subtle)", marginBottom: 3 }}>Note</div>
+            <div style={{ fontSize: fluid(10), textTransform: "uppercase", letterSpacing: ".05em", fontWeight: 600, color: "var(--fg-subtle)", marginBottom: fluid(3) }}>Note</div>
             {expense.note
               ? <p style={{ margin: 0, fontSize: fluid(12), color: "var(--fg-muted)", lineHeight: 1.4 }}>{expense.note}</p>
               : <p style={{ margin: 0, fontSize: fluid(12), color: "var(--fg-subtle)", fontStyle: "italic" }}>No note</p>
@@ -149,13 +155,13 @@ function InlineExpenseRow({
 
           {/* Items */}
           <div>
-            <div style={{ fontSize: fluid(10), textTransform: "uppercase", letterSpacing: ".05em", fontWeight: 600, color: "var(--fg-subtle)", marginBottom: 3 }}>
+            <div style={{ fontSize: fluid(10), textTransform: "uppercase", letterSpacing: ".05em", fontWeight: 600, color: "var(--fg-subtle)", marginBottom: fluid(3) }}>
               Items{expLineItems.length > 0 && ` · ${fmtMoney(liTotal)}`}
             </div>
             {expLineItems.length === 0
               ? <p style={{ margin: 0, fontSize: fluid(12), color: "var(--fg-subtle)", fontStyle: "italic" }}>No items</p>
               : expLineItems.map((li) => (
-                  <div key={li.id} style={{ display: "grid", gridTemplateColumns: "1fr auto auto auto", gap: fluid(8), alignItems: "center", fontSize: fluid(12), color: "var(--fg-muted)", padding: "2px 0" }}>
+                  <div key={li.id} style={{ display: "grid", gridTemplateColumns: "1fr auto auto auto", gap: fluid(8), alignItems: "center", fontSize: fluid(12), color: "var(--fg-muted)", padding: `${fluid(2)} 0` }}>
                     <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{li.name}</span>
                     <span style={{ fontVariantNumeric: "tabular-nums" }}>{li.quantity}×</span>
                     <span style={{ fontVariantNumeric: "tabular-nums" }}>{fmtMoney(li.unitPrice)}</span>
@@ -192,7 +198,7 @@ function RecurringSection({
     <div style={{ display: "flex", flexDirection: "column", gap: fluid(4) }}>
       {/* Sticky, igual que el titulo de Gastos arriba — al llegar acá lo reemplaza. */}
       <div style={{ ...sectionLabelStyle, display: "flex", alignItems: "center", gap: fluid(6), padding: `${fluid(2)} 0`, position: "sticky", top: 0, zIndex: 2, background: "var(--bg)" }}>
-        <IRecurring size={11} stroke={2} /> Recurrentes · {expenses.length}
+        <IRecurring size={11} stroke={2} style={{ width: fluid(11), height: fluid(11) }} /> Recurrentes · {expenses.length}
       </div>
       {expenses.map((e) => {
         const c = e.categoryId ? categories.find((c) => c.id === e.categoryId) ?? null : null;
@@ -213,7 +219,7 @@ function RecurringSection({
               cursor: "pointer",
             }}
           >
-            <span style={{ width: fluid(10), height: fluid(10), borderRadius: 3, background: cols.bg }} />
+            <span style={{ width: fluid(10), height: fluid(10), borderRadius: fluid(3), background: cols.bg }} />
             <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: fluid(12.5), fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                 {e.name || e.note || c?.name || "Untitled"}
@@ -345,7 +351,7 @@ function GoalMonthRow({
     }}>
       <span style={{ fontSize: fluid(12), fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: goal.priority ? "var(--danger)" : "var(--fg)" }}>
         {goal.name}
-        {goal.isOverflowTarget && <span style={{ marginLeft: 6, fontSize: fluid(9), color: "var(--ok)", textTransform: "uppercase" }}>overflow</span>}
+        {goal.isOverflowTarget && <span style={{ marginLeft: fluid(6), fontSize: fluid(9), color: "var(--ok)", textTransform: "uppercase" }}>overflow</span>}
       </span>
       <div style={{ display: "flex", alignItems: "center", gap: fluid(3) }}>
         <input
@@ -359,7 +365,7 @@ function GoalMonthRow({
           style={{ ...fieldChrome, width: fluid(38), textAlign: "right", padding: `${fluid(3)} ${fluid(5)}`, fontSize: fluid(11) }}
         />
         <span style={{ fontSize: fluid(10), color: "var(--fg-muted)" }}>%</span>
-        <button className="btn ghost" style={{ width: fluid(58), padding: "1px 0", fontSize: fluid(9.5), textAlign: "center" }} onClick={onToggleOverflow}>
+        <button className="btn ghost" style={{ width: fluid(58), padding: `${fluid(1)} 0`, fontSize: fluid(9.5), textAlign: "center" }} onClick={onToggleOverflow}>
           {goal.isOverflowTarget ? "unset" : "overflow"}
         </button>
       </div>
@@ -400,7 +406,7 @@ function PendingTransferRow({
       </div>
       {done ? (
         <span style={{ display: "inline-flex", alignItems: "center", gap: fluid(4), fontSize: fluid(11), color: "var(--ok)", fontWeight: 600, whiteSpace: "nowrap" }}>
-          <ICheck size={12} stroke={2.4} /> {fmtMoney(amount, { compact: true })}
+          <ICheck size={12} stroke={2.4} style={{ width: fluid(12), height: fluid(12) }} /> {fmtMoney(amount, { compact: true })}
         </span>
       ) : (
         <button className="btn ghost" style={{ fontSize: fluid(11), whiteSpace: "nowrap" }} onClick={onTransfer}>
@@ -440,7 +446,7 @@ function TransfersCard({
       <div style={{ display: "flex", alignItems: "center", gap: fluid(8), flex: "0 0 auto" }}>
         <span style={sectionLabelStyle}>Transferencias</span>
         <button className="btn ghost" style={{ marginLeft: "auto", padding: `${fluid(2)} ${fluid(8)}`, fontSize: fluid(11) }} onClick={onAdd}>
-          <IPlus size={11} /> Nueva
+          <IPlus size={11} style={{ width: fluid(11), height: fluid(11) }} /> Nueva
         </button>
       </div>
       <div className="fz-col" style={{ flex: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: fluid(6), paddingRight: fluid(4) }}>
@@ -479,7 +485,7 @@ function TransfersCard({
                 {fmtMoneyIn(t.amount, t.currency)}
               </span>
               <button className="icon-btn" style={{ color: "var(--fg-subtle)" }} onClick={() => onDelete(t.id)} title="Borrar">
-                <ITrash size={12} />
+                <ITrash size={12} style={{ width: fluid(12), height: fluid(12) }} />
               </button>
             </div>
           ))
@@ -542,40 +548,71 @@ export function BudgetView() {
 
   const [showTransferModal, setShowTransferModal] = useState(false);
 
-  const {
-    budgetMonth,
-    setBudgetMonth,
-    openExpenseEdit,
-  } = useApp();
+  const { budgetMonth, setBudgetMonth, openExpenseEdit } = useApp();
 
   const [filterCategoryId, setFilterCategoryId] = useState<string | null>(null);
   const [expandedExpenseId, setExpandedExpenseId] = useState<string | null>(null);
 
-  const monthExpenses = useMemo(
-    () => expenses.filter((e) => expenseInMonth(e, budgetMonth) && !e.deletedAt),
-    [expenses, budgetMonth],
+  // Presupuesto se mira SIEMPRE por mes. Que un presupuesto sea semanal es una
+  // propiedad de la categoría (su tope se multiplica por las semanas del mes),
+  // no un modo de navegación — por eso acá no hay un toggle Mes|Semana.
+  const scope = useMemo<BudgetScope>(
+    () => ({ kind: "month", yyyymm: budgetMonth }),
+    [budgetMonth],
+  );
+  const activeMonth = budgetMonth;
+
+  const scopeExpenses = useMemo(
+    () => expenses.filter((e) => !e.deletedAt && expenseInScope(e.spentOn, scope)),
+    [expenses, scope],
   );
   // Expenses can be entered in any currency now (EUR/ARS/USD against a DKK account, etc.) —
   // convert each to nominal DKK before summing/charting, same as incomes.
   // Hidden categories (hiddenFromChart) don't count toward the header totals either —
   // hiding one shrinks both totalSpent and totalBudget, not just the pie arcs.
-  const totalSpent = monthExpenses
+  const totalSpent = scopeExpenses
     .filter((e) => !categories.find((c) => c.id === e.categoryId)?.hiddenFromChart)
     .reduce((s, e) => s + convertViaUsd(e.amount, e.currency, CURRENCY, ratesPerUsd), 0);
-  const monthExpensesForPie = useMemo(
-    () => monthExpenses.map((e) => ({ ...e, amount: convertViaUsd(e.amount, e.currency, CURRENCY, ratesPerUsd), currency: CURRENCY })),
-    [monthExpenses, ratesPerUsd],
+  // El piechart compara gasto contra el tope POR CATEGORÍA, así que cada gasto se
+  // filtra con el periodo del presupuesto de su categoría: un presupuesto semanal
+  // mirado "por mes" se mide en semanas enteras (4 o 5), no en días del calendario.
+  // Sin presupuesto (o sin categoría) se cae al mes calendario de siempre, así que
+  // para quien sólo usa presupuestos mensuales esto da exactamente lo mismo.
+  const periodOfCategory = useMemo(() => {
+    const map = new Map<string, "monthly" | "weekly">();
+    for (const b of budgets) map.set(b.categoryId, b.period);
+    return map;
+  }, [budgets]);
+  const expensesForPie = useMemo(
+    () => expenses
+      .filter((e) => !e.deletedAt && expenseInScopeFor(
+        e.spentOn,
+        scope,
+        (e.categoryId ? periodOfCategory.get(e.categoryId) : undefined) ?? "monthly",
+      ))
+      .map((e) => ({ ...e, amount: convertViaUsd(e.amount, e.currency, CURRENCY, ratesPerUsd), currency: CURRENCY })),
+    [expenses, scope, periodOfCategory, ratesPerUsd],
   );
-  const totalBudget = budgets
-    .filter((b) => !categories.find((c) => c.id === b.categoryId)?.hiddenFromChart)
-    .reduce((s, b) => s + b.monthlyAmount, 0);
+  const visibleBudgets = budgets.filter((b) => !categories.find((c) => c.id === b.categoryId)?.hiddenFromChart);
+  const totalBudget = sumBudgetsFor(visibleBudgets, scope);
+  // Topes ya resueltos para el scope actual — SpendingPie los lee crudos y no
+  // sabe (ni tiene por qué saber) de periodos.
+  const scopedBudgets = useMemo(
+    () => budgets.map((b) => ({ categoryId: b.categoryId, monthlyAmount: budgetAmountFor(b, scope) })),
+    [budgets, scope],
+  );
   const pctUsed = totalBudget > 0 ? Math.round((totalSpent / totalBudget) * 100) : 0;
+  const weeksThisMonth = weeksInMonth(activeMonth);
+  // La nota "5 semanas este mes" sólo tiene sentido si hay algún presupuesto
+  // semanal: es lo que explica por qué el tope de este mes es más grande.
+  const hasWeeklyBudget = budgets.some((b) => b.period === "weekly");
+  const showWeeksNote = hasWeeklyBudget && weeksThisMonth === 5;
   // Incomes are now per (month, account). Total = sum of all incomes for the
   // month, converted to the Finanzas base currency so mixed-currency incomes
   // add up correctly (old months' legacy "general" no-account income still counts).
   const monthIncomes = useMemo(
-    () => incomes.filter((i) => i.month === budgetMonth && !i.deletedAt),
-    [incomes, budgetMonth],
+    () => incomes.filter((i) => i.month === activeMonth && !i.deletedAt),
+    [incomes, activeMonth],
   );
   const incomeAmount = monthIncomes.reduce(
     (s, i) => s + convertViaUsd(i.amount, i.currency, CURRENCY, ratesPerUsd),
@@ -610,11 +647,11 @@ export function BudgetView() {
   const goalMonthTarget = useMemo(() => {
     return activeGoals.map((g) => {
       const target = leftover > 0 ? (effectivePercent(g, overflowPercent) / 100) * leftover : 0;
-      const contributedThisMonth = contributions.find((c) => c.goalId === g.id && c.month === budgetMonth && !c.deletedAt)?.amount ?? 0;
+      const contributedThisMonth = contributions.find((c) => c.goalId === g.id && c.month === activeMonth && !c.deletedAt)?.amount ?? 0;
       const destAccount = g.destinationAccountId ? allAccounts.find((a) => a.id === g.destinationAccountId) ?? null : null;
       return { goal: g, target, contributedThisMonth, destAccount };
     });
-  }, [activeGoals, leftover, overflowPercent, contributions, budgetMonth, allAccounts]);
+  }, [activeGoals, leftover, overflowPercent, contributions, activeMonth, allAccounts]);
 
   // Group by destination account: one real transfer can cover several goals at once.
   const pendingByAccount = useMemo(() => {
@@ -652,8 +689,8 @@ export function BudgetView() {
   }, [expenses]);
 
   const filteredExpenses = filterCategoryId
-    ? monthExpenses.filter((e) => e.categoryId === filterCategoryId)
-    : monthExpenses;
+    ? scopeExpenses.filter((e) => e.categoryId === filterCategoryId)
+    : scopeExpenses;
 
   const onPauseRecurring = (e: Expense) => {
     patchExpense.mutateAsync({ id: e.id, patch: { recurrence: null } }).catch((err) =>
@@ -661,35 +698,62 @@ export function BudgetView() {
     );
   };
 
-  const monthParts = ymToParts(budgetMonth);
+  const monthParts = ymToParts(activeMonth);
 
-  const kpiCards = [
+  const kpiCards: { label: string; value: string; sub: string; color: string; note?: string }[] = [
     { label: "Gastado", value: fmtMoney(totalSpent, { compact: true }), sub: totalBudget > 0 ? `${pctUsed}% del presupuesto` : "sin presupuesto", color: "var(--fg)" },
-    { label: "Presupuesto", value: fmtMoney(totalBudget, { compact: true }), sub: "límite mensual", color: "var(--fg)" },
+    {
+      label: "Presupuesto",
+      value: fmtMoney(totalBudget, { compact: true }),
+      sub: "límite mensual",
+      color: "var(--fg)",
+      // El punto entero de la feature: si el mes tiene 5 semanas, el tope es más
+      // grande a propósito y hay que poder verlo.
+      note: showWeeksNote ? "5 semanas este mes" : undefined,
+    },
     { label: "Sobra", value: fmtMoney(Math.max(0, leftover), { compact: true }), sub: "tras gastos", color: leftover < 0 ? "var(--danger)" : "var(--fg)" },
     { label: "A ahorro", value: fmtMoney(totalAllocated, { compact: true }), sub: "asignado a goals", color: "var(--ok)" },
   ];
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: fluid(12), flex: 1, minHeight: 0 }}>
-      {/* KPI cards + month nav */}
+      {/* KPI cards + navegador de mes */}
       <div style={{ display: "flex", alignItems: "center", gap: fluid(10), flex: "0 0 auto" }}>
-        <button className="icon-btn" onClick={() => setBudgetMonth(shiftMonth(budgetMonth, -1))} title="Mes anterior" style={{ width: fluid(26), height: fluid(26) }}>
-          <IChevL size={13} />
-        </button>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flex: "0 0 auto", lineHeight: 1.15 }}>
-          <span style={{ fontSize: fluid(13.5), fontWeight: 700, letterSpacing: "-0.01em" }}>{monthParts.month}</span>
-          <span style={{ fontSize: fluid(10.5), color: "var(--fg-subtle)", fontVariantNumeric: "tabular-nums" }}>{monthParts.year}</span>
+        <div style={{ display: "flex", alignItems: "center", gap: fluid(8), flex: "0 0 auto" }}>
+          <button
+            className="icon-btn"
+            onClick={() => setBudgetMonth(shiftMonth(budgetMonth, -1))}
+            title="Mes anterior"
+            style={{ width: fluid(26), height: fluid(26) }}
+          >
+            <IChevL size={13} style={{ width: fluid(13), height: fluid(13) }} />
+          </button>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flex: "0 0 auto", lineHeight: 1.15, minWidth: fluid(84) }}>
+            <span style={{ fontSize: fluid(13.5), fontWeight: 700, letterSpacing: "-0.01em" }}>{monthParts.month}</span>
+            <span style={{ fontSize: fluid(10.5), color: "var(--fg-subtle)", fontVariantNumeric: "tabular-nums" }}>{monthParts.year}</span>
+          </div>
+          <button
+            className="icon-btn"
+            onClick={() => setBudgetMonth(shiftMonth(budgetMonth, 1))}
+            title="Mes siguiente"
+            style={{ width: fluid(26), height: fluid(26) }}
+          >
+            <IChevR size={13} style={{ width: fluid(13), height: fluid(13) }} />
+          </button>
         </div>
-        <button className="icon-btn" onClick={() => setBudgetMonth(shiftMonth(budgetMonth, 1))} title="Mes siguiente" style={{ width: fluid(26), height: fluid(26) }}>
-          <IChevR size={13} />
-        </button>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: fluid(12), flex: 1 }}>
           {kpiCards.map((k) => (
             <div key={k.label} style={{ background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: fluid(12), padding: `${fluid(12)} ${fluid(14)}`, boxShadow: "var(--shadow-sm)" }}>
               <div style={{ fontSize: fluid(10.5), textTransform: "uppercase", letterSpacing: ".05em", fontWeight: 600, color: "var(--fg-subtle)" }}>{k.label}</div>
-              <div style={{ fontSize: fluid(20), fontWeight: 600, letterSpacing: "-0.01em", fontVariantNumeric: "tabular-nums", marginTop: fluid(3), color: k.color }}>{k.value}</div>
-              <div style={{ fontSize: fluid(10.5), color: "var(--fg-subtle)", marginTop: 1 }}>{k.sub}</div>
+              <div style={{ fontSize: fluid(20), fontWeight: 600, letterSpacing: "-0.01em", fontVariantNumeric: "tabular-nums", marginTop: fluid(3), color: k.color }}>
+                {k.value}
+                {k.note && (
+                  <span style={{ marginLeft: fluid(6), fontSize: fluid(9.5), fontWeight: 600, letterSpacing: 0, color: "var(--accent)", background: "var(--accent-soft)", padding: `${fluid(2)} ${fluid(6)}`, borderRadius: 999, whiteSpace: "nowrap", verticalAlign: "middle" }}>
+                    {k.note}
+                  </span>
+                )}
+              </div>
+              <div style={{ fontSize: fluid(10.5), color: "var(--fg-subtle)", marginTop: fluid(1) }}>{k.sub}</div>
             </div>
           ))}
         </div>
@@ -701,13 +765,13 @@ export function BudgetView() {
         <div style={{ display: "flex", flexDirection: "column", gap: fluid(12), minWidth: 0, minHeight: 0 }}>
           <div style={{ background: "var(--bg-elev)", border: "1px solid var(--line)", borderRadius: fluid(12), padding: fluid(16), boxShadow: "var(--shadow-sm)", display: "flex", alignItems: "center", gap: fluid(22), flex: "0 0 auto" }}>
             <SpendingPie
-              expenses={monthExpensesForPie}
+              expenses={expensesForPie}
               categories={categories}
               layout="row"
               fill={false}
               sizePx={Math.round(190 * s)}
               limit={totalBudget > 0 ? totalBudget : undefined}
-              budgets={budgets}
+              budgets={scopedBudgets}
               centerLabel="gastado"
               onToggleHidden={(categoryId) => {
                 const cat = categories.find((c) => c.id === categoryId);
@@ -777,7 +841,7 @@ export function BudgetView() {
             incomeByAccountId={incomeByAccountId}
             onSave={(account, amount) =>
               upsertIncome
-                .mutateAsync({ month: budgetMonth, amount, currency: account.currency, accountId: account.id })
+                .mutateAsync({ month: activeMonth, amount, currency: account.currency, accountId: account.id })
                 .catch((err) => window.alert(err instanceof Error ? err.message : "No se pudo guardar el ingreso"))
             }
           />
@@ -811,7 +875,7 @@ export function BudgetView() {
           )}
 
           <TransfersCard
-            month={budgetMonth}
+            month={activeMonth}
             transfers={transfers}
             accounts={allAccounts}
             pendingByAccount={pendingByAccount}
@@ -835,7 +899,7 @@ export function BudgetView() {
 
       {showTransferModal && (
         <TransferModal
-          defaultDate={`${budgetMonth}-15`}
+          defaultDate={`${activeMonth}-15`}
           accounts={allAccounts}
           goals={activeGoals}
           onClose={() => setShowTransferModal(false)}
@@ -844,7 +908,7 @@ export function BudgetView() {
 
       {goalTransfer && (
         <TransferModal
-          defaultDate={`${budgetMonth}-15`}
+          defaultDate={`${activeMonth}-15`}
           accounts={allAccounts}
           goals={activeGoals}
           initialKind="savings"
@@ -855,7 +919,7 @@ export function BudgetView() {
             // Una transferencia real puede cubrir varios goals de la misma cuenta —
             // se registra el aporte de cada uno para el progreso individual.
             for (const { goal, target } of goalTransfer.goals) {
-              upsertContribution.mutateAsync({ goalId: goal.id, month: budgetMonth, amount: target }).catch((err) =>
+              upsertContribution.mutateAsync({ goalId: goal.id, month: activeMonth, amount: target }).catch((err) =>
                 window.alert(err instanceof Error ? err.message : "No se pudo registrar el aporte"),
               );
             }

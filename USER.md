@@ -32,6 +32,7 @@ tabla es priorizar y dar el diseño; el codigo lo hace Claude cuando se lo pido.
 | [#20](https://github.com/AgustinPrietoValdez/plan/issues/20) | Plan semanal/Listas: no se ven en el celu | CERRADO 2026-07-04 | Nada |
 | [#22](https://github.com/AgustinPrietoValdez/plan/issues/22) | Manejo de errores: mutaciones fire-and-forget sin feedback visible en el resto de la app | CERRADO 2026-07-12 | Nada (commit f1bd659) |
 | [#23](https://github.com/AgustinPrietoValdez/plan/issues/23) | Bugs del barrido general (Finanzas/Compras/Cafe): 8 casos, afectan logica financiera/stock | ABIERTO | **Revisar los 8 casos y decidir** cuales priorizar/como resolver cada uno (son decisiones de producto) |
+| (sin issue) | Despensa v0.16.0: ingredientes a granel + gasto conectado a ingredientes (stock, comercio, historial de precios) + presupuestos semanales | IMPLEMENTADO 2026-08-01, falta tu OK | **Probar en vivo.** Cambian dos habitos: tildar la lista YA NO suma stock (entra solo por el gasto) y "Cerrar lista" no existe mas. Sin commit todavia |
 | [#24](https://github.com/AgustinPrietoValdez/plan/issues/24) | Pi brew capture: brews no aparecen en la app (sospecha: sesion de Supabase muerta en el Pi) | ABIERTO | **Verificar en el Pi real** (journalctl, session.json, si hace falta `python login.py` de nuevo) - el fix de logging de este commit es solo observabilidad, no repara la sesion muerta si ya esta muerta |
 
 ## Como marcar un issue como resuelto (asi Claude se entera)

@@ -27,6 +27,7 @@ import {
   type RecipeIngredientCreate, type RecipeIngredientPatch,
   type SavedListCreate, type SavedListPatch,
   type MealPlanEntryCreate, type MealPlanEntryPatch,
+  type MerchantCreate, type MerchantPatch,
   type InventoryCreate, type InventoryPatch,
   type MealLogCreate,
   type ComprasSettingsUpsert,
@@ -47,6 +48,7 @@ const KEYS = {
   projects: ["projects"] as const,
   categories: ["categories"] as const,
   expenseCategories: ["expense_categories"] as const,
+  merchants: ["merchants"] as const,
   expenses: ["expenses"] as const,
   expenseLineItems: ["expense_line_items"] as const,
   budgets: ["budgets"] as const,
@@ -308,6 +310,10 @@ export function useDeleteExpense() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: KEYS.expenses });
       qc.invalidateQueries({ queryKey: KEYS.accounts });
+      // Borrar un gasto arrastra sus lineas, y cada linea con addToStock
+      // descuenta su lote de la despensa (ver applyLineStockDelta en repo/local).
+      qc.invalidateQueries({ queryKey: KEYS.expenseLineItems });
+      qc.invalidateQueries({ queryKey: KEYS.inventory });
     },
   });
 }
@@ -321,7 +327,11 @@ export function useCreateExpenseLineItem() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: ExpenseLineItemCreate) => repo.createExpenseLineItem(input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.expenseLineItems }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEYS.expenseLineItems });
+      // Una linea con addToStock crea/ajusta un lote: la despensa cambio.
+      qc.invalidateQueries({ queryKey: KEYS.inventory });
+    },
   });
 }
 
@@ -330,7 +340,10 @@ export function usePatchExpenseLineItem() {
   return useMutation({
     mutationFn: ({ id, patch }: { id: string; patch: ExpenseLineItemPatch }) =>
       repo.patchExpenseLineItem(id, patch),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.expenseLineItems }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEYS.expenseLineItems });
+      qc.invalidateQueries({ queryKey: KEYS.inventory });
+    },
   });
 }
 
@@ -338,7 +351,10 @@ export function useDeleteExpenseLineItem() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => repo.deleteExpenseLineItem(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.expenseLineItems }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEYS.expenseLineItems });
+      qc.invalidateQueries({ queryKey: KEYS.inventory });
+    },
   });
 }
 
@@ -996,6 +1012,35 @@ export function useDeleteCoffeeBean() {
   return useMutation({
     mutationFn: (id: string) => repo.deleteCoffeeBean(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.coffeeBeans }),
+  });
+}
+
+export function useMerchants() {
+  return useQuery({ queryKey: KEYS.merchants, queryFn: () => repo.listMerchants() });
+}
+
+export function useCreateMerchant() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: MerchantCreate) => repo.createMerchant(input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.merchants }),
+  });
+}
+
+export function usePatchMerchant() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: MerchantPatch }) =>
+      repo.patchMerchant(id, patch),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.merchants }),
+  });
+}
+
+export function useDeleteMerchant() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => repo.deleteMerchant(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.merchants }),
   });
 }
 
