@@ -74,14 +74,68 @@ class MainActivity : TauriActivity() {
         }
 
         instance = this
+
+        // Tap del widget con la app CERRADA: el intent viene en onCreate.
+        captureWidgetRoute(intent)
     }
 
     private external fun nativeInit()
+
+    /** Tap del widget con la app YA ABIERTA: launchMode=singleTask hace que
+     *  Android la traiga al frente SIN remontar la Activity, así que el intent
+     *  llega por acá y no por onCreate. Hacen falta los dos caminos. */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        captureWidgetRoute(intent)
+    }
 
     override fun onDestroy() {
         if (instance === this) instance = null
         super.onDestroy()
     }
+
+    // ── Widget "próximo evento" (ver NextEventWidget.kt) ──────────────────
+
+    /** Ruta pendiente pedida por un tap del widget, en JSON, o "" si no hay.
+     *  El frontend la retira (y la consume) vía el comando Tauri
+     *  `take_pending_mobile_route` -> jni_str("takePendingRoute"). */
+    @Volatile private var pendingRouteJson: String = ""
+
+    /**
+     * Traduce el intent del widget a la ruta que entiende el store del frontend
+     * (`MobileRoute` en src/lib/store.ts):
+     *   con evento  -> {"tab":"plan","openEventId":"<uuid>"}
+     *   sin evento  -> {"tab":"plan"}
+     * En los dos casos el tab es "plan" — es lo que decidió el usuario.
+     */
+    private fun captureWidgetRoute(intent: Intent?) {
+        val i = intent ?: return
+        if (!i.getBooleanExtra(NextEventWidget.EXTRA_FROM_WIDGET, false)) return
+        val eventId = i.getStringExtra(NextEventWidget.EXTRA_OPEN_EVENT_ID)
+        pendingRouteJson = if (eventId != null && eventId.isNotEmpty()) {
+            val esc = eventId.replace("\\", "\\\\").replace("\"", "\\\"")
+            """{"tab":"plan","openEventId":"$esc"}"""
+        } else {
+            """{"tab":"plan"}"""
+        }
+        // Consumir los extras: si Android recrea la Activity (rotación, cambio
+        // de tema) reentrega el MISMO intent y volveríamos a empujar la ruta,
+        // pisando la navegación que el usuario ya hizo.
+        i.removeExtra(NextEventWidget.EXTRA_FROM_WIDGET)
+        i.removeExtra(NextEventWidget.EXTRA_OPEN_EVENT_ID)
+    }
+
+    /** Llamado desde Rust vía JNI. Devuelve la ruta pendiente y la consume. */
+    fun takePendingRoute(): String {
+        val r = pendingRouteJson
+        pendingRouteJson = ""
+        return r
+    }
+
+    /** Llamado desde Rust vía JNI. json: ver NextEventWidget.writeSnapshot. */
+    fun updateWidgetSnapshot(json: String): Boolean =
+        NextEventWidget.writeSnapshot(this, json)
 
     // ── Notification settings (called from Rust via JNI) ─────────────────
     fun requestNotificationsOrOpenSettings() {

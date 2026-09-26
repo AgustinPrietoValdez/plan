@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  updatePeriodMillis: 1800000 = 30 min, que es el PISO real que respeta Android
+  (valores menores se redondean hacia arriba en silencio). Es solo red de
+  seguridad: el refresco que importa lo dispara la app al escribir el snapshot y
+  EventAlarmReceiver al sonar una alarma exacta de evento.
+
+  targetCellWidth/Height, previewLayout y description son atributos de API 31+;
+  en API 26..30 Android los ignora y usa minWidth/minHeight + previewImage.
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="180dp"
+    android:minHeight="70dp"
+    android:minResizeWidth="110dp"
+    android:minResizeHeight="70dp"
+    android:targetCellWidth="3"
+    android:targetCellHeight="1"
+    android:updatePeriodMillis="1800000"
+    android:initialLayout="@layout/widget_next_event"
+    android:previewLayout="@layout/widget_next_event_preview"
+    android:previewImage="@mipmap/ic_launcher"
+    android:description="@string/widget_description"
+    android:resizeMode="horizontal|vertical"
+    android:widgetCategory="home_screen" />

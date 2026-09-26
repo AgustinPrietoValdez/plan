@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Tema oscuro del widget.
+
+  OJO: src/styles/tokens.css HOY NO TIENE tema oscuro (la app es solo clara).
+  Esta paleta está DERIVADA invirtiendo la escala de los tokens claros y
+  levantando el accent para que contraste sobre fondo oscuro. Si el usuario
+  define tokens oscuros reales en la app, hay que reemplazar estos valores.
+-->
+<resources>
+    <color name="widget_bg">#FF171613</color>
+    <color name="widget_fg">#FFF2EFE9</color>
+    <color name="widget_muted">#FFA8A29A</color>
+    <color name="widget_accent">#FF93A4F5</color>
+    <color name="widget_line">#FF2E2C28</color>
+</resources>

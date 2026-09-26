@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Widget "próximo evento". Un solo layout con los dos estados; NextEventWidget
+  prende uno y apaga el otro (RemoteViews no puede inflar layouts distintos por
+  estado sin recrear la vista entera).
+  Colores: res/values/widget_colors.xml (+ values-night para tema oscuro).
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center_vertical"
+    android:background="@drawable/widget_background"
+    android:padding="14dp">
+
+    <!-- Estado: hay próximo evento -->
+    <LinearLayout
+        android:id="@+id/widget_state_event"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/widget_when"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:textColor="@color/widget_accent"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:text="@string/widget_when_placeholder" />
+
+        <TextView
+            android:id="@+id/widget_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:textSize="17sp"
+            android:textStyle="bold"
+            android:textColor="@color/widget_fg"
+            android:maxLines="2"
+            android:ellipsize="end"
+            android:text="@string/widget_untitled_event" />
+
+        <TextView
+            android:id="@+id/widget_sub"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="3dp"
+            android:textSize="12sp"
+            android:textColor="@color/widget_muted"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:text="@string/widget_sub_placeholder" />
+    </LinearLayout>
+
+    <!-- Estado: no hay próximo evento -->
+    <LinearLayout
+        android:id="@+id/widget_state_empty"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:textColor="@color/widget_fg"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:text="@string/widget_empty_title" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="3dp"
+            android:textSize="12sp"
+            android:textColor="@color/widget_muted"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:text="@string/widget_empty_sub" />
+    </LinearLayout>
+</LinearLayout>

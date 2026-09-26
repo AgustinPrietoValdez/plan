@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Radio del fondo del widget. Android 12+ pide usar el radio del SISTEMA
+  (@android:dimen/system_app_widget_background_radius) para que el widget calce
+  con el resto de la pantalla de inicio; ese recurso existe recién en API 31,
+  así que acá va el fallback para API 26..30 y en values-v31 el del sistema.
+-->
+<resources>
+    <dimen name="widget_background_radius">16dp</dimen>
+</resources>

@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Schedule } from "@tauri-apps/plugin-notification";
 import { useEvents } from "./queries";
-import { fromYmd } from "./date";
+import { fromYmd, todayYmd, ymd, addDays, MONTH_SHORT_ES } from "./date";
+import { useApp, type MobileRoute } from "./store";
 
 /** Permiso real (Android WebView miente con window.Notification). */
 async function realIsPermissionGranted(): Promise<boolean> {
@@ -15,6 +16,106 @@ async function realIsPermissionGranted(): Promise<boolean> {
 // cancelamos ESE rango, asi los dos sistemas no se pisan.
 const EVENT_ID_BASE = 1000;
 const EVENT_ID_MAX = 4000; // hasta 3000 eventos futuros programados
+
+const isAndroid = () => /android/i.test(navigator.userAgent);
+
+// ─── Widget de pantalla de inicio: "próximo evento" ──────────────────────────
+//
+// El widget corre en el proceso del LAUNCHER: no hay webview, ni React, ni
+// TanStack Query, ni lectura razonable de calendar.db (WAL, un solo escritor).
+// Así que el próximo evento lo calcula ACÁ y se le deja escrito un snapshot:
+//   snapshot -> invoke("update_widget_snapshot")
+//            -> lib.rs -> JNI -> MainActivity.updateWidgetSnapshot
+//            -> NextEventWidget.writeSnapshot (SharedPreferences) + repintar
+// El widget solo PINTA: no conoce el esquema ni calcula nada.
+
+interface WidgetSnapshot {
+  hasEvent: boolean;
+  eventId?: string;
+  title?: string;
+  /** "Hoy" | "Mañana" | "22 ago" — ya formateado; Kotlin no localiza nada. */
+  dayLabel?: string;
+  /** "14:30" */
+  timeLabel?: string;
+  location?: string;
+  /** epoch ms del inicio; el widget solo lo usa para el "falta N". */
+  startMs?: number;
+}
+
+function dayLabelFor(day: string): string {
+  const today = todayYmd();
+  if (day === today) return "Hoy";
+  if (day === ymd(addDays(fromYmd(today), 1))) return "Mañana";
+  const d = fromYmd(day);
+  return `${d.getDate()} ${MONTH_SHORT_ES[d.getMonth()]}`;
+}
+
+/** Empuja a nativo el próximo evento (o el estado vacío). Solo Android. */
+async function pushWidgetSnapshot(snapshot: WidgetSnapshot) {
+  if (!isAndroid()) return;
+  try {
+    await invoke("update_widget_snapshot", { payload: JSON.stringify(snapshot) });
+  } catch {
+    /* el widget no es crítico: si falla, se repinta en el próximo push */
+  }
+}
+
+// ─── Tap del widget -> ruta de la app ────────────────────────────────────────
+//
+// Modelo PULL: Kotlin deja la ruta pendiente en MainActivity y el frontend la
+// retira. No hay push porque no existe un AppHandle global desde el que Kotlin
+// pueda emitir un evento Tauri.
+//
+// Preguntamos al montar (app abierta desde cero por el tap) y cada vez que la
+// ventana vuelve al foco (app YA abierta que Android trajo al frente por
+// onNewIntent, sin remontar nada).
+
+/** Retira la ruta pendiente de nativo y la empuja al store. */
+async function drainPendingNativeRoute() {
+  if (!isAndroid()) return;
+  let raw = "";
+  try {
+    raw = (await invoke<string>("take_pending_mobile_route")) ?? "";
+  } catch {
+    return;
+  }
+  if (!raw) return;
+  let route: MobileRoute;
+  try {
+    const parsed = JSON.parse(raw) as Partial<MobileRoute>;
+    if (!parsed || parsed.tab == null) return;
+    route = { tab: parsed.tab, ...(parsed.openEventId ? { openEventId: parsed.openEventId } : {}) };
+  } catch {
+    return;
+  }
+  // PUNTO DE ENTRADA ÚNICO documentado en lib/store.ts. La shell mueve el tab;
+  // si la ruta trae `openEventId` queda PARQUEADA para la pantalla destino.
+  //
+  // TODO(1c): la pantalla de detalle de evento en mobile TODAVÍA NO EXISTE.
+  // Hasta que exista, un tap sobre un evento abre el tab Plan y la ruta queda
+  // parqueada en el store sin que nadie la consuma. El widget ya entrega el
+  // `eventId` correcto: falta que 1c lea `pendingMobileRoute`, abra el evento y
+  // llame `consumeMobileRoute()`.
+  useApp.getState().requestMobileRoute(route);
+}
+
+/** Escucha los taps del widget de Android. Se monta junto con las
+ *  notificaciones de eventos para no tocar la shell (es de otro agente). */
+function useAndroidWidgetRoute() {
+  useEffect(() => {
+    if (!isAndroid()) return;
+    void drainPendingNativeRoute();
+    const onWake = () => {
+      if (document.visibilityState === "visible") void drainPendingNativeRoute();
+    };
+    document.addEventListener("visibilitychange", onWake);
+    window.addEventListener("focus", onWake);
+    return () => {
+      document.removeEventListener("visibilitychange", onWake);
+      window.removeEventListener("focus", onWake);
+    };
+  }, []);
+}
 
 /** Programa una notificacion local del SO por cada evento futuro con hora y
  *  notifyMinutesBefore. Funciona en desktop (Windows) y, cuando el firing
@@ -43,8 +144,58 @@ export function useEventNotifications() {
     [timed],
   );
 
+  // ── Snapshot del widget ────────────────────────────────────────────────
+  //
+  // OJO: el widget NO usa `timed`. `timed` exige `notifyMinutesBefore != null`
+  // porque son los eventos que llevan notificación; un evento SIN aviso sigue
+  // siendo el próximo evento y el widget lo tiene que mostrar.
+  //
+  // DECISIÓN DE IMPLEMENTACIÓN (pendiente de confirmar con el usuario): entran
+  // solo eventos CON hora de inicio. Los de día completo (startTime == null) no
+  // tienen hora que mostrar, y el widget muestra hora. Si el usuario los quiere,
+  // hay que definir cómo se pintan y cómo compiten con un evento con hora.
+  const nextEvent = useMemo(() => {
+    const now = Date.now();
+    let best: { e: (typeof timed)[number]; ms: number } | null = null;
+    for (const e of events ?? []) {
+      if (e.deletedAt || !e.startTime) continue;
+      const [h, m] = e.startTime.split(":").map(Number);
+      if (!Number.isFinite(h) || !Number.isFinite(m)) continue;
+      const d = fromYmd(e.day);
+      d.setHours(h, m, 0, 0);
+      const ms = d.getTime();
+      if (ms <= now) continue;
+      if (!best || ms < best.ms) best = { e, ms };
+    }
+    return best;
+  }, [events]);
+
+  const snapshot = useMemo<WidgetSnapshot>(() => {
+    if (!nextEvent) return { hasEvent: false };
+    const { e, ms } = nextEvent;
+    return {
+      hasEvent: true,
+      eventId: e.id,
+      title: e.title || "Evento",
+      dayLabel: dayLabelFor(e.day),
+      timeLabel: e.startTime ?? "",
+      location: e.location ?? "",
+      startMs: ms,
+    };
+  }, [nextEvent]);
+
+  const snapshotKey = useMemo(() => JSON.stringify(snapshot), [snapshot]);
+
+  // Se empuja apenas cambia (y en el primer render con datos). No depende del
+  // permiso de notificaciones: el widget no postea nada.
+  useEffect(() => {
+    if (!eventsQ.isSuccess) return;
+    void pushWidgetSnapshot(JSON.parse(snapshotKey) as WidgetSnapshot);
+  }, [snapshotKey, eventsQ.isSuccess]);
+
+  useAndroidWidgetRoute();
+
   const schedule = useCallback(async () => {
-    const isAndroid = /android/i.test(navigator.userAgent);
     const now = Date.now();
 
     // Calcular trigger de cada evento futuro con hora.
@@ -65,7 +216,7 @@ export function useEventNotifications() {
       due.push({ id: e.id, when: when.getTime(), title: e.title || "Evento", body });
     }
 
-    if (isAndroid) {
+    if (isAndroid()) {
       // Android: AlarmManager exacto nativo (el plugin Tauri es inexacto en Doze).
       // Trackeamos los ids programados en localStorage para cancelar los borrados.
       const KEY = "eventNotifIds";

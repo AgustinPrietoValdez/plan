@@ -1,4 +1,18 @@
 <resources>
     <string name="app_name">Plan</string>
     <string name="main_activity_title">Plan</string>
+
+    <!-- Widget "próximo evento" -->
+    <string name="widget_name">Próximo evento</string>
+    <string name="widget_description">Muestra el próximo evento del calendario.</string>
+    <string name="widget_empty_title">Sin eventos próximos</string>
+    <string name="widget_empty_sub">Tocá para abrir Plan</string>
+    <string name="widget_untitled_event">Evento</string>
+    <!-- Placeholders del layout (se reemplazan en runtime desde el snapshot) -->
+    <string name="widget_when_placeholder">Hoy</string>
+    <string name="widget_sub_placeholder"></string>
+    <!-- Texto de muestra del selector de widgets -->
+    <string name="widget_preview_when">Hoy · 14:30</string>
+    <string name="widget_preview_title">Dentista</string>
+    <string name="widget_preview_sub">en 25 min · Clínica</string>
 </resources>

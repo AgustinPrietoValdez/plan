@@ -176,6 +176,38 @@ async fn cancel_event_notification(id: String) -> Result<bool, String> {
     }
 }
 
+// ── Widget de pantalla de inicio: "proximo evento" ───────────────────────────
+//
+// El widget corre en el proceso del launcher: no hay webview ni acceso a la
+// base. La app le deja escrito un SNAPSHOT y el widget solo lo pinta.
+// Ver src-tauri/gen/android/app/src/main/java/com/agusp/calendarapp/NextEventWidget.kt
+
+/// payload: JSON con el proximo evento (o {"hasEvent":false}). Lo arma
+/// src/lib/useEventNotifications.ts. Escribir el snapshot ademas repinta el
+/// widget en el acto.
+#[tauri::command]
+async fn update_widget_snapshot(payload: String) -> Result<bool, String> {
+    #[cfg(target_os = "android")]
+    return jni_bool_s("updateWidgetSnapshot", &payload);
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = payload;
+        Ok(false) // no hay widget fuera de Android
+    }
+}
+
+/// Devuelve (y consume) la ruta pedida por un tap del widget, como JSON
+/// `MobileRoute` — p.ej. {"tab":"plan","openEventId":"..."} — o "" si no hay.
+/// Modelo PULL: no existe un AppHandle global desde el que Kotlin pueda emitir
+/// un evento Tauri, asi que el frontend pregunta al montar y al volver al foco.
+#[tauri::command]
+async fn take_pending_mobile_route() -> Result<String, String> {
+    #[cfg(target_os = "android")]
+    return jni_str("takePendingRoute");
+    #[cfg(not(target_os = "android"))]
+    Ok(String::new())
+}
+
 #[tauri::command]
 async fn ble_check_permissions() -> Result<bool, String> {
     #[cfg(target_os = "android")]
@@ -825,6 +857,8 @@ pub fn run() {
             launch_coffee_question,
             schedule_event_notification,
             cancel_event_notification,
+            update_widget_snapshot,
+            take_pending_mobile_route,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

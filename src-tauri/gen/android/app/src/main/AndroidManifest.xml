@@ -42,6 +42,21 @@
 
         <receiver android:name=".EventAlarmReceiver" android:exported="false" />
 
+        <!-- Widget de pantalla de inicio: "próximo evento".
+             exported=false alcanza: el sistema le manda APPWIDGET_UPDATE por
+             componente explícito, no por broadcast implícito. -->
+        <receiver
+            android:name=".NextEventWidget"
+            android:label="@string/widget_name"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/next_event_widget_info" />
+        </receiver>
+
         <provider
           android:name="androidx.core.content.FileProvider"
           android:authorities="${applicationId}.fileprovider"

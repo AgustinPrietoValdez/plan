@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Paleta del widget, traducida a mano desde src/styles/tokens.css (oklch a sRGB).
+  Un widget no puede leer CSS vars, así que esto es una COPIA: si cambian los
+  tokens de la app, hay que actualizar estos hex.
+
+  claro (tokens.css :root)
+    widget_bg      viene del token bg-elev      #ffffff
+    widget_fg      viene del token fg           oklch(0.20 0.01 80)
+    widget_muted   viene del token fg-muted     oklch(0.48 0.01 80)
+    widget_accent  viene del token accent       oklch(0.55 0.16 265)
+    widget_line    viene del token line         oklch(0.92 0.006 80)
+-->
+<resources>
+    <color name="widget_bg">#FFFFFFFF</color>
+    <color name="widget_fg">#FF211E1A</color>
+    <color name="widget_muted">#FF6E6960</color>
+    <color name="widget_accent">#FF4B60D4</color>
+    <color name="widget_line">#FFE9E5DE</color>
+</resources>

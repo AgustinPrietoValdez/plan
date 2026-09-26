@@ -24,6 +24,13 @@ class EventAlarmReceiver : BroadcastReceiver() {
 
         ensureChannel(context)
 
+        // Reusamos ESTA alarma exacta (que la app ya programaba para la
+        // notificación) para repintar el widget: es el único momento fino en el
+        // que Android nos despierta seguro. NO hay un sistema de alarmas
+        // paralelo para el widget. Va ANTES del early-return de permisos: el
+        // widget se refresca aunque las notificaciones estén denegadas.
+        NextEventWidget.refresh(context)
+
         // Android 13+: sin POST_NOTIFICATIONS no se puede postear.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val granted = ContextCompat.checkSelfPermission(
