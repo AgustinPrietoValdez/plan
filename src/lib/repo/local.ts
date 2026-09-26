@@ -212,9 +212,53 @@ async function requireUserId(): Promise<string> {
 const newId = () => crypto.randomUUID();
 const now = () => new Date().toISOString();
 
+/** Fila que YA existe con ese id, INCLUIDAS las borradas lógicamente.
+ *
+ *  `listX`/`getX` filtran `deleted_at IS NULL`, así que una fila borrada es
+ *  invisible para el resto de la API — pero sigue ocupando el PRIMARY KEY. Solo
+ *  hace falta en los `create` con id explícito (instancias de recurrencia): con
+ *  id random el choque es imposible.
+ *
+ *  NO filtra por `user_id` A PROPÓSITO: el PRIMARY KEY de `tasks`/`expenses` es
+ *  `id` solo, así que el `ON CONFLICT(id)` de los creates es GLOBAL. Si la base
+ *  local tiene filas de otra cuenta (el usuario cambió de sesión y la base no se
+ *  borra), un SELECT filtrado por user_id devolvía null, el create creía que la
+ *  fila no existía y el DO UPDATE le pisaba la fila al OTRO usuario dejándole su
+ *  `user_id` viejo. Ahora devolvemos el dueño y el llamador aborta.
+ *
+ *  `table` es un literal del propio módulo, nunca entra texto del usuario. */
+async function priorRowIncludingDeleted(
+  db: Awaited<ReturnType<typeof getDb>>,
+  table: "tasks" | "expenses",
+  id: string,
+): Promise<{ created_at: string; version: number; user_id: string } | null> {
+  const rows = await db.select<{ created_at: string; version: number; user_id: string }[]>(
+    `SELECT created_at, version, user_id FROM ${table} WHERE id = ? LIMIT 1`,
+    [id],
+  );
+  return rows[0] ?? null;
+}
+
+/** Dueño de la fila que ocupa ese id, o null si el id está libre / es nuestro.
+ *  Ver `priorRowIncludingDeleted`. */
+function assertNotOtherUsersRow(
+  prior: { user_id: string } | null,
+  userId: string,
+  table: "tasks" | "expenses",
+  id: string,
+): void {
+  if (prior && prior.user_id !== userId) {
+    throw new Error(
+      `${table}.${id} belongs to another user (${prior.user_id}); refusing to overwrite`,
+    );
+  }
+}
+
 async function enqueue(
   userId: string,
-  op: "insert" | "update" | "delete",
+  /** Ver `OutboxOp` en `lib/sync.ts`. `create` = "crear si no existe, no pisar"
+   *  y es EXCLUSIVO de las instancias de recurrencia con id determinístico. */
+  op: "insert" | "update" | "create" | "delete",
   entity:
     | "tasks"
     | "projects"
@@ -668,8 +712,27 @@ export const localRepo: Repo = {
     const userId = await requireUserId();
     const db = await getDb();
     const ts = now();
+    // ── id explícito (instancias de recurrencia) ────────────────────────────
+    // Con id random nada de esto se ejecuta: `prior` queda null y el INSERT es
+    // el de siempre. Con id explícito la fila puede existir ya:
+    //   · viva   → el create es idempotente, la devolvemos sin escribir nada
+    //              (jamás pisamos datos vivos: el usuario pudo editarla).
+    //   · borrada→ la revivimos (ON CONFLICT de abajo), conservando su
+    //              `created_at` y subiendo `version`, que es lo que espera el
+    //              sync. Sin esto el INSERT choca contra el PRIMARY KEY: pasa
+    //              al completar una recurrente, descompletarla (se borra el
+    //              sucesor) y completarla de nuevo.
+    if (input.id) {
+      const live = await this.getTask(input.id);
+      if (live) return live;
+    }
+    const prior = input.id ? await priorRowIncludingDeleted(db, "tasks", input.id) : null;
+    // El ON CONFLICT(id) de abajo es global (el PK es `id` solo): si el id lo
+    // ocupa una fila de OTRA cuenta que quedó en la base, abortamos en vez de
+    // pisarla. Ver `priorRowIncludingDeleted`.
+    if (input.id) assertNotOtherUsersRow(prior, userId, "tasks", input.id);
     const task: Task = {
-      id: newId(),
+      id: input.id ?? newId(),
       title: input.title,
       projectId: input.projectId,
       categoryId: input.categoryId,
@@ -686,10 +749,10 @@ export const localRepo: Repo = {
       done: false,
       isHabit: input.isHabit ?? false,
       completedAt: null,
-      createdAt: ts,
+      createdAt: prior?.created_at ?? ts,
       updatedAt: ts,
       deletedAt: null,
-      version: 1,
+      version: prior ? prior.version + 1 : 1,
     };
     await db.execute(
       `INSERT INTO tasks
@@ -697,7 +760,19 @@ export const localRepo: Repo = {
          actual_duration, day, due, recurring, recurrence, recurrence_parent_id,
          notes, subtasks, done, is_habit, completed_at, created_at, updated_at,
          deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         title = excluded.title, project_id = excluded.project_id,
+         category_id = excluded.category_id, priority = excluded.priority,
+         duration = excluded.duration, actual_duration = excluded.actual_duration,
+         day = excluded.day, due = excluded.due, recurring = excluded.recurring,
+         recurrence = excluded.recurrence,
+         recurrence_parent_id = excluded.recurrence_parent_id,
+         notes = excluded.notes, subtasks = excluded.subtasks,
+         done = excluded.done, is_habit = excluded.is_habit,
+         completed_at = excluded.completed_at, updated_at = excluded.updated_at,
+         deleted_at = excluded.deleted_at, version = excluded.version
+       WHERE tasks.user_id = excluded.user_id`,
       [
         task.id, userId, task.title, task.projectId, task.categoryId, task.priority,
         task.duration, task.actualDuration, task.day, task.due,
@@ -709,7 +784,16 @@ export const localRepo: Repo = {
         task.deletedAt, task.version,
       ],
     );
-    await enqueue(userId, "insert", "tasks", task.id, taskToWire(task, userId));
+    // Con id explícito la fila puede existir YA en el servidor (la creó el otro
+    // dispositivo, con el mismo id determinístico): `op: "insert"` haría
+    // `.insert()` y rebotaría con violación de PK.
+    //
+    // Tampoco es `op: "update"`: esto NO es una edición del usuario, es una
+    // plantilla recién materializada. Si el otro dispositivo ya creó la
+    // instancia Y el usuario la editó ahí, un upsert ciego borraría esa edición
+    // en el servidor. `op: "create"` = "crear si no existe" (y revivir si el
+    // server la tiene borrada). Ver `applyToServer` en `lib/sync.ts`.
+    await enqueue(userId, input.id ? "create" : "insert", "tasks", task.id, taskToWire(task, userId));
     return task;
   },
 
@@ -1090,8 +1174,44 @@ export const localRepo: Repo = {
     const userId = await requireUserId();
     const db = await getDb();
     const ts = now();
+    // Mismo criterio que `createTask` (ver ahí el porqué largo). Con id
+    // explícito —instancias de gastos recurrentes— el create es idempotente: si
+    // el gasto ya existe vivo se devuelve TAL CUAL, sin volver a tocar el saldo
+    // de la cuenta ni re-evaluar la meta; si existe borrado, se revive.
+    //
+    // SALDO: el INSERT y el `adjustAccountBalance` de abajo NO son una
+    // transacción (el pool de tauri-plugin-sql no garantiza que dos `execute`
+    // caigan en la misma conexión, así que un BEGIN/COMMIT partido en dos
+    // llamadas sería mentira). Si el proceso muere entre los dos, la fila queda
+    // creada y el saldo corto — y este early-return hace que el reintento sea un
+    // no-op, así que la deriva NO se arregla sola acá. Quien la arregla es
+    // `reconcileAccountBalances()`, que recalcula el saldo desde el ledger y
+    // corre una vez por sesión (`useReconcileAccountBalances`, montado tanto en
+    // `App.tsx` como en `components/mobile/MobileApp.tsx`). Ese hook cubre las
+    // dos mitades del corte (fila sin efecto y efecto sin fila), porque no
+    // acumula deltas: recalcula el total. Por eso montarlo en el celular es
+    // parte de este fix y no un extra.
+    //
+    // LÍNEAS Y LOTES: revivir la fila `expenses` NO revive sus
+    // `expense_line_items` ni deshace la reversión de stock que hizo
+    // `deleteExpense`. Es DELIBERADO: antes de los ids determinísticos, borrar
+    // una instancia materializada y dejar que se re-materializara daba una fila
+    // NUEVA (id random) igual de vacía de líneas, así que el revive no cambia lo
+    // que ve el usuario. Y re-aplicar el stock sería peor: el usuario que borra
+    // un gasto para corregir un ingreso de stock equivocado se lo encontraría de
+    // vuelta solo. Las líneas se cargan a mano desde Compras; la materialización
+    // de una recurrente nunca las crea.
+    if (input.id) {
+      const liveRows = await db.select<DbExpenseRow[]>(
+        "SELECT * FROM expenses WHERE id = ? AND user_id = ? AND deleted_at IS NULL LIMIT 1",
+        [input.id, userId],
+      );
+      if (liveRows[0]) return fromDbExpense(liveRows[0]);
+    }
+    const prior = input.id ? await priorRowIncludingDeleted(db, "expenses", input.id) : null;
+    if (input.id) assertNotOtherUsersRow(prior, userId, "expenses", input.id);
     const exp: Expense = {
-      id: newId(),
+      id: input.id ?? newId(),
       name: input.name,
       amount: input.amount,
       currency: input.currency,
@@ -1103,25 +1223,38 @@ export const localRepo: Repo = {
       goalId: input.goalId ?? null,
       recurrence: input.recurrence,
       recurrenceParentId: input.recurrenceParentId,
-      createdAt: ts,
+      createdAt: prior?.created_at ?? ts,
       updatedAt: ts,
       deletedAt: null,
-      version: 1,
+      version: prior ? prior.version + 1 : 1,
     };
     await db.execute(
       `INSERT INTO expenses
         (id, user_id, name, amount, currency, category_id, spent_on, note, merchant_id, account_id, goal_id,
          recurrence, recurrence_parent_id, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         name = excluded.name, amount = excluded.amount, currency = excluded.currency,
+         category_id = excluded.category_id, spent_on = excluded.spent_on,
+         note = excluded.note, merchant_id = excluded.merchant_id,
+         account_id = excluded.account_id, goal_id = excluded.goal_id,
+         recurrence = excluded.recurrence,
+         recurrence_parent_id = excluded.recurrence_parent_id,
+         updated_at = excluded.updated_at, deleted_at = excluded.deleted_at,
+         version = excluded.version
+       WHERE expenses.user_id = excluded.user_id`,
       [
         exp.id, userId, exp.name, exp.amount, exp.currency, exp.categoryId, exp.spentOn,
         exp.note, exp.merchantId, exp.accountId, exp.goalId,
         exp.recurrence ? JSON.stringify(exp.recurrence) : null,
         exp.recurrenceParentId,
-        exp.createdAt, exp.updatedAt, null, 1,
+        exp.createdAt, exp.updatedAt, exp.deletedAt, exp.version,
       ],
     );
-    await enqueue(userId, "insert", "expenses", exp.id, expenseToWire(exp, userId));
+    // Ver `createTask`: con id explícito la fila puede existir ya en el servidor
+    // ⇒ `create` ("crear si no existe", nunca pisar) en vez de `insert` (que
+    // rebotaría por PK) o `update` (que borraría la edición del usuario).
+    await enqueue(userId, input.id ? "create" : "insert", "expenses", exp.id, expenseToWire(exp, userId));
     // Auto-calc: an expense leaves the paying account, converted to the account's currency
     // when it was entered in a different one (e.g. an EUR purchase against a DKK account).
     const effect = await toAccountCurrency(db, userId, exp.accountId, exp.amount, exp.currency);

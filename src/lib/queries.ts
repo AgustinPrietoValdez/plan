@@ -142,15 +142,22 @@ export function useCompleteTask() {
         // before this instance got frozen, and the user is completing it
         // again after relaunch), don't create a second sibling — that would
         // fork the chain into two parallel copies that both keep advancing.
+        // Id ESTABLE por (cadena, día): dos dispositivos que completan/ruedan
+        // la misma cadena el mismo día generan el MISMO id, así que la segunda
+        // escritura pisa a la primera en vez de duplicar la tarea.
+        // Ver `lib/recurrenceInstanceId.ts`.
+        const { recurrenceInstanceId } = await import("./recurrenceInstanceId");
+        const instanceId = recurrenceInstanceId(parentId, nextDay);
         const siblings = await repo.listTasks();
         const alreadyExists = siblings.some(
           (t) =>
-            !t.deletedAt &&
-            t.day === nextDay &&
-            (t.recurrenceParentId ?? t.id) === parentId,
+            t.id === instanceId ||
+            // filas VIEJAS (id random, creadas antes de este cambio)
+            (t.day === nextDay && (t.recurrenceParentId ?? t.id) === parentId),
         );
         if (!alreadyExists) {
           await create.mutateAsync({
+            id: instanceId,
             title: task.title,
             projectId: task.projectId,
             categoryId: task.categoryId,

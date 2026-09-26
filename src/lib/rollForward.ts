@@ -3,6 +3,7 @@ import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type { Task } from "../types";
 import { todayYmd } from "./date";
 import { nextOccurrence } from "./recurrence";
+import { recurrenceInstanceId } from "./recurrenceInstanceId";
 import { repo } from "./repo";
 
 interface RollResult {
@@ -49,12 +50,23 @@ export async function rollForwardRecurringTasks(
       // old instance still carrying the rule (retried next time) — never a
       // dead chain, since the rule would otherwise only ever live on the one
       // row we're about to freeze/delete.
+      // Id ESTABLE por (cadena, día): si el escritorio y el celular ruedan la
+      // misma cadena el mismo día sin haber visto el create del otro, los dos
+      // generan el mismo id y la segunda escritura pisa a la primera en vez de
+      // dejar una tarea duplicada para siempre. Ver `lib/recurrenceInstanceId.ts`.
+      const instanceId = recurrenceInstanceId(parentId, next);
       const siblings = await repo.listTasks();
       const alreadyExists = siblings.some(
-        (s) => !s.deletedAt && s.day === next && (s.recurrenceParentId ?? s.id) === parentId,
+        (s) =>
+          // por id: cubre la fila nueva aunque el usuario la haya movido de día
+          s.id === instanceId ||
+          // por (cadena, día): cubre las filas VIEJAS, creadas con id random
+          // antes de este cambio
+          (s.day === next && (s.recurrenceParentId ?? s.id) === parentId),
       );
       if (!alreadyExists) {
         await repo.createTask({
+          id: instanceId,
           title: t.title,
           projectId: t.projectId,
           categoryId: t.categoryId,

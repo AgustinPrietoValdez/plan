@@ -54,7 +54,16 @@ export type TaskCreate = Pick<
   | "recurrenceParentId"
   | "notes"
   | "subtasks"
-> & { isHabit?: boolean };
+> & {
+  isHabit?: boolean;
+  /** Id explícito, SOLO para filas cuyo id tiene que ser el mismo en todos los
+   *  dispositivos: las instancias de una recurrencia
+   *  (`lib/recurrenceInstanceId.ts`). Si se omite —el caso normal— se genera un
+   *  uuid random como siempre. Ver `createTask` en `repo/local.ts`: con id
+   *  explícito el create es idempotente (si la fila ya existe viva, la
+   *  devuelve; si existe borrada, la revive). */
+  id?: string;
+};
 
 export type TaskPatch = Partial<
   Omit<Task, "id" | "createdAt" | "version">
@@ -85,7 +94,14 @@ export type MerchantPatch = Partial<Omit<Merchant, "id" | "createdAt" | "version
 export type ExpenseCreate = Pick<
   Expense,
   "name" | "amount" | "currency" | "categoryId" | "spentOn" | "note" | "recurrence" | "recurrenceParentId"
-> & { accountId?: string | null; goalId?: string | null; merchantId?: string | null };
+> & {
+  accountId?: string | null;
+  goalId?: string | null;
+  merchantId?: string | null;
+  /** Igual que en `TaskCreate`: id explícito solo para instancias de gastos
+   *  recurrentes (`lib/recurrenceInstanceId.ts`). */
+  id?: string;
+};
 export type ExpensePatch = Partial<Omit<Expense, "id" | "createdAt" | "version">>;
 
 export type ExpenseLineItemCreate = Pick<ExpenseLineItem, "expenseId" | "name" | "quantity" | "unitPrice"> & {

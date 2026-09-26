@@ -40,10 +40,24 @@ type Entity =
   | "expense_line_items"
   | "automations";
 
+/** `op` del outbox. `create` NO es un sinónimo de `insert`:
+ *
+ *   · insert → la fila es nueva y su id es random ⇒ el server no puede tenerla.
+ *   · update → el usuario editó una fila ⇒ su versión GANA contra el server.
+ *   · create → "crear si no existe" (instancias de recurrencia con id estable
+ *              derivado de (cadena, día), `lib/recurrenceInstanceId.ts`). El id
+ *              lo genera igual el otro dispositivo, así que la fila PUEDE
+ *              existir ya en el server, quizá EDITADA por el usuario. Esta
+ *              escritura es una plantilla recién materializada: no tiene
+ *              derecho a pisar nada. Ver `applyToServer`.
+ *   · delete → soft-delete.
+ */
+type OutboxOp = "insert" | "update" | "create" | "delete";
+
 interface OutboxRow {
   id: number;
   user_id: string;
-  op: "insert" | "update" | "delete";
+  op: OutboxOp;
   entity: Entity;
   entity_id: string;
   payload: string | null;
@@ -168,12 +182,53 @@ async function applyToServer(row: OutboxRow): Promise<void> {
     // queued; upsert handles both cases idempotently.
     const { error } = await supabase.from(row.entity).upsert(payload);
     if (error) throw error;
+  } else if (row.op === "create") {
+    // "CREAR SI NO EXISTE", nunca pisar.
+    //
+    // Por qué no `insert`: el id es determinístico, así que el otro dispositivo
+    // pudo haber creado ya la misma fila ⇒ `insert` rebotaría por PK y la fila
+    // quedaría trabada en el outbox (5 intentos y se tira).
+    //
+    // Por qué no `upsert` a secas: eso fue el bug. El dispositivo A crea la
+    // instancia, el usuario la EDITA (título/notas/subtareas) y sincroniza; B,
+    // offline, rueda el mismo día, su guard local no ve nada y encola la
+    // PLANTILLA con el mismo id. Un upsert ciego pisa la edición del usuario en
+    // el server y se la devuelve rota a A en el próximo pull, con `version`
+    // retrocediendo. Un duplicado visible es molesto; esto era PÉRDIDA DE DATOS
+    // silenciosa, que es peor que el bug que veníamos a arreglar.
+    if (!payload) throw new Error("create without payload");
+    // 1) insertar solo si no existe: `ignoreDuplicates` ⇒ ON CONFLICT DO
+    //    NOTHING en Postgres (Prefer: resolution=ignore-duplicates). El
+    //    `.select()` nos dice si REALMENTE insertamos: viene vacío si ya estaba.
+    const { data, error } = await supabase
+      .from(row.entity)
+      .upsert(payload, { onConflict: "id", ignoreDuplicates: true })
+      .select("id");
+    if (error) throw error;
+    if (data && data.length > 0) return; // la creamos nosotros: listo.
+    // 2) Ya existía. Si está VIVA no se toca (gana el server; el próximo pull
+    //    trae su contenido y el local converge). Si está BORRADA la revivimos:
+    //    es el caso de completar → descompletar (borra el sucesor) → completar
+    //    de nuevo, y sin esto la instancia quedaría muerta en el server y el
+    //    pull la volvería a borrar localmente. El filtro
+    //    `deleted_at IS NOT NULL` hace la condición del lado del SERVIDOR, así
+    //    que no hay ventana de lectura-y-después-escritura.
+    const { error: reviveError } = await supabase
+      .from(row.entity)
+      .update(payload)
+      .eq("id", row.entity_id)
+      .not("deleted_at", "is", null);
+    if (reviveError) throw reviveError;
   } else if (row.op === "delete") {
     const { error } = await supabase
       .from(row.entity)
       .update({ deleted_at: new Date().toISOString() })
       .eq("id", row.entity_id);
     if (error) throw error;
+  } else {
+    // Nunca debería pasar: sin este else, un `op` desconocido se trataba como
+    // éxito y drainOutbox borraba la fila ⇒ la mutación se perdía en silencio.
+    throw new Error(`Unknown outbox op: ${String(row.op)}`);
   }
 }
 

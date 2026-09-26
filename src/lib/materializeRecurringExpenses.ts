@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useCreateExpense, useExpenses, usePatchExpense } from "./queries";
 import { nextOccurrence } from "./recurrence";
+import { recurrenceInstanceId } from "./recurrenceInstanceId";
 import { useToday } from "./useToday";
 
 /** For each active recurring expense (latest in chain with rule != null),
@@ -63,7 +64,12 @@ export function useMaterializeRecurringExpenses(userId: string | undefined) {
           // prev) — created first so an interruption between the two never
           // loses the rule (same fix as the habit chain bug: the rule only
           // ever lives on one active instance).
+          // Id ESTABLE por (cadena, día): sin esto, si el escritorio y el
+          // celular materializan el mismo día antes de ver el create del otro,
+          // el gasto queda DUPLICADO para siempre (contado dos veces en el
+          // donut y en el presupuesto). Ver `lib/recurrenceInstanceId.ts`.
           await create.mutateAsync({
+            id: recurrenceInstanceId(root, next),
             name: mostRecent.name,
             amount: mostRecent.amount,
             currency: mostRecent.currency,

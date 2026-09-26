@@ -37,6 +37,7 @@ Uso:
 
 import argparse
 import calendar
+import hashlib
 import json
 import os
 import sqlite3
@@ -449,23 +450,69 @@ def upsert_habit_log(con, user_id, task_id, day, done):
     )
 
 
+def recurrence_instance_id(root_id, day):
+    """MISMO id que src/lib/recurrenceInstanceId.ts. Es un CONTRATO DE DATOS: si
+    esta funcion y la de TS dejan de coincidir, vuelven los duplicados (esta CLI
+    es un tercer escritor sobre la misma base que el escritorio y el celular).
+
+    UUID v8 con los primeros 128 bits de SHA-256("plan:recurrence-instance:
+    <root>:<dia>"); 6 de esos bits se pisan con version+variante => 122 bits de
+    hash. Verificado contra el modulo TS en el harness de tests."""
+    h = hashlib.sha256(
+        f"plan:recurrence-instance:{root_id}:{day}".encode("utf-8")
+    ).hexdigest()[:32]
+    variant = format((int(h[16], 16) & 0x3) | 0x8, "x")
+    return f"{h[0:8]}-{h[8:12]}-8{h[13:16]}-{variant}{h[17:20]}-{h[20:32]}"
+
+
 def create_next_instance(con, base, day, rule):
-    """Crea la proxima instancia recurrente (INSERT + outbox 'insert'), como createTask()."""
+    """Crea la proxima instancia recurrente (INSERT + outbox), como createTask().
+
+    El id NO es random: sale de (raiz de la cadena, dia). Con uuid4 esta CLI
+    creaba una fila distinta de la que crea la app para la MISMA ocurrencia, y
+    como el sync mergea por id y no hay UNIQUE sobre (parent, dia), la tarea
+    quedaba duplicada para siempre. Mismo criterio que `createTask` en
+    src/lib/repo/local.ts: si la fila ya existe viva el create es un no-op, si
+    existe borrada se revive, y al outbox va op='create' ("crear si no existe",
+    nunca pisar lo que el usuario haya editado en otro dispositivo)."""
     ts = now_iso()
-    tid = str(uuid.uuid4())
     parent = base["recurrence_parent_id"] or base["id"]
+    tid = recurrence_instance_id(parent, day)
+    # El PRIMARY KEY es `id` solo: el choque es global, no por usuario.
+    prior = con.execute(
+        "SELECT user_id, created_at, version, deleted_at FROM tasks WHERE id = ? LIMIT 1", (tid,)
+    ).fetchone()
+    if prior is not None:
+        if prior["user_id"] != base["user_id"]:
+            raise SystemExit(f"tasks.{tid} es de otro usuario; no lo piso.")
+        if prior["deleted_at"] is None:
+            return tid  # ya existe viva: create idempotente
     subs = [{**s, "done": False} for s in parse_subtasks(base["subtasks"])]
     is_habit = bool(base["is_habit"])
+    created = prior["created_at"] if prior is not None else ts
+    ver = prior["version"] + 1 if prior is not None else 1
     con.execute(
         """INSERT INTO tasks
             (id, user_id, title, project_id, category_id, priority, duration,
              actual_duration, day, due, recurring, recurrence, recurrence_parent_id,
              notes, subtasks, done, is_habit, completed_at, created_at, updated_at,
              deleted_at, version)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+           ON CONFLICT(id) DO UPDATE SET
+             title = excluded.title, project_id = excluded.project_id,
+             category_id = excluded.category_id, priority = excluded.priority,
+             duration = excluded.duration, actual_duration = excluded.actual_duration,
+             day = excluded.day, due = excluded.due, recurring = excluded.recurring,
+             recurrence = excluded.recurrence,
+             recurrence_parent_id = excluded.recurrence_parent_id,
+             notes = excluded.notes, subtasks = excluded.subtasks,
+             done = excluded.done, is_habit = excluded.is_habit,
+             completed_at = excluded.completed_at, updated_at = excluded.updated_at,
+             deleted_at = excluded.deleted_at, version = excluded.version
+           WHERE tasks.user_id = excluded.user_id""",
         [tid, base["user_id"], base["title"], base["project_id"], base["category_id"],
          base["priority"], base["duration"], None, day, None, 1, json.dumps(rule), parent,
-         base["notes"], json.dumps(subs), 0, 1 if is_habit else 0, None, ts, ts, None, 1],
+         base["notes"], json.dumps(subs), 0, 1 if is_habit else 0, None, created, ts, None, ver],
     )
     wire = {
         "id": tid, "user_id": base["user_id"], "title": base["title"],
@@ -474,11 +521,11 @@ def create_next_instance(con, base, day, rule):
         "day": day, "due": None, "recurring": True, "recurrence": rule,
         "recurrence_parent_id": parent, "notes": base["notes"], "subtasks": subs,
         "done": False, "is_habit": is_habit, "completed_at": None,
-        "created_at": ts, "updated_at": ts, "deleted_at": None, "version": 1,
+        "created_at": created, "updated_at": ts, "deleted_at": None, "version": ver,
     }
     con.execute(
         "INSERT INTO outbox (user_id, op, entity, entity_id, payload, created_at) "
-        "VALUES (?, 'insert', 'tasks', ?, ?, ?)",
+        "VALUES (?, 'create', 'tasks', ?, ?, ?)",
         (base["user_id"], tid, json.dumps(wire), ts),
     )
     return tid
