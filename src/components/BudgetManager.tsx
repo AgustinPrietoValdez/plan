@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import { budgetAmountFor, type BudgetScope } from "../lib/budgetPeriod";
+import { budgetsInScope } from "../lib/spending";
 import { colorsForHue } from "../lib/categoryColor";
 import { weeksInMonth } from "../lib/date";
 import { CURRENCY, fmtMoney, parseMoney } from "../lib/money";
 import {
   useBudgets,
+  useDeletedExpenseCategories,
   useExpenseCategories,
   useUpsertBudget,
   useDeleteBudget,
@@ -54,6 +56,14 @@ export function BudgetManager({ onClose }: Props) {
   // está cargando, y este valor es dependencia del efecto que siembra los
   // drafts — sin esto ese efecto se dispara en loop hasta que llegan los datos.
   const budgets = useMemo(() => budgetsQ.data ?? [], [budgetsQ.data]);
+  // Las categorías BORRADAS no tienen fila acá (no vienen en `categoriesQ`), pero
+  // su presupuesto sigue existiendo: su fecha de borrado es lo que decide si
+  // todavía suma al total de este mes — ver el `useMemo` del total.
+  const deletedCategoriesQ = useDeletedExpenseCategories();
+  const deletedCategories = useMemo(
+    () => deletedCategoriesQ.data ?? [],
+    [deletedCategoriesQ.data],
+  );
 
   // local draft amount per category (string for input control)
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -139,15 +149,22 @@ export function BudgetManager({ onClose }: Props) {
       if (period === "weekly") anyWeekly = true;
       total += budgetAmountFor({ monthlyAmount: parsed, period }, monthScope);
     }
-    // Presupuestos de categorías archivadas: no tienen fila acá, pero siguen
-    // existiendo y contando, así que no pueden desaparecer del total.
-    for (const b of budgets) {
+    // Presupuestos que no tienen fila acá (categorías archivadas o borradas):
+    // siguen existiendo y contando, así que no pueden desaparecer del total.
+    //
+    // `budgetsInScope` (lib/spending) es la MISMA función con la que `BudgetView`,
+    // `HomeView` y Finanzas mobile arman el tope: el presupuesto de una categoría
+    // BORRADA cuenta hasta el mes anterior al borrado y deja de contar desde ese
+    // mes. Sin esto, este total sumaba para siempre 200 kr que ya no tienen fila
+    // en pantalla — un número que el usuario no podía ver de dónde salía, y que
+    // además contradecía el tope del mes que muestra Presupuesto detrás del modal.
+    for (const b of budgetsInScope(monthScope, budgets, deletedCategories)) {
       if (seen.has(b.categoryId)) continue;
       if (b.period === "weekly") anyWeekly = true;
       total += budgetAmountFor(b, monthScope);
     }
     return { total, anyWeekly };
-  }, [categories, drafts, periods, budgets, monthScope]);
+  }, [categories, drafts, periods, budgets, deletedCategories, monthScope]);
 
   return (
     <div className="modal-backdrop" onMouseDown={onBackdropMouseDown}>

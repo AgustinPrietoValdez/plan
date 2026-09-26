@@ -4,8 +4,6 @@ import { useSession } from "../lib/auth";
 import { shiftMonth, weeksInMonth } from "../lib/date";
 import {
   budgetAmountFor,
-  expenseInScope,
-  expenseInScopeFor,
   sumBudgetsFor,
   type BudgetScope,
 } from "../lib/budgetPeriod";
@@ -19,7 +17,7 @@ import {
   useBudgets,
   useDeleteAccountTransfer,
   useDeleteExpense,
-
+  useDeletedExpenseCategories,
   useExpenseCategories,
   useExpenseLineItems,
   useExpenses,
@@ -34,6 +32,7 @@ import {
   useUpsertSavingsContribution,
 } from "../lib/queries";
 import { effectivePercent, overflowPercent as computeOverflowPercent } from "../lib/savingsAllocation";
+import { budgetsInScope, expensesInScope, totalSpentIn } from "../lib/spending";
 import { useApp } from "../lib/store";
 import type {
   Account,
@@ -504,6 +503,9 @@ export function BudgetView() {
 
   const expensesQ = useExpenses();
   const categoriesQ = useExpenseCategories();
+  // Las BORRADAS, sólo por su `deletedAt`: es lo que hace que el tope de una
+  // categoría eliminada deje de contar desde el mes del borrado (ver más abajo).
+  const deletedCategoriesQ = useDeletedExpenseCategories();
   const budgetsQ = useBudgets();
   const lineItemsQ = useExpenseLineItems();
   const patchExpense = usePatchExpense();
@@ -511,10 +513,15 @@ export function BudgetView() {
   const deleteExpense = useDeleteExpense();
 
   const expenses = expensesQ.data ?? [];
+  // Dos listas a propósito, igual que Home: la UI (piechart/leyenda/filas) muestra
+  // sólo las categorías vivas, pero el total del período se calcula sobre TODAS —
+  // lo gastado en una categoría archivada sigue siendo plata que salió (lib/spending).
+  const allCategories = useMemo(() => categoriesQ.data ?? [], [categoriesQ.data]);
   const categories = useMemo(
-    () => (categoriesQ.data ?? []).filter((c) => !c.archived),
-    [categoriesQ.data],
+    () => allCategories.filter((c) => !c.archived),
+    [allCategories],
   );
+  const deletedCategories = useMemo(() => deletedCategoriesQ.data ?? [], [deletedCategoriesQ.data]);
   const budgets = budgetsQ.data ?? [];
   const lineItems = lineItemsQ.data ?? [];
 
@@ -562,38 +569,60 @@ export function BudgetView() {
   );
   const activeMonth = budgetMonth;
 
+  // La LISTA de gastos de abajo (y su contador) usa EL MISMO scope que el total y
+  // el donut: `expensesInScope` de lib/spending, o sea el período del presupuesto
+  // de cada categoría. Antes se armaba por mes de calendario crudo y no cuadraba
+  // con el KPI: los 4 gastos de Food del 1–3/7 sumaban en junio (su semana es de
+  // junio) pero se listaban en julio, así que la lista no explicaba el número de
+  // arriba. Decisión del usuario (2026-08-16): la lista muestra exactamente los
+  // gastos que forman el total. Consecuencia aceptada: mirando junio aparecen
+  // gastos fechados en julio.
   const scopeExpenses = useMemo(
-    () => expenses.filter((e) => !e.deletedAt && expenseInScope(e.spentOn, scope)),
-    [expenses, scope],
+    () => expensesInScope(scope, expenses, budgets),
+    [expenses, scope, budgets],
   );
-  // Expenses can be entered in any currency now (EUR/ARS/USD against a DKK account, etc.) —
-  // convert each to nominal DKK before summing/charting, same as incomes.
-  // Hidden categories (hiddenFromChart) don't count toward the header totals either —
-  // hiding one shrinks both totalSpent and totalBudget, not just the pie arcs.
-  const totalSpent = scopeExpenses
-    .filter((e) => !categories.find((c) => c.id === e.categoryId)?.hiddenFromChart)
-    .reduce((s, e) => s + convertViaUsd(e.amount, e.currency, CURRENCY, ratesPerUsd), 0);
-  // El piechart compara gasto contra el tope POR CATEGORÍA, así que cada gasto se
-  // filtra con el periodo del presupuesto de su categoría: un presupuesto semanal
-  // mirado "por mes" se mide en semanas enteras (4 o 5), no en días del calendario.
-  // Sin presupuesto (o sin categoría) se cae al mes calendario de siempre, así que
-  // para quien sólo usa presupuestos mensuales esto da exactamente lo mismo.
-  const periodOfCategory = useMemo(() => {
-    const map = new Map<string, "monthly" | "weekly">();
-    for (const b of budgets) map.set(b.categoryId, b.period);
-    return map;
-  }, [budgets]);
+  // Gastado en el período — la definición NO vive acá: es `totalSpentIn` de
+  // lib/spending, la misma que usan Home y Finanzas mobile, para que las tres
+  // pantallas muestren EL MISMO número.
+  //
+  // Antes esto sumaba `scopeExpenses`, o sea el MES CALENDARIO crudo, y por eso el
+  // KPI no coincidía ni con el centro del donut de esta misma pantalla: un gasto de
+  // una categoría con presupuesto SEMANAL se mide en semanas enteras (sáb→vie), que
+  // es como se calcula su tope — comparar 4 semanas de tope contra 31 días de gasto
+  // es justo el bug que lib/budgetPeriod existe para evitar. Con presupuestos sólo
+  // mensuales da exactamente lo mismo que antes.
+  //
+  // Se le pasan TODAS las categorías (archivadas incluidas): lo único que saca un
+  // gasto del total es que su categoría esté oculta (`hiddenFromChart`), el mismo
+  // filtro que se le aplica a `totalBudget` abajo — si no, el gasto de una categoría
+  // oculta inflaría el numerador sin denominador que lo acompañe.
+  const totalSpent = totalSpentIn(scope, {
+    expenses,
+    categories: allCategories,
+    budgets,
+    ratesPerUsd,
+  });
+  // El piechart compara gasto contra el tope POR CATEGORÍA, así que usa el mismo
+  // criterio de período que el total (misma función, en lib/spending). Los montos sí
+  // se convierten acá: los gastos se cargan en cualquier moneda (EUR/ARS/USD contra
+  // una cuenta en DKK) y SpendingPie sólo suma números.
   const expensesForPie = useMemo(
-    () => expenses
-      .filter((e) => !e.deletedAt && expenseInScopeFor(
-        e.spentOn,
-        scope,
-        (e.categoryId ? periodOfCategory.get(e.categoryId) : undefined) ?? "monthly",
-      ))
+    () => scopeExpenses
       .map((e) => ({ ...e, amount: convertViaUsd(e.amount, e.currency, CURRENCY, ratesPerUsd), currency: CURRENCY })),
-    [expenses, scope, periodOfCategory, ratesPerUsd],
+    [scopeExpenses, ratesPerUsd],
   );
-  const visibleBudgets = budgets.filter((b) => !categories.find((c) => c.id === b.categoryId)?.hiddenFromChart);
+  // El TOPE del mes. Dos filtros, los dos sobre el denominador:
+  //   · `budgetsInScope` (lib/spending): un presupuesto cuya categoría fue BORRADA
+  //     sigue contando en los meses anteriores al borrado y deja de contar desde
+  //     ese mes en adelante. La fila del presupuesto no se toca — sin esto, el tope
+  //     de una categoría que ya no existe se sumaba para siempre.
+  //   · `hiddenFromChart`: una categoría oculta no suma tope, igual que sus gastos
+  //     no suman al total (si no, el % se movería con un solo lado de la fracción).
+  const scopedLiveBudgets = useMemo(
+    () => budgetsInScope(scope, budgets, deletedCategories),
+    [scope, budgets, deletedCategories],
+  );
+  const visibleBudgets = scopedLiveBudgets.filter((b) => !categories.find((c) => c.id === b.categoryId)?.hiddenFromChart);
   const totalBudget = sumBudgetsFor(visibleBudgets, scope);
   // Topes ya resueltos para el scope actual — SpendingPie los lee crudos y no
   // sabe (ni tiene por qué saber) de periodos.

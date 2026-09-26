@@ -48,6 +48,9 @@ const KEYS = {
   projects: ["projects"] as const,
   categories: ["categories"] as const,
   expenseCategories: ["expense_categories"] as const,
+  // Prefijo compartido a propósito: cualquier `invalidateQueries(["expense_categories"])`
+  // (los mutations de abajo, el sync) también invalida ésta, sin tocarlos uno por uno.
+  expenseCategoriesDeleted: ["expense_categories", "deleted"] as const,
   merchants: ["merchants"] as const,
   expenses: ["expenses"] as const,
   expenseLineItems: ["expense_line_items"] as const,
@@ -255,6 +258,13 @@ export function useDeleteCategory() {
 // ---------- expense categories ----------
 export function useExpenseCategories() {
   return useQuery({ queryKey: KEYS.expenseCategories, queryFn: () => repo.listExpenseCategories() });
+}
+
+/** Sólo las categorías BORRADAS, con su `deletedAt`. Es la fecha que necesita el
+ *  tope de Presupuesto para que el presupuesto de una categoría borrada deje de
+ *  contar desde ese mes (`budgetsInScope` en lib/spending). */
+export function useDeletedExpenseCategories() {
+  return useQuery({ queryKey: KEYS.expenseCategoriesDeleted, queryFn: () => repo.listDeletedExpenseCategories() });
 }
 
 export function useCreateExpenseCategory() {

@@ -1015,6 +1015,16 @@ export const localRepo: Repo = {
     return rows.map(fromDbExpenseCategory);
   },
 
+  async listDeletedExpenseCategories() {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const rows = await db.select<DbExpenseCategoryRow[]>(
+      "SELECT * FROM expense_categories WHERE user_id = ? AND deleted_at IS NOT NULL ORDER BY position ASC",
+      [userId],
+    );
+    return rows.map(fromDbExpenseCategory);
+  },
+
   async createExpenseCategory(input: ExpenseCategoryCreate) {
     const userId = await requireUserId();
     const db = await getDb();

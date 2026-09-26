@@ -8,6 +8,7 @@ import {
   useEvents,
   useExpenses,
   useExpenseCategories,
+  useDeletedExpenseCategories,
   useBudgets,
   useProjects,
   useCategories,
@@ -22,6 +23,7 @@ import { colorsForHue } from "../lib/categoryColor";
 import { suggestRecipesForExpiringLots } from "../lib/compras";
 import { freshnessStatus, FRESHNESS_COLOR } from "../lib/coffeeFreshness";
 import { CURRENCY, DEFAULT_RATES_PER_USD, convertViaUsd, fmtNumber } from "../lib/money";
+import { budgetsInScope, totalSpentIn } from "../lib/spending";
 import { SpendingPie } from "./SpendingPie";
 import { IAlert, ICheck } from "./icons";
 import type { CalendarEvent, Task } from "../types";
@@ -67,7 +69,15 @@ export function HomeView() {
   const tasks = useTasks().data ?? [];
   const allEvents = useEvents().data ?? [];
   const expenses = useExpenses().data ?? [];
-  const expenseCategories = (useExpenseCategories().data ?? []).filter((c) => !c.archived);
+  // Dos listas a propósito: la UI (piechart/leyenda) muestra sólo las vivas, pero
+  // el total del período se calcula sobre TODAS — los gastos de una categoría
+  // archivada siguen siendo plata gastada (ver lib/spending).
+  const allExpenseCategories = useExpenseCategories().data ?? [];
+  const expenseCategories = allExpenseCategories.filter((c) => !c.archived);
+  // Las BORRADAS no vienen en la lista de arriba (el repo filtra `deleted_at`),
+  // pero su fecha de borrado es lo que decide si su tope todavía cuenta este mes
+  // — ver `budgetsInScope` más abajo.
+  const deletedExpenseCategories = useDeletedExpenseCategories().data ?? [];
   const budgets = useBudgets().data ?? [];
   const projects = useProjects().data ?? [];
   const categories = useCategories().data ?? [];
@@ -133,18 +143,31 @@ export function HomeView() {
     }));
   // Topes ya resueltos para el mes que se ve — SpendingPie los lee crudos.
   const scopedBudgets = budgets.map((b) => ({ categoryId: b.categoryId, monthlyAmount: budgetAmountFor(b, budgetScope) }));
-  // Piechart limit excludes hidden categories' own budget cap too, so hiding one
-  // actually shrinks the denominator and the remaining %s recalculate (not just the arcs).
+  // El TOPE del mes — MISMA definición que `BudgetView` y que Finanzas mobile, o
+  // las tres pantallas muestran denominadores distintos para el mismo mes. Dos
+  // filtros, los dos sobre el denominador:
+  //   · `budgetsInScope` (lib/spending): el presupuesto de una categoría BORRADA
+  //     sigue contando en los meses anteriores al borrado y deja de contar desde
+  //     ese mes en adelante (la fila del presupuesto no se toca).
+  //   · `hiddenFromChart`: una categoría oculta no suma tope, así hidearla achica
+  //     el denominador y los % se recalculan (no sólo los arcos del donut).
   const chartBudgetLimit = sumBudgetsFor(
-    budgets.filter((b) => !expenseCategories.find((c) => c.id === b.categoryId)?.hiddenFromChart),
+    budgetsInScope(budgetScope, budgets, deletedExpenseCategories)
+      .filter((b) => !expenseCategories.find((c) => c.id === b.categoryId)?.hiddenFromChart),
     budgetScope,
   );
-  // Same "exclude hidden categories" filter as chartBudgetLimit — otherwise a hidden
-  // category's spending inflates the numerator without a matching denominator and the
-  // % shown here disagrees with the donut's own center total (which filters the same way).
-  const totalSpent = monthExpensesForPie
-    .filter((e) => !expenseCategories.find((c) => c.id === e.categoryId)?.hiddenFromChart)
-    .reduce((s, e) => s + e.amount, 0);
+  // Total del mes — la definición vive en lib/spending y la comparte con Finanzas
+  // mobile, para que las dos pantallas muestren EL MISMO número. Misma regla que
+  // antes tenía este archivo (lo único que saca un gasto es que su categoría esté
+  // oculta; los sin categoría y los de categorías archivadas cuentan), mismo
+  // filtro "exclude hidden" que `chartBudgetLimit` de arriba: si no, el gasto de
+  // una categoría oculta infla el numerador sin denominador que lo acompañe.
+  const totalSpent = totalSpentIn(budgetScope, {
+    expenses,
+    categories: allExpenseCategories,
+    budgets,
+    ratesPerUsd,
+  });
   const usedPct = chartBudgetLimit > 0 ? Math.round((totalSpent / chartBudgetLimit) * 100) : 0;
   const usedTone = usedPct >= 95 ? "var(--danger)" : usedPct >= 75 ? "var(--warn)" : "var(--ok)";
   const usedLabel = usedPct >= 95 ? "al límite" : usedPct >= 75 ? "cuidado" : "vas bien";

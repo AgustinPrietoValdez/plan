@@ -312,6 +312,10 @@ export interface Repo {
   deleteCategory(id: string): Promise<void>;
 
   listExpenseCategories(): Promise<ExpenseCategory[]>;
+  /** Sólo las BORRADAS (`deleted_at IS NOT NULL`), con su fecha de borrado.
+   *  Las usa el tope de Presupuesto: un `Budget` sobrevive al borrado de su
+   *  categoría y tiene que dejar de contar desde ese mes (ver lib/spending). */
+  listDeletedExpenseCategories(): Promise<ExpenseCategory[]>;
   createExpenseCategory(input: ExpenseCategoryCreate): Promise<ExpenseCategory>;
   patchExpenseCategory(id: string, patch: ExpenseCategoryPatch): Promise<ExpenseCategory>;
   deleteExpenseCategory(id: string): Promise<void>;
