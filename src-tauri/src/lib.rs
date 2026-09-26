@@ -792,6 +792,12 @@ pub fn run() {
             sql: include_str!("../migrations/0043_pantry_prices_weekly_budgets.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 44,
+            description: "expense_categories: add emoji (opcional, editable desde el escritorio)",
+            sql: include_str!("../migrations/0044_expense_category_emoji.sql"),
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()

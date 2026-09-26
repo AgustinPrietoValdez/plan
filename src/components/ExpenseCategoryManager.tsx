@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type MouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { HUE_PRESETS, colorsForHue } from "../lib/categoryColor";
 import {
   useCreateExpenseCategory,
@@ -35,6 +35,13 @@ export function ExpenseCategoryManager({ onClose }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  // Emoji en edición: `null` = ninguna fila enfocada, y entonces cada input
+  // muestra el valor persistido de su categoría.
+  const [emojiEdit, setEmojiEdit] = useState<{ id: string; value: string } | null>(null);
+  // Escape cancela la edición de emoji, y el input pierde el foco a continuación.
+  // Ese blur NO puede guardar: sin esta bandera, `commitEmoji` corre con
+  // `emojiEdit` ya en null, lee "" y BORRA el emoji de la categoría.
+  const cancelEmojiRef = useRef(false);
 
   // Este manager se abre ENCIMA del ExpenseEditor, que también escucha Escape en
   // `window`: sin cortar el evento, un solo Escape cerraría los dos de una. Se
@@ -49,6 +56,14 @@ export function ExpenseCategoryManager({ onClose }: Props) {
       if (editingId) {
         setEditingId(null);
         setDraftName("");
+        return;
+      }
+      if (emojiEdit) {
+        // Descartar la edición y soltar el foco. El `onBlur` que viene detrás
+        // tiene que ser un no-op, de ahí la bandera.
+        cancelEmojiRef.current = true;
+        setEmojiEdit(null);
+        (document.activeElement as HTMLElement | null)?.blur?.();
         return;
       }
       onClose();
@@ -76,6 +91,22 @@ export function ExpenseCategoryManager({ onClose }: Props) {
     }
     setEditingId(null);
     setDraftName("");
+  };
+
+  /** Vacío = sin emoji (NULL en la base), no string vacío. */
+  const commitEmoji = (id: string, current: string | null) => {
+    // Blur inmediatamente posterior a un Escape: se descarta, no se guarda.
+    if (cancelEmojiRef.current) {
+      cancelEmojiRef.current = false;
+      return;
+    }
+    const raw = emojiEdit && emojiEdit.id === id ? emojiEdit.value.trim() : "";
+    setEmojiEdit(null);
+    const next = raw.length > 0 ? raw : null;
+    if (next === (current ?? null)) return;
+    patch.mutateAsync({ id, patch: { emoji: next } }).catch((err) =>
+      window.alert(err instanceof Error ? err.message : "No se pudo cambiar el emoji"),
+    );
   };
 
   const onAdd = () => {
@@ -152,6 +183,33 @@ export function ExpenseCategoryManager({ onClose }: Props) {
                       borderRadius: s(6),
                       background: colors.bg,
                       flex: "0 0 auto",
+                    }}
+                  />
+                  <input
+                    value={emojiEdit?.id === c.id ? emojiEdit.value : c.emoji ?? ""}
+                    onFocus={() => setEmojiEdit({ id: c.id, value: c.emoji ?? "" })}
+                    onChange={(e) => setEmojiEdit({ id: c.id, value: e.target.value })}
+                    onBlur={() => commitEmoji(c.id, c.emoji)}
+                    // Escape NO se maneja acá: el listener de `window` en fase de
+                    // captura lo corta antes de que llegue al input (ver arriba).
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") e.currentTarget.blur();
+                    }}
+                    placeholder="🙂"
+                    title="Emoji de la categoría (vacío = ninguno)"
+                    style={{
+                      width: s(34),
+                      flex: "0 0 auto",
+                      textAlign: "center",
+                      border: "1px solid var(--line)",
+                      borderRadius: s(6),
+                      padding: `${s(4)} ${s(2)}`,
+                      fontSize: s(14),
+                      lineHeight: 1.2,
+                      fontFamily: "inherit",
+                      outline: 0,
+                      background: "var(--bg-elev)",
+                      color: "var(--fg)",
                     }}
                   />
                   {editing ? (

@@ -94,6 +94,7 @@ export interface ExpenseCategory {
   position: number;
   archived: boolean;
   hiddenFromChart: boolean; // excluida del piechart/leyenda de Presupuesto, pero sigue activa
+  emoji: string | null; // opcional: icono de la categoría (lo usa el grid de Finanzas mobile)
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;

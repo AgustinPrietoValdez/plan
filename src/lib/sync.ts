@@ -425,11 +425,11 @@ async function upsertLocal(
   } else if (entity === "expense_categories") {
     await db.execute(
       `INSERT OR REPLACE INTO expense_categories
-        (id, user_id, name, hue, position, archived, hidden_from_chart, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, user_id, name, hue, position, archived, hidden_from_chart, emoji, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         row.id, row.user_id, row.name, row.hue, row.position,
-        row.archived ? 1 : 0, row.hidden_from_chart ? 1 : 0, row.created_at, row.updated_at,
+        row.archived ? 1 : 0, row.hidden_from_chart ? 1 : 0, row.emoji ?? null, row.created_at, row.updated_at,
         row.deleted_at, row.version,
       ],
     );

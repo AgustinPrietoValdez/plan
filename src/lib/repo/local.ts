@@ -1036,6 +1036,7 @@ export const localRepo: Repo = {
       position: input.position ?? 0,
       archived: false,
       hiddenFromChart: false,
+      emoji: input.emoji ?? null,
       createdAt: ts,
       updatedAt: ts,
       deletedAt: null,
@@ -1043,9 +1044,9 @@ export const localRepo: Repo = {
     };
     await db.execute(
       `INSERT INTO expense_categories
-        (id, user_id, name, hue, position, archived, hidden_from_chart, created_at, updated_at, deleted_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [cat.id, userId, cat.name, cat.hue, cat.position, 0, 0, cat.createdAt, cat.updatedAt, null, 1],
+        (id, user_id, name, hue, position, archived, hidden_from_chart, emoji, created_at, updated_at, deleted_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [cat.id, userId, cat.name, cat.hue, cat.position, 0, 0, cat.emoji, cat.createdAt, cat.updatedAt, null, 1],
     );
     await enqueue(userId, "insert", "expense_categories", cat.id, expenseCategoryToWire(cat, userId));
     return cat;
@@ -1069,11 +1070,11 @@ export const localRepo: Repo = {
       version: existing.version + 1,
     };
     await db.execute(
-      `UPDATE expense_categories SET name = ?, hue = ?, position = ?, archived = ?, hidden_from_chart = ?, updated_at = ?, deleted_at = ?, version = ?
+      `UPDATE expense_categories SET name = ?, hue = ?, position = ?, archived = ?, hidden_from_chart = ?, emoji = ?, updated_at = ?, deleted_at = ?, version = ?
        WHERE id = ? AND user_id = ?`,
       [
         updated.name, updated.hue, updated.position, updated.archived ? 1 : 0, updated.hiddenFromChart ? 1 : 0,
-        updated.updatedAt, updated.deletedAt, updated.version,
+        updated.emoji, updated.updatedAt, updated.deletedAt, updated.version,
         id, userId,
       ],
     );
@@ -3764,6 +3765,7 @@ interface DbExpenseCategoryRow {
   position: number;
   archived: number;
   hidden_from_chart: number;
+  emoji: string | null;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -3905,6 +3907,7 @@ function fromDbExpenseCategory(r: DbExpenseCategoryRow): ExpenseCategory {
     position: r.position,
     archived: boolFromDb(r.archived),
     hiddenFromChart: boolFromDb(r.hidden_from_chart ?? 0),
+    emoji: r.emoji ?? null,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
     deletedAt: r.deleted_at,
@@ -3985,6 +3988,7 @@ function expenseCategoryToWire(c: ExpenseCategory, userId: string) {
     position: c.position,
     archived: c.archived,
     hidden_from_chart: c.hiddenFromChart,
+    emoji: c.emoji,
     created_at: c.createdAt,
     updated_at: c.updatedAt,
     deleted_at: c.deletedAt,

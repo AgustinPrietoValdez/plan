@@ -79,7 +79,7 @@ export type ProjectPatch = Partial<Omit<Project, "id" | "createdAt" | "version">
 export type CategoryCreate = Pick<Category, "name" | "hue"> & { position?: number };
 export type CategoryPatch = Partial<Omit<Category, "id" | "createdAt" | "version">>;
 
-export type ExpenseCategoryCreate = Pick<ExpenseCategory, "name" | "hue"> & { position?: number };
+export type ExpenseCategoryCreate = Pick<ExpenseCategory, "name" | "hue"> & { position?: number; emoji?: string | null };
 export type ExpenseCategoryPatch = Partial<Omit<ExpenseCategory, "id" | "createdAt" | "version">>;
 
 export type IngredientCategoryCreate = Pick<IngredientCategory, "name" | "hue"> & { position?: number };
