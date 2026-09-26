@@ -1,0 +1,520 @@
+/* ════════════════════════════════════════════════════════════════════════════
+   1c · Plan del día — CSS exclusivo de la pantalla.
+
+   Lo estructural (`.m-screen`, `.m-scroll`, safe-area, nav, FAB) lo da
+   `shell.css`; lo compartido (`.m-empty`, `.m-card`, `.m-label`, `.m-pill`,
+   `.m-mono`, `.m-sheet*`) lo da `mobile.css`. Acá van SOLO las clases de 1c.
+
+   Namespace: todo empieza con `.m-plan-`, `.m-ev-` (card de evento por empezar)
+   o `.m-task-` (filas de tarea). Nada genérico: el archivo se importa junto con
+   el de las otras 5 pantallas y una clase corta se pisa con la de otro agente.
+
+   OJO: `--home-s` / `fluid()` son DESKTOP-ONLY. Todo acá va en px fijos.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* ── 1 · fila de encabezado ───────────────────────────────────────────────── */
+
+.m-plan-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+}
+
+.m-plan-head-titles {
+  flex: 1;
+  min-width: 0;
+}
+
+.m-plan-eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--fg-subtle);
+}
+
+.m-plan-title {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+
+/* Pill hechas/total. NO es un control (en el prototipo alternaba los estados
+   solo para poder revisarlos): acá sale de los datos. */
+.m-plan-count {
+  flex: none;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--fg-muted);
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  padding: 5px 11px;
+  border-radius: 999px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ── 2 · card oscura del evento por empezar ───────────────────────────────── */
+
+/* El azul del anillo/punto NO es un token: `tokens.css` no tiene ningún
+   oklch(0.68 0.14 250) (`--accent` es 0.55 0.16 265 y `--c-blue` es 0.90 0.05
+   245). Es un literal del handoff y se queda LOCAL a 1c — `tokens.css` es
+   superficie compartida y no se toca por una pantalla. Si algún día el diseño
+   lo quiere en más lugares, ahí sí se promueve a token. */
+.m-ev {
+  --m-ev-blue: oklch(0.68 0.14 250);
+  /* Porcentaje del anillo. Lo pisa el componente por style inline (es dato). */
+  --m-ev-pct: 0%;
+
+  flex: none;
+  background: var(--fg);
+  color: #fff;
+  border-radius: 18px;
+  padding: 22px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  box-shadow: 0 18px 40px -18px rgba(20, 20, 20, 0.5);
+}
+
+.m-ev-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.m-ev-dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--m-ev-blue);
+  box-shadow: 0 0 0 4px color-mix(in oklch, var(--m-ev-blue) 22%, transparent);
+}
+
+.m-ev-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: oklch(0.8 0.03 250);
+}
+
+.m-ev-countdown {
+  flex: none;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.14);
+  padding: 4px 9px;
+  border-radius: 999px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.m-ev-mid {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.m-ev-ring {
+  width: 104px;
+  height: 104px;
+  flex: none;
+  border-radius: 50%;
+  background: conic-gradient(var(--m-ev-blue) var(--m-ev-pct), rgba(255, 255, 255, 0.14) 0);
+  display: grid;
+  place-items: center;
+  /* Único movimiento que pide el handoff en esta card. */
+  transition: background 0.4s ease-out;
+}
+
+/* El disco interior tapa el centro del anillo con el MISMO color de fondo de la
+   card (`--fg`), no con un literal: si mañana hay tema oscuro, cambia una sola
+   variable y los dos lados siguen coincidiendo. */
+.m-ev-ring-inner {
+  width: 82px;
+  height: 82px;
+  border-radius: 50%;
+  background: var(--fg);
+  display: grid;
+  place-items: center;
+  text-align: center;
+}
+
+.m-ev-time {
+  font-family: var(--font-mono);
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.m-ev-time-label {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: oklch(0.72 0.02 250);
+}
+
+.m-ev-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.m-ev-title {
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.m-ev-meta {
+  font-size: 13px;
+  color: oklch(0.78 0.02 250);
+  margin-top: 5px;
+}
+
+.m-ev-actions {
+  display: flex;
+  gap: 9px;
+}
+
+.m-ev-cta {
+  flex: 1;
+  min-width: 0;
+  height: 50px;
+  border: none;
+  border-radius: 12px;
+  background: #fff;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* TODO(1c · decide el usuario): el ⏰ del diseño es "snooze / recordar" y NO
+   existe en el modelo — no hay campo, ni mutación, ni forma de reprogramar UNA
+   notificación puntual (`useEventNotifications` reprograma TODO desde los
+   datos; tocar `notifyMinutesBefore` cambiaría el aviso para siempre y se
+   sincronizaría a todos los dispositivos). Queda INERTE hasta que el usuario
+   defina qué hace exactamente. */
+.m-ev-snooze {
+  width: 50px;
+  height: 50px;
+  flex: none;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: none;
+  color: #fff;
+  font-size: 17px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  opacity: 0.45;
+}
+
+/* ── 3 · label de sección + minutos restantes ─────────────────────────────── */
+
+.m-plan-sec {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.m-plan-sec > .m-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.m-plan-sec-meta {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg-subtle);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ── 4 · lista de tareas ──────────────────────────────────────────────────── */
+
+.m-plan-tasks {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  flex: none;
+}
+
+.m-task {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  /* 13px + 22px + 13px = 48px ⇒ por encima del mínimo táctil de 44px. */
+  padding: 13px 14px;
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow-sm);
+  color: var(--fg);
+  font-family: inherit;
+  text-align: left;
+  transition: background 0.18s ease-out;
+}
+
+.m-task.is-done {
+  opacity: 0.55;
+}
+
+/* Mientras el `CompletionModal` está abierto para esta fila. `useCompleteTask`
+   NO es optimista para tareas recurrentes (crea la próxima ocurrencia con dos
+   round-trips a SQLite antes del patch), así que sin esto la fila se queda
+   "muerta" un instante después de confirmar. */
+.m-task.is-busy {
+  background: var(--bg-hover);
+}
+
+.m-task-box {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  border-radius: 7px;
+  border: 1.6px solid var(--line-strong);
+  background: none;
+  color: #fff;
+  display: grid;
+  place-items: center;
+}
+
+.m-task-box.is-done {
+  border-color: var(--ok);
+  background: var(--ok);
+}
+
+.m-task-dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+}
+
+.m-task-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 14.5px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.m-task-title.is-done {
+  text-decoration: line-through;
+  color: var(--fg-subtle);
+}
+
+.m-task-meta {
+  flex: none;
+  font-size: 11.5px;
+  color: var(--fg-subtle);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ── 5 · menú del FAB (Tarea / Evento) ────────────────────────────────────── */
+
+.m-plan-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 4px;
+}
+
+.m-plan-menu-btn {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  width: 100%;
+  min-height: 60px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: inherit;
+  text-align: left;
+}
+
+.m-plan-menu-btn:active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.m-plan-menu-emoji {
+  font-size: 22px;
+  line-height: 1;
+  flex: none;
+}
+
+.m-plan-menu-name {
+  font-size: 15.5px;
+  font-weight: 600;
+}
+
+.m-plan-menu-sub {
+  font-size: 12px;
+  color: var(--fg-muted);
+  margin-top: 1px;
+}
+
+/* ── 6 · formulario de los sheets de crear/editar (tarea y evento) ─────────
+   Sheets MOBILE NUEVOS: los editores de escritorio (`TaskEditor`/`EventEditor`)
+   tienen botones de ~26px, la mitad del mínimo táctil de 44px que pide el
+   handoff, y textos en inglés. Nada acá baja de 44px, y todo `input` va en 16px
+   (con menos, Android hace zoom automático al enfocar). */
+
+.m-plan-form {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+}
+
+.m-plan-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.m-plan-field-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--fg-muted);
+}
+
+.m-plan-input {
+  width: 100%;
+  min-height: 48px;
+  padding: 0 14px;
+  font-family: inherit;
+  font-size: 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.m-plan-input:disabled {
+  opacity: 0.45;
+}
+
+textarea.m-plan-input {
+  min-height: 76px;
+  padding: 12px 14px;
+  line-height: 1.4;
+  resize: none;
+}
+
+.m-plan-row {
+  display: flex;
+  gap: 10px;
+}
+
+.m-plan-row > .m-plan-field {
+  flex: 1;
+  min-width: 0;
+}
+
+.m-plan-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.m-plan-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 22px;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.m-plan-chip.is-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.m-plan-chip-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.m-plan-actions {
+  display: flex;
+  gap: 10px;
+  padding-top: 2px;
+}
+
+.m-plan-btn {
+  flex: 1;
+  min-height: 52px;
+  border-radius: 12px;
+  border: 1px solid var(--line-strong);
+  background: var(--bg);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 15.5px;
+  font-weight: 600;
+}
+
+.m-plan-btn--primary {
+  border-color: var(--fg);
+  background: var(--fg);
+  color: #fff;
+}
+
+.m-plan-btn:disabled {
+  opacity: 0.45;
+}
+
+.m-plan-error {
+  font-size: 13px;
+  color: var(--danger);
+  background: color-mix(in oklch, var(--danger) 12%, var(--bg-elev));
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+/* TODO(P3 · decide el usuario): "Salir" perdió su lugar al borrarse el header
+   global. Este botón provisorio vive dentro de 1c para que la app no se quede
+   sin logout; se borra cuando el usuario decida dónde va la sesión. Lo dejó la
+   shell y 1c lo MANTIENE tal cual (no lo rediseña). */
+.m-signout-provisional {
+  align-self: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-elev);
+  color: var(--fg-muted);
+  font-size: 13px;
+  padding: 10px 14px;
+  min-height: 40px;
+}

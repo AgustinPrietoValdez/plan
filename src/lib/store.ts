@@ -85,6 +85,62 @@ export const FINANZAS_TABS: { id: FinanzasTab; label: string; icon: string }[] =
   { id: "holdings", label: "Holdings", icon: "🏦" },
 ];
 
+/** Tab activo de la bottom nav de la app mobile (Android). Vive en el store
+ *  porque el FAB de la shell puede empujar navegación (README: "Global
+ *  (Zustand): tab activo"). El tipo canónico está en
+ *  `src/components/mobile/shell.ts`; acá se repite para no meter una
+ *  dependencia de `lib/` hacia `components/`. */
+export type MobileTabId = "plan" | "fin" | "compras" | "cafe";
+
+/** Pantalla dentro del tab Café. El flujo tiene CINCO pasos después de la
+ *  bodega y se recorre en este orden (decisión del usuario, 2026-08-16):
+ *
+ *    bodega (1g) → elegir grano+receta+dosis (1i) → tweak (último ajuste)
+ *      → conexion (balanza + pava) → brew (1h) → finish (cierre + cata)
+ *
+ *  · `conexion` es un paso PROPIO: el scan/conexión de balanza y pava, que hoy
+ *    vive dentro de las fases `home`/`scanning` de `BrewView`, se reubica acá
+ *    (no se borra). Al conectarse la pava empieza a calentar sola y el usuario
+ *    toca "Continuar".
+ *  · COMPUERTA: no se entra a `brew` sin pasar por `conexion`.
+ *  · `tweak` y `finish` (steppers + café usado que descuenta stock + notas +
+ *    cata) se MANTIENEN tal cual; se rediseñan aparte más adelante.
+ *
+ *  El FAB del tab Café manda a "elegir". El BORRADOR del brew (grano + receta
+ *  + dosis) NO va acá: vive en `CafeMobileView`. */
+export type CafeScreen = "bodega" | "elegir" | "tweak" | "conexion" | "brew" | "finish";
+
+/** Destino puntual con el que se puede ABRIR (o traer al frente) la app mobile,
+ *  pedido desde afuera de React — hoy el widget de Android de "próximo evento":
+ *  tocarlo abre ese evento, y si no hay evento abre el tab Plan.
+ *
+ *  `tab` es a dónde va la shell. `openEventId` es el destino DENTRO del tab, y
+ *  lo resuelve la pantalla destino (1c), no la shell. */
+export interface MobileRoute {
+  tab: MobileTabId;
+  /** Evento a abrir dentro del tab. Lo consume la pantalla destino. */
+  openEventId?: string;
+}
+
+/** Una ruta ya pedida, con el sello que le pone el store.
+ *  `token` es un contador monotónico: identifica CADA pedido aunque el puente
+ *  nativo reuse el mismo objeto `MobileRoute` (comparar por referencia hacía
+ *  que el segundo tap idéntico se ignorara en silencio).
+ *  `requestedAt` es para el TTL. */
+export type PendingMobileRoute = MobileRoute & {
+  token: number;
+  requestedAt: number;
+};
+
+/** Una ruta es la respuesta a UN toque del usuario en el widget: se drena y se
+ *  aplica en milisegundos. Si sobrevive más que esto es que nadie la consumió
+ *  (p.ej. `openEventId` con la pantalla destino todavía sin implementar) y hay
+ *  que tirarla: la WebView de Android vive días, y una ruta parqueada de ayer
+ *  abriría un evento viejo de golpe cuando la pantalla destino por fin monte. */
+export const MOBILE_ROUTE_TTL_MS = 60_000;
+
+let mobileRouteSeq = 0;
+
 export type EditorState =
   | { mode: "closed" }
   | { mode: "edit"; taskId: string }
@@ -116,6 +172,13 @@ interface AppState {
   comprasWeek: string; // lunes de la semana que se ve en Listas (YYYY-MM-DD)
   cafeTab: CafeTab;
   finanzasTab: FinanzasTab;
+  /** Solo mobile. */
+  mobileTab: MobileTabId;
+  /** Solo mobile: pantalla dentro del tab Café. */
+  cafeScreen: CafeScreen;
+  /** Solo mobile: ruta pedida desde afuera (widget de Android / deep link) que
+   *  todavía no se aplicó del todo. `null` = nada pendiente. */
+  pendingMobileRoute: PendingMobileRoute | null;
 
   setView: (v: View) => void;
   setViewDate: (ymd: string) => void;
@@ -152,6 +215,36 @@ interface AppState {
   setComprasWeek: (weekStart: string) => void;
   setCafeTab: (t: CafeTab) => void;
   setFinanzasTab: (t: FinanzasTab) => void;
+  setMobileTab: (t: MobileTabId) => void;
+  setCafeScreen: (s: CafeScreen) => void;
+  /** PUNTO DE ENTRADA ÚNICO para abrir la app mobile en un destino puntual.
+   *
+   *  Lo llama código que NO es React (lector del intent de Android, deep link,
+   *  bridge nativo) con:
+   *      useApp.getState().requestMobileRoute({ tab: "plan", openEventId })
+   *  y también sirve estando la app ya abierta: Android la trae al frente sin
+   *  remontar, así que el arranque NO puede ser el único camino.
+   *
+   *  Hoy el único emisor es el lector del intent del widget
+   *  (`useAndroidWidgetRoute` en `lib/useEventNotifications.ts`), que retira la
+   *  ruta de nativo con `take_pending_mobile_route` al montar y en cada
+   *  `visibilitychange`/`focus`. Es UN solo camino: no hay prop de arranque.
+   *
+   *  Qué pasa después:
+   *   1. `MobileApp` la aplica UNA sola vez por `token` (no por identidad de
+   *      objeto: el puente nativo puede reusar el mismo objeto y el segundo tap
+   *      se perdía). Mueve `mobileTab` a `route.tab` y nada más.
+   *   2. Si la ruta NO trae `openEventId`, la shell la consume ahí mismo.
+   *      Si SÍ lo trae, queda PARQUEADA: la pantalla destino (1c) la lee y
+   *      llama `consumeMobileRoute()` cuando abrió el evento.
+   *   3. Si nadie la consume en `MOBILE_ROUTE_TTL_MS`, la shell la tira
+   *      (`expireMobileRoute`). Nunca queda una ruta de ayer esperando. */
+  requestMobileRoute: (route: MobileRoute) => void;
+  /** La pantalla destino avisa que ya resolvió la ruta parqueada. */
+  consumeMobileRoute: () => void;
+  /** La shell tira las rutas parqueadas que se pasaron de `MOBILE_ROUTE_TTL_MS`.
+   *  `token` evita que se descarte una ruta MÁS NUEVA que llegó mientras tanto. */
+  expireMobileRoute: (token: number) => void;
 }
 
 export const useApp = create<AppState>((set) => ({
@@ -177,6 +270,9 @@ export const useApp = create<AppState>((set) => ({
   comprasWeek: weekStartOf(),
   cafeTab: "inventario",
   finanzasTab: "presupuesto",
+  mobileTab: "plan",
+  cafeScreen: "bodega",
+  pendingMobileRoute: null,
 
   setView: (view) => set({ view }),
   setViewDate: (viewDate) => set({ viewDate }),
@@ -213,4 +309,11 @@ export const useApp = create<AppState>((set) => ({
   setComprasWeek: (comprasWeek) => set({ comprasWeek }),
   setCafeTab: (cafeTab) => set({ cafeTab }),
   setFinanzasTab: (finanzasTab) => set({ finanzasTab }),
+  setMobileTab: (mobileTab) => set({ mobileTab }),
+  setCafeScreen: (cafeScreen) => set({ cafeScreen }),
+  requestMobileRoute: (route) =>
+    set({ pendingMobileRoute: { ...route, token: ++mobileRouteSeq, requestedAt: Date.now() } }),
+  consumeMobileRoute: () => set({ pendingMobileRoute: null }),
+  expireMobileRoute: (token) =>
+    set((s) => (s.pendingMobileRoute?.token === token ? { pendingMobileRoute: null } : s)),
 }));

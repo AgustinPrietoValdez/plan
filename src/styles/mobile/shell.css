@@ -1,0 +1,293 @@
+/* ════════════════════════════════════════════════════════════════════════════
+   SHELL de la app mobile — lo mantiene el agente de shell.
+   Las 6 pantallas NO editan este archivo (cada una tiene el suyo).
+
+   Contrato completo en `src/components/mobile/shell.ts`.
+   Estructura: .m-app > [ .m-slot > .m-screen ] × 4 + .m-notif-banner + .m-nav
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.m-app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+  width: 100vw;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-ui);
+  overflow: hidden;
+}
+
+/* ── slot: la shell monta las 4 pantallas y esconde las inactivas ──────────
+   No se desmontan (desmontar Café corta la suscripción BLE y pierde el brew).
+   El slot existe para que la shell pueda poner `hidden` sin obligar a la hija
+   a aceptar una prop. */
+.m-slot {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.m-slot[hidden] {
+  display: none;
+}
+
+/* ── pantalla ─────────────────────────────────────────────────────────────── */
+.m-screen {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+/* `display:flex` le gana al `display:none` del atributo `hidden` del UA. */
+.m-screen[hidden] {
+  display: none;
+}
+
+/* 1i pinta el fondo hundido. */
+.m-screen--sunken {
+  background: var(--bg-sunken);
+}
+
+/* Pantalla que todavía maneja su propio alto y su propio scroll (BrewView).
+   Le damos la safe-area de arriba que antes aportaba el header global.
+   Se borra cuando el flujo de café esté migrado al contrato. */
+.m-screen--legacy {
+  padding-top: env(safe-area-inset-top);
+}
+
+.m-screen--legacy > * {
+  flex: 1;
+  min-height: 0;
+}
+
+/* ── header por pantalla (flex:none, dentro de la hija) ───────────────────── */
+.m-scr-head {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--line);
+  padding: calc(env(safe-area-inset-top) + 14px) 16px 13px;
+}
+
+.m-scr-head-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+/* Color por pantalla: --badge-bg / --badge-fg en el style del elemento. */
+.m-scr-badge {
+  width: 38px;
+  height: 38px;
+  flex: none;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 19px;
+  line-height: 1;
+  background: var(--badge-bg, var(--bg-sunken));
+  color: var(--badge-fg, var(--fg));
+}
+
+.m-scr-titles {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.m-scr-title {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+
+.m-scr-sub {
+  font-size: 12.5px;
+  color: var(--fg-muted);
+}
+
+.m-scr-pill {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 5px 11px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--line);
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+
+/* Pager de mes / fecha del header (1d, y 1c si suma pager). */
+.m-pager {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 5px;
+  border-radius: 999px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--line);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.m-pager-btn {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: var(--fg-muted);
+  font-size: 14px;
+  line-height: 1;
+}
+
+/* ── el ÚNICO scroller de la pantalla ─────────────────────────────────────── */
+.m-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  display: flex;
+  flex-direction: column;
+  gap: var(--m-scroll-gap, 14px);
+  padding: var(--m-scroll-pt, 16px) var(--m-scroll-px, 16px) var(--m-scroll-pb, 18px);
+}
+
+/* Filas full-bleed (1j) / estante horizontal (1i): sin padding ni gap. */
+.m-scroll--flush {
+  --m-scroll-pt: 0px;
+  --m-scroll-px: 0px;
+  --m-scroll-pb: 0px;
+  --m-scroll-gap: 0px;
+}
+
+/* OBLIGATORIO en las pantallas SIN `.m-scr-head` (1c, 1i): sin esto el
+   contenido queda debajo de la barra de estado de Android.
+
+   El `max(…, 8px)` es a propósito: combinado con `.m-scroll--flush` (que pone
+   `--m-scroll-pt: 0px`) esto daba 0px de aire bajo la barra de estado. Con el
+   piso, flush + top-safe nunca puede pegar el contenido al borde. Quien quiera
+   más, pisa `--m-scroll-pt`. */
+.m-scroll--top-safe {
+  padding-top: calc(env(safe-area-inset-top) + max(var(--m-scroll-pt, 16px), 8px));
+}
+
+/* Spacer final: el FAB tapa ~32px del fondo del scroller. */
+.m-scroll-tail {
+  flex: none;
+  height: 34px;
+}
+
+/* ── banner de permiso de notificaciones ───────────────────────────────────
+   TODO(P4 · decide el usuario): vivía debajo del header global; hoy queda
+   pegado arriba de la nav hasta que el diseño defina dónde va. */
+.m-notif-banner {
+  flex: none;
+  width: 100%;
+  border: none;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 10px 16px;
+  text-align: center;
+  border-top: 1px solid var(--line);
+}
+
+/* ── bottom nav + FAB (handoff: TabBar.dc.html) ────────────────────────────
+   EN FLUJO, no `position: fixed`. Si se vuelve fixed se rompe el alto de las
+   6 pantallas y aparece doble padding-bottom. */
+.m-nav {
+  flex: none;
+  display: flex;
+  align-items: flex-end;
+  background: var(--bg-elev);
+  border-top: 1px solid var(--line);
+  padding: 6px 4px calc(8px + env(safe-area-inset-bottom));
+}
+
+/* DESVÍO CONSCIENTE respecto de `TabBar.dc.html`: el prototipo no trae
+   `min-height` y su tab mide ~43px de alto; el README exige "altura táctil
+   mínima 48px por tab". Gana el mínimo táctil, así que la nav queda ~5px más
+   alta que el prototipo. El `justify-content: flex-end` es la consecuencia:
+   con el tab más alto que su contenido, ancla icono+label abajo para que la
+   línea de base coincida con el prototipo. */
+.m-nav-btn {
+  flex: 1;
+  min-height: 48px; /* área táctil mínima (README) */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+  padding: 6px 0 2px;
+  background: none;
+  border: none;
+  color: var(--fg-subtle);
+}
+
+.m-nav-icon {
+  font-size: 19px;
+  line-height: 1;
+  /* El emoji no se tiñe con `color`: el inactivo se apaga con filtro. */
+  filter: grayscale(0.75) opacity(0.55);
+}
+
+.m-nav-label {
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+  font-weight: 500;
+}
+
+.m-nav-btn.is-active {
+  color: var(--accent);
+}
+
+.m-nav-btn.is-active .m-nav-icon {
+  filter: none;
+}
+
+.m-nav-btn.is-active .m-nav-label {
+  font-weight: 600;
+}
+
+.m-nav-fab-slot {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+}
+
+.m-nav-fab {
+  width: 54px;
+  height: 54px;
+  flex: none;
+  margin-top: -26px;
+  padding: 0;
+  border-radius: 50%;
+  border: 3px solid #fff;
+  background: var(--accent);
+  color: #fff;
+  font-size: 28px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow:
+    0 8px 22px -6px oklch(0.55 0.16 265 / 0.55),
+    0 2px 6px rgba(20, 20, 20, 0.12);
+}

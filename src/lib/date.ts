@@ -115,6 +115,14 @@ export function weekLabel(weekStart: string): string {
   return `${dd(start)}/${mm(start)} – ${dd(end)}/${mm(end)}`;
 }
 
+/** "11 ago" — day + short Spanish month of the Saturday a week starts on.
+ *  Shorter form of `weekLabel` for headers with no room for the full range
+ *  (1j Compras: "Semana del 11 ago"). Doesn't replace `weekLabel`. */
+export function weekStartShortLabel(weekStart: string): string {
+  const d = fromYmd(weekStart);
+  return `${d.getDate()} ${MONTH_SHORT_ES[d.getMonth()]}`;
+}
+
 /** The month ("YYYY-MM") a week belongs to: the one holding **most** of its
  *  seven days. Since a week splits as k / 7-k, the majority month is always the
  *  one containing day 4 — so no week is ever counted in two months, and the

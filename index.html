@@ -3,7 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- `viewport-fit=cover` es OBLIGATORIO: `MainActivity.onCreate` llama
+         `enableEdgeToEdge()`, y sin esto TODOS los `env(safe-area-inset-*)`
+         resuelven 0 => la nav mobile se mete bajo la barra de gestos y los
+         headers bajo la barra de estado. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Tauri + React + Typescript</title>
   </head>
 

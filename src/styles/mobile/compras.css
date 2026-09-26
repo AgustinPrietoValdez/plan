@@ -1,0 +1,214 @@
+/* ════════════════════════════════════════════════════════════════════════════
+   1j · Compras — lista de la semana.
+   Archivo exclusivo de la pantalla 1j (`components/mobile/ShoppingListView.tsx`).
+
+   Estructura (contrato de `shell.ts` + barra de total como bloque flex:none):
+
+     .m-screen
+       header.m-scr-head.m-compras-head      ← badge 🛒 + título + sub
+       .m-total                              ← barra de total (flex:none, fija)
+       .m-scroll.m-scroll--flush             ← filas full-bleed
+         ul.m-list > li.m-item × N
+         li.m-section-head  ("Comprados (N)" + "Vaciar comprados")
+         .m-scroll-tail
+
+   Todo en px fijos: `--home-s` / `fluid()` son DESKTOP-ONLY.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* ── header ────────────────────────────────────────────────────────────────
+   La caja, el badge y el sub los pinta `.m-scr-head` (shell). Acá solo el
+   título, que en 1j es 19px (el default de la shell es 20px). */
+.m-compras-head .m-scr-title {
+  font-size: 19px;
+  line-height: 1.15;
+}
+
+/* ── barra de total ───────────────────────────────────────────────────────
+   Va ENTRE el header y el scroller (flex:none): queda fija mientras la lista
+   scrollea, igual que en el prototipo. Se muestra SIEMPRE, también con la
+   lista vacía o con total 0. */
+.m-total {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 11px 16px;
+  background: var(--bg-sunken);
+  border-bottom: 1px solid var(--line);
+}
+
+.m-total-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--fg-muted);
+}
+
+.m-total-amount {
+  font-family: var(--font-mono);
+  font-size: 17px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+  white-space: nowrap;
+}
+
+.m-total-usd {
+  font-size: 12px;
+  color: var(--fg-subtle);
+  white-space: nowrap;
+}
+
+/* ── fila de ítem ─────────────────────────────────────────────────────────── */
+.m-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 16px;
+  min-height: 58px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* Fondo de la fila comprada. El valor NO es un token de `tokens.css` (está
+   entre `--bg` 0.992 y `--bg-sunken` 0.975) y el handoff lo pide literal; no se
+   agrega token nuevo porque `tokens.css` es superficie compartida. */
+.m-item.is-bought {
+  background: oklch(0.985 0.004 80);
+}
+
+.m-check {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border: 2px solid var(--line-strong);
+  border-radius: 50%;
+  background: transparent;
+  color: transparent;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.m-item.is-bought .m-check {
+  background: var(--ok);
+  border-color: var(--ok);
+  color: #fff;
+}
+
+/* Nombre + precio en columna. El `min-width: 0` va acá (en el contenedor):
+   sin él un nombre largo sin espacios empuja el stepper fuera de pantalla. */
+.m-item-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px 0;
+}
+
+.m-item-name {
+  font-size: 15.5px;
+  line-height: 1.25;
+  /* Nombre tipeado por el usuario: un token largo tiene que cortarse. */
+  overflow-wrap: anywhere;
+}
+
+.m-item.is-bought .m-item-name {
+  text-decoration: line-through;
+  color: var(--fg-subtle);
+}
+
+.m-item-price {
+  font-size: 11.5px;
+  line-height: 1.3;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Ítems a granel: peso en vez de stepper (se edita desde escritorio). */
+.m-item-bulk {
+  flex: none;
+  font-size: 13px;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ── stepper − / valor / + ─────────────────────────────────────────────────── */
+.m-stepper {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+}
+
+.m-stepper button {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  color: var(--fg-muted);
+  font-size: 17px;
+  line-height: 1;
+}
+
+.m-stepper input {
+  width: 40px;
+  height: 34px;
+  text-align: center;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  color: var(--fg);
+  padding: 0;
+}
+
+/* Borrar un ítem pendiente. NO está en el diseño (ni en el PNG ni en el
+   prototipo), pero es la única forma de sacar un ítem sin tildarlo primero:
+   se conserva hasta que el usuario decida cómo se borra (¿swipe? ¿nada?).
+   Angosto para no comerle ancho al nombre; alto 44px por área táctil. */
+.m-del {
+  width: 30px;
+  height: 44px;
+  flex: none;
+  border: none;
+  background: none;
+  color: var(--fg-subtle);
+  font-size: 15px;
+  padding: 0;
+}
+
+/* ── sección "Comprados (N)" ──────────────────────────────────────────────── */
+.m-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 18px 16px 8px;
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-muted);
+}
+
+.m-clear-btn {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg-elev);
+  color: var(--danger);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 7px 11px;
+  text-transform: none;
+  letter-spacing: 0;
+}

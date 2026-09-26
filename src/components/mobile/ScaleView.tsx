@@ -4,6 +4,7 @@ import {
   subscribeToScale, unsubscribeFromScale, sendTareStart,
   type BleDevice, type ScaleData,
 } from "../../lib/ble";
+import { flowBand } from "../../lib/coffeeFlow";
 
 function fmtTimer(ms: number): string {
   const totalSec = Math.floor(ms / 1000);
@@ -12,14 +13,12 @@ function fmtTimer(ms: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
+// La lógica ±30% se extrajo a `lib/coffeeFlow.ts` (la comparte con el brew en
+// vivo de 1h). Acá sólo queda el mapeo tono → color sobre fondo claro.
 function FlowBand({ flow, target }: { flow: number | null; target?: number }) {
   if (flow == null) return null;
-  const abs = Math.abs(flow);
-  const tgt = target ?? 3;
-  const lo = tgt * 0.7;
-  const hi = tgt * 1.3;
-  const label = abs < lo ? "lento" : abs > hi ? "rápido" : "bien";
-  const color = label === "bien" ? "#4caf50" : label === "rápido" ? "var(--danger)" : "#ff9800";
+  const { tone, label } = flowBand(flow, target);
+  const color = tone === "ok" ? "#4caf50" : tone === "fast" ? "var(--danger)" : "#ff9800";
   return (
     <span style={{ fontSize: 11, fontWeight: 700, color, marginLeft: 4 }}>
       {label}

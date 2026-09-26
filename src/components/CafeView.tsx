@@ -24,6 +24,7 @@ import { IPlus, ITrash, IChevD, IChevU, IChevR, IX } from "./icons";
 import { analyzeCoffee, askAboutBrew } from "../lib/coffeeAnalysis";
 import { useApp, CAFE_TABS } from "../lib/store";
 import { daysOld, freshnessStatus, FRESHNESS_COLOR, FRESHNESS_LABEL } from "../lib/coffeeFreshness";
+import { LOW_STOCK_G, REFERENCE_BAG_G, activeBeans, isLowStock, lastSessionFor } from "../lib/coffeeStock";
 import { useFrameScale } from "../lib/uiScale";
 import { DateInput } from "./DateInput";
 import { fmtMoney } from "../lib/money";
@@ -33,10 +34,8 @@ const isMobile =
   /android/i.test(navigator.userAgent) ||
   new URLSearchParams(window.location.search).has("mobile");
 
-// Fallback solo para granos creados antes de initialWeightGrams (issue: no todas
-// las bolsas pesan lo mismo, no había que asumir una referencia global fija).
-const REFERENCE_BAG_G = 250;
-const LOW_STOCK_G = 50;
+// REFERENCE_BAG_G / LOW_STOCK_G / isLowStock / lastSessionFor viven en
+// `lib/coffeeStock.ts`: los comparte la Bodega mobile (1g). Ver ese archivo.
 
 // El mockup de café (como el de Home) fue diseñado en un frame fijo de 1280×720
 // pensado para 2560×1440 (2×). `fluid(n)` = "n px a esa escala": se resuelve a
@@ -1005,8 +1004,8 @@ function InventarioTab({
   onDeleteWishlistItem: (id: string) => void;
   onComprarWishlistItem: (w: CoffeeWishlistItem) => void;
 }) {
-  const active = beans.filter((b) => !b.finishedAt);
-  const lowStock = active.filter((b) => b.weightGrams > 0 && b.weightGrams <= LOW_STOCK_G);
+  const active = activeBeans(beans);
+  const lowStock = active.filter(isLowStock);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: fluid(18) }}>
@@ -1061,12 +1060,6 @@ function InventarioTab({
   );
 }
 
-function lastSessionFor(sessions: BrewSession[], beanId: string): BrewSession | null {
-  const bs = sessions.filter((s) => s.beanId === beanId);
-  if (bs.length === 0) return null;
-  return bs.reduce((a, s) => (s.createdAt > a.createdAt ? s : a));
-}
-
 function BeanTile({
   bean: b, lastBrew, onOpen, onMarkFinished,
 }: {
@@ -1081,7 +1074,7 @@ function BeanTile({
   const days = daysOld(b.roastedOn, asOf);
   const bagSize = b.initialWeightGrams && b.initialWeightGrams > 0 ? b.initialWeightGrams : REFERENCE_BAG_G;
   const pct = Math.max(0, Math.min(100, Math.round((b.weightGrams / bagSize) * 100)));
-  const lowStock = b.weightGrams > 0 && b.weightGrams <= LOW_STOCK_G;
+  const lowStock = isLowStock(b);
 
   return (
     <div

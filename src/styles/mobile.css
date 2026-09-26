@@ -1,119 +1,33 @@
-/* Mobile shell (Android shopping list). Scoped under .m- to avoid clashing
-   with the desktop UI. */
+/* ════════════════════════════════════════════════════════════════════════════
+   MOBILE (Tauri Android) — índice + utilidades compartidas.
 
-.m-app {
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
-  height: 100dvh;
-  width: 100vw;
-  background: var(--bg);
-  color: var(--fg);
-  font-family: var(--font-ui);
-  overflow: hidden;
-}
+   Todo va prefijado `.m-` para no chocar con el escritorio. `main.tsx` importa
+   SOLO este archivo; los `@import` de abajo tienen que ir arriba de todo (regla
+   CSS; Vite los inlinea en el build).
 
-.m-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: calc(env(safe-area-inset-top) + 12px) 16px 12px;
-  background: var(--bg-elev);
-  border-bottom: 1px solid var(--line);
-}
+   El split existe para que 7 agentes no editen el mismo archivo:
+     mobile/shell.css     → shell (.m-app .m-slot .m-screen .m-scr-* .m-scroll
+                            .m-nav .m-nav-fab)  — lo mantiene el agente de shell
+     mobile/plan.css      → 1c
+     mobile/finanzas.css  → 1d
+     mobile/compras.css   → 1j
+     mobile/cafe.css      → 1g / 1i / tweak / conexion / 1h / finish
 
-.m-title {
-  font-size: 18px;
-  font-weight: 600;
-  margin: 0;
-}
+   Acá adentro va solo lo COMPARTIDO por más de un área. Si dudás, va en el
+   archivo de tu pantalla.
 
-.m-signout {
-  background: none;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  color: var(--fg-muted);
-  font-size: 14px;
-  padding: 8px 12px;
-  min-height: 40px;
-}
+   OJO: `--home-s` / `fluid()` son DESKTOP-ONLY. Nada de eso acá.
+   ════════════════════════════════════════════════════════════════════════════ */
 
-.m-main {
-  flex: 1;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
-}
+@import "./mobile/shell.css";
+@import "./mobile/plan.css";
+@import "./mobile/finanzas.css";
+@import "./mobile/compras.css";
+@import "./mobile/cafe.css";
 
-.m-notif-banner {
-  width: 100%;
-  border: none;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: 13px;
-  font-weight: 600;
-  padding: 10px 16px;
-  text-align: center;
-  border-bottom: 1px solid var(--line);
-}
+/* ── utilidades compartidas ───────────────────────────────────────────────── */
 
-.m-shopping {
-  display: flex;
-  flex-direction: column;
-}
-
-/* add row */
-.m-add-row {
-  display: flex;
-  gap: 8px;
-  padding: 12px 16px;
-  background: var(--bg-elev);
-  border-bottom: 1px solid var(--line);
-  position: sticky;
-  top: 0;
-  z-index: 1;
-}
-
-.m-add-name {
-  flex: 1;
-  min-width: 0;
-  height: 48px;
-  padding: 0 14px;
-  font-size: 16px;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius);
-  background: var(--bg);
-  color: var(--fg);
-}
-
-.m-add-qty {
-  width: 64px;
-  height: 48px;
-  padding: 0 8px;
-  font-size: 16px;
-  text-align: center;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius);
-  background: var(--bg);
-  color: var(--fg);
-}
-
-.m-add-btn {
-  width: 48px;
-  height: 48px;
-  flex: none;
-  font-size: 26px;
-  line-height: 1;
-  border: none;
-  border-radius: var(--radius);
-  background: var(--accent);
-  color: #fff;
-}
-
-.m-add-btn:disabled {
-  opacity: 0.4;
-}
-
+/* Estado vacío (el handoff lo pide explícitamente en todas las pantallas). */
 .m-empty {
   color: var(--fg-subtle);
   text-align: center;
@@ -121,200 +35,60 @@
   font-size: 15px;
 }
 
-/* list */
+/* Lista full-bleed sin bullets (compras + recetas). */
 .m-list {
   list-style: none;
   margin: 0;
-  padding: 0 0 24px;
-}
-
-.m-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 4px 16px;
-  min-height: 56px;
-  border-bottom: 1px solid var(--line);
-}
-
-.m-check {
-  width: 32px;
-  height: 32px;
-  flex: none;
-  border: 2px solid var(--line-strong);
-  border-radius: 50%;
-  background: var(--bg);
-  color: var(--ok);
-  font-size: 18px;
-  line-height: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.m-item.is-bought .m-check {
-  background: var(--ok);
-  border-color: var(--ok);
-  color: #fff;
-}
-
-.m-item-name {
-  flex: 1;
-  /* Nombre de ingrediente tipeado por el usuario: sin `min-width: 0` un token
-     largo sin espacios empuja el stepper y el borrar fuera de la pantalla. */
-  min-width: 0;
-  overflow-wrap: anywhere;
-  font-size: 16px;
-  padding: 10px 0;
-}
-
-.m-item.is-bought .m-item-name {
-  text-decoration: line-through;
-  color: var(--fg-subtle);
-}
-
-.m-item-qty {
-  color: var(--fg-muted);
-  font-variant-numeric: tabular-nums;
-}
-
-.m-item-price {
-  color: var(--fg-muted);
-  font-variant-numeric: tabular-nums;
-  font-size: 13px;
-}
-
-.m-total {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 12px 16px;
-  font-size: 13px;
-  color: var(--fg-muted);
-  background: var(--bg-sunken);
-  border-bottom: 1px solid var(--line);
-}
-
-.m-total strong {
-  font-size: 17px;
-  color: var(--fg);
-  font-variant-numeric: tabular-nums;
-}
-
-.m-stepper {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  flex: none;
-}
-
-.m-stepper button {
-  width: 34px;
-  height: 34px;
-  border: 1px solid var(--line-strong);
-  border-radius: 8px;
-  background: var(--bg);
-  color: var(--fg);
-  font-size: 18px;
-  line-height: 1;
-}
-
-.m-stepper input {
-  width: 40px;
-  height: 34px;
-  text-align: center;
-  font-size: 14px;
-  font-variant-numeric: tabular-nums;
-  border: 1px solid var(--line-strong);
-  border-radius: 8px;
-  background: var(--bg);
-  color: var(--fg);
   padding: 0;
 }
 
-.m-del {
-  width: 40px;
-  height: 40px;
-  flex: none;
-  border: none;
-  background: none;
-  color: var(--fg-subtle);
-  font-size: 16px;
+/* Card blanca estándar del diseño mobile. Radio configurable por --r (12-18px). */
+.m-card {
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: var(--r, 12px);
+  box-shadow: var(--shadow-sm);
 }
 
-/* bought section header */
-.m-section-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 20px 16px 8px;
-  margin-top: 8px;
-  font-size: 11px;
+/* Card oscura (evento por empezar en 1c, peso en vivo en 1h). */
+.m-card--dark {
+  background: var(--fg);
+  color: #fff;
+  border: none;
+  border-radius: var(--r, 18px);
+  box-shadow: 0 18px 40px -18px rgba(20, 20, 20, 0.5);
+}
+
+/* Label de sección. */
+.m-label {
+  font-size: 10.5px;
   font-weight: 700;
-  color: var(--fg-muted);
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  border-top: 1px solid var(--line);
+  color: var(--fg-muted);
 }
 
-.m-clear-btn {
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--bg);
-  color: var(--danger);
-  font-size: 13px;
-  padding: 8px 12px;
-  min-height: 36px;
-  text-transform: none;
-  letter-spacing: 0;
-}
-
-/* bottom tab bar */
-.m-tabs {
-  display: flex;
+/* Pill genérico (contadores, badges de estado). */
+.m-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 5px 11px;
+  font-size: 11.5px;
+  font-weight: 600;
   background: var(--bg-elev);
-  border-top: 1px solid var(--line);
-  padding-bottom: env(safe-area-inset-bottom);
+  border: 1px solid var(--line);
+  white-space: nowrap;
 }
 
-.m-tab {
-  flex: 1;
-  background: none;
-  border: none;
-  padding: 14px 0;
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--fg-subtle);
-  min-height: 56px;
+/* Números: el diseño los quiere TODOS en JetBrains Mono (500/700 ya importados
+   en main.tsx) y tabulares. */
+.m-mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
-.m-tab.is-active {
-  color: var(--accent);
-}
-
-.m-tab.is-disabled {
-  opacity: 0.4;
-}
-
-/* floating add button (above the bottom tab bar) */
-.m-fab {
-  position: fixed;
-  right: 18px;
-  bottom: calc(env(safe-area-inset-bottom) + 72px);
-  width: 56px;
-  height: 56px;
-  border-radius: 50%;
-  border: none;
-  background: var(--accent);
-  color: #fff;
-  font-size: 30px;
-  line-height: 1;
-  box-shadow: var(--shadow-lg);
-  z-index: 20;
-}
-
-/* add bottom sheet */
+/* ── bottom sheets (los usan Compras hoy, y los va a usar el resto) ───────── */
 .m-sheet-backdrop {
   position: fixed;
   inset: 0;
@@ -362,6 +136,19 @@
   color: var(--fg-muted);
 }
 
+/* Input de búsqueda del sheet. */
+.m-add-name {
+  flex: 1;
+  min-width: 0;
+  height: 48px;
+  padding: 0 14px;
+  font-size: 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--fg);
+}
+
 .m-quick-grid {
   display: flex;
   flex-wrap: wrap;
@@ -380,6 +167,11 @@
   gap: 6px;
 }
 
+.m-quick-row + .m-quick-row {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
 .m-quick-name {
   font-size: 14px;
   font-weight: 600;
@@ -389,6 +181,28 @@
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.m-quick-chip {
+  padding: 10px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 20px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.m-quick-chip:active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.m-quick-chip.is-active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
 }
 
 .m-rate-row {
@@ -415,13 +229,14 @@
   font-variant-numeric: tabular-nums;
 }
 
-.m-quick-chip.is-active {
-  background: var(--accent);
-  color: #fff;
-  border-color: var(--accent);
-}
+/* ════════════════════════════════════════════════════════════════════════════
+   PARQUEADO — `RecipesView.tsx` (recetas de COMIDA).
+   Decisión del usuario (2026-08-16): sale de la bottom nav por ahora y se
+   rediseña después. El componente y estas clases NO se borran; quedan acá sin
+   entrada en la nav hasta ese rediseño. Ningún agente de las 6 pantallas las
+   toca.
+   ════════════════════════════════════════════════════════════════════════════ */
 
-/* recipes (mobile) */
 .m-recipes {
   display: flex;
   flex-direction: column;
@@ -434,6 +249,7 @@
   border-bottom: 1px solid var(--line);
   padding: 12px 16px 4px;
 }
+
 .m-suggested-head {
   font-size: 11px;
   text-transform: uppercase;
@@ -441,18 +257,22 @@
   font-weight: 700;
   color: oklch(0.62 0.16 60);
 }
+
 .m-suggested-sub {
   font-size: 12px;
   color: var(--fg-muted);
   margin-bottom: 6px;
 }
+
 .m-suggested .m-list {
   border-top: none;
 }
+
 .m-recipe-row.is-suggested::before {
   background: oklch(0.68 0.16 60);
   opacity: 1;
 }
+
 .m-recipe-row.is-suggested .m-recipe-meta {
   color: oklch(0.62 0.16 60);
   text-transform: none;
@@ -472,7 +292,9 @@
 .m-recipe-row::before {
   content: "";
   position: absolute;
-  left: 0; top: 0; bottom: 0;
+  left: 0;
+  top: 0;
+  bottom: 0;
   width: 3px;
   background: var(--accent);
   opacity: 0.6;
@@ -594,25 +416,4 @@
 
 .m-step-nav button:disabled {
   opacity: 0.4;
-}
-
-.m-quick-chip {
-  padding: 10px 14px;
-  border: 1px solid var(--line-strong);
-  border-radius: 20px;
-  background: var(--bg);
-  color: var(--fg);
-  font-size: 14px;
-  font-variant-numeric: tabular-nums;
-}
-
-.m-quick-chip:active {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.m-quick-row + .m-quick-row {
-  border-top: 1px solid var(--line);
-  padding-top: 10px;
 }

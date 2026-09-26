@@ -1,0 +1,1305 @@
+/* Café — lo comparten los agentes del flujo de café.
+ *
+ * El tab Café son SEIS pantallas (decisión del usuario, 2026-08-16):
+ *   bodega (1g) → elegir (1i) → tweak → conexion (balanza + pava) → brew (1h)
+ *   → finish (cierre + cata)
+ *
+ * 1g es SOLO Bodega: Historial y Recetas de café son de escritorio, no van en
+ * mobile ⇒ su header NO lleva folder-tabs.
+ *
+ * Lo estructural ya lo da `shell.css` (`.m-screen--sunken` para 1i,
+ * `.m-scr-head` / `.m-scr-badge` / `.m-scr-pill` para los headers).
+ *
+ * ── PREFIJOS (para no pisarse entre agentes) ──────────────────────────────
+ *   1i + tweak + conexion  →  `.m-brew-*`   (agente de 1i, este bloque)
+ *   1g bodega              →  `.m-cafe-*`
+ *   1h brew en vivo        →  `.m-live-*`
+ *
+ * OJO con las colisiones: `.m-recipe-row/-name/-meta/-head`, `.m-step-*` y
+ * `.m-stepper` YA EXISTEN (recetas de COMIDA en `mobile.css` y steppers de
+ * `compras.css`). Por eso acá van `.m-brew-recipe-*` y `.m-brew-dose-stepper`.
+ *
+ * `--home-s` / `fluid()` son DESKTOP-ONLY: nada de eso acá. */
+
+/* ══════════════════════════════════════════════════════════════════════════
+   COMPARTIDO por las pantallas del flujo (1i / tweak / conexion)
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* Anillo conic-gradient parametrizado — un solo componente para los tres
+   tamaños del handoff (52 tazas · 44 frescura · 104 dosis). */
+.m-brew-ring {
+  flex: none;
+  width: var(--ring-size, 52px);
+  height: var(--ring-size, 52px);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: conic-gradient(var(--ring-c, var(--c-peach-fg)) var(--ring-pct, 0%), var(--ring-track, oklch(0.94 0.01 80)) 0);
+  transition: background 0.35s ease-out;
+}
+
+.m-brew-ring-in {
+  width: var(--ring-hole, 38px);
+  height: var(--ring-hole, 38px);
+  border-radius: 50%;
+  background: var(--bg-elev);
+  display: grid;
+  place-items: center;
+  text-align: center;
+}
+
+.m-brew-ring--52 { --ring-size: 52px; --ring-hole: 38px; }
+.m-brew-ring--44 { --ring-size: 44px; --ring-hole: 32px; }
+.m-brew-ring--104 { --ring-size: 104px; --ring-hole: 78px; }
+
+/* CTA principal del flujo (`Empezar brew…`, `Siguiente →`, `Continuar`). */
+.m-brew-cta {
+  flex: none;
+  width: 100%;
+  height: 52px;
+  border: none;
+  border-radius: 12px;
+  background: var(--fg);
+  color: #fff;
+  font-size: 15.5px;
+  font-weight: 600;
+}
+
+.m-brew-cta:disabled {
+  opacity: 0.38;
+}
+
+/* Botón de volver (‹). El diseño de 1i no lo tiene — ver TODO en
+   `CafeMobileView.tsx`: sin él la Bodega queda inalcanzable. */
+.m-brew-back {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  margin-left: -6px;
+  border: none;
+  background: none;
+  color: var(--fg-muted);
+  font-size: 26px;
+  line-height: 1;
+  padding: 0;
+}
+
+/* Botón secundario de línea (Conectar / Desconectar / Cancelar). */
+.m-brew-ghost {
+  flex: none;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: var(--bg-elev);
+  color: var(--fg);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.m-brew-ghost.is-primary {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.m-brew-ghost:disabled {
+  opacity: 0.45;
+}
+
+/* Pie fijo (en flujo, no `position:fixed`) de tweak y conexión.
+   Los 34px de abajo son los del `.m-scroll-tail` de la shell: el FAB de la nav
+   sube 26px + 3px de borde y taparía el centro del CTA. La safe-area de abajo
+   ya la resuelve `.m-nav`, que está en flujo debajo de esto. */
+.m-brew-footer {
+  flex: none;
+  padding: 12px 16px 34px;
+  border-top: 1px solid var(--line);
+  background: var(--bg-elev);
+}
+
+.m-brew-error {
+  font-size: 13px;
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  border-radius: 10px;
+  padding: 9px 12px;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   1i · Elegí grano, receta y peso
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.m-brew-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px;
+}
+
+.m-brew-head-titles {
+  flex: 1;
+  min-width: 0;
+}
+
+.m-brew-eyebrow {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  color: var(--fg-subtle);
+}
+
+.m-brew-title {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+}
+
+.m-brew-cups {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* Estante horizontal — ÚNICA excepción permitida al "un solo scroller"
+   (`shell.ts` §1). Sangra a los bordes: el padding lateral es del scroller
+   horizontal, no del contenedor. */
+.m-brew-shelf {
+  flex: none;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 16px 6px;
+  scrollbar-width: none;
+}
+
+.m-brew-shelf::-webkit-scrollbar {
+  display: none;
+}
+
+.m-brew-bean {
+  flex: none;
+  width: 186px;
+  border-radius: 16px;
+  background: var(--bg-elev);
+  border: 1.5px solid var(--line);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  text-align: left;
+  color: var(--fg);
+  transition: border-color 0.18s ease-out, box-shadow 0.18s ease-out;
+}
+
+.m-brew-bean.is-selected {
+  border-color: var(--c-peach-fg);
+  box-shadow: 0 10px 26px -14px rgba(20, 20, 20, 0.35);
+}
+
+.m-brew-bean-top {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.m-brew-bean-emoji {
+  font-size: 15px;
+}
+
+.m-brew-bean-stat {
+  flex: 1;
+  min-width: 0;
+}
+
+.m-brew-bean-weight {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.m-brew-bean-fresh {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 700;
+}
+
+.m-brew-bean-name {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.m-brew-bean-meta {
+  font-size: 11.5px;
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.m-brew-bean-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.m-brew-chip {
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 999px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.m-brew-chip--peach {
+  background: var(--c-peach);
+  color: var(--c-peach-fg);
+}
+
+.m-brew-chip--pink {
+  background: var(--c-pink);
+  color: var(--c-pink-fg);
+}
+
+/* ── card "Preparar <grano>" ── */
+.m-brew-prep {
+  flex: none;
+  margin: 0 16px;
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 16px;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+}
+
+.m-brew-prep-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.m-brew-prep-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.m-brew-prep-water {
+  flex: none;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--c-peach-fg);
+  white-space: nowrap;
+}
+
+.m-brew-prep-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ── lista de recetas (NO `.m-recipe-*`: eso es de las recetas de comida) ── */
+.m-brew-recipe-opt {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 11px 12px;
+  border-radius: 12px;
+  border: 1.5px solid var(--line);
+  background: var(--bg-elev);
+  color: var(--fg);
+  text-align: left;
+  transition: background 0.18s ease-out, border-color 0.18s ease-out;
+}
+
+.m-brew-recipe-opt.is-active {
+  border-color: var(--c-peach-fg);
+  background: var(--c-peach);
+}
+
+.m-brew-recipe-radio {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1.8px solid var(--line-strong);
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.m-brew-recipe-opt.is-active .m-brew-recipe-radio {
+  border-color: var(--c-peach-fg);
+  background: var(--c-peach-fg);
+}
+
+.m-brew-recipe-txt {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.m-brew-recipe-name {
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.m-brew-recipe-meta {
+  font-size: 11.5px;
+  color: var(--fg-muted);
+}
+
+.m-brew-recipe-opt.is-active .m-brew-recipe-meta {
+  color: color-mix(in oklch, var(--c-peach-fg) 78%, #fff);
+}
+
+/* ✨ = la receta se resolvió a la versión ajustada por la AI para este grano. */
+.m-brew-recipe-badge {
+  flex: none;
+  font-size: 14px;
+}
+
+/* ── dosis: anillo + stepper ── */
+.m-brew-dose-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding-top: 2px;
+}
+
+.m-brew-dose-big {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.m-brew-dose-cap {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-subtle);
+}
+
+.m-brew-dose-side {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.m-brew-dose-stepper {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.m-brew-dose-btn {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--line-strong);
+  border-radius: 11px;
+  background: var(--bg-elev);
+  color: var(--fg-muted);
+  font-size: 20px;
+  line-height: 1;
+  padding: 0;
+}
+
+.m-brew-dose-btn:disabled {
+  opacity: 0.35;
+}
+
+.m-brew-dose-value {
+  flex: 1;
+  min-width: 0;
+  height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--bg-sunken);
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.m-brew-dose-water {
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+.m-brew-dose-water b {
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── banner inferior de frescura ── */
+.m-brew-fresh-banner {
+  flex: none;
+  margin: 0 16px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  background: var(--c-peach);
+  border-radius: 14px;
+  padding: 13px 15px;
+}
+
+.m-brew-fresh-icon {
+  font-size: 17px;
+}
+
+.m-brew-fresh-txt {
+  flex: 1;
+  min-width: 0;
+}
+
+.m-brew-fresh-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--c-peach-fg);
+}
+
+.m-brew-fresh-sub {
+  font-size: 11.5px;
+  color: color-mix(in oklch, var(--c-peach-fg) 80%, #fff);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Último ajuste (pantalla `tweak`)
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.m-brew-tweak-lead {
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+
+.m-brew-tweak-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1.5px solid var(--line);
+  background: var(--bg-sunken);
+  color: var(--fg);
+  text-align: left;
+}
+
+.m-brew-tweak-row.is-on {
+  border-color: var(--c-peach-fg);
+  background: var(--c-peach);
+}
+
+.m-brew-tweak-txt {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.m-brew-tweak-label {
+  font-size: 11px;
+  color: var(--fg-subtle);
+}
+
+.m-brew-tweak-row.is-on .m-brew-tweak-label {
+  color: color-mix(in oklch, var(--c-peach-fg) 75%, #fff);
+}
+
+.m-brew-tweak-val {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.m-brew-tweak-flag {
+  flex: none;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--fg-subtle);
+}
+
+.m-brew-tweak-row.is-on .m-brew-tweak-flag {
+  color: var(--c-peach-fg);
+}
+
+.m-brew-tweak-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--fg-muted);
+  background: var(--bg-sunken);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.m-brew-tweak-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Conexión (balanza + pava)
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.m-brew-conn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--bg-sunken);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+
+.m-brew-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--fg-subtle);
+}
+
+.m-brew-dot.is-on {
+  background: var(--ok);
+}
+
+.m-brew-conn-txt {
+  flex: 1;
+  min-width: 0;
+}
+
+.m-brew-conn-name {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.m-brew-conn-sub {
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+.m-brew-kettle-note {
+  font-size: 12.5px;
+  color: var(--c-peach-fg);
+  background: var(--c-peach);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.m-brew-tiles {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+}
+
+.m-brew-tile {
+  background: var(--bg-sunken);
+  border-radius: 10px;
+  padding: 14px 10px;
+  text-align: center;
+}
+
+.m-brew-tile-label {
+  font-size: 10px;
+  color: var(--fg-subtle);
+  margin-bottom: 4px;
+}
+
+.m-brew-tile-val {
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.m-brew-tile-unit {
+  font-size: 10px;
+  color: var(--fg-subtle);
+  margin-top: 2px;
+}
+
+/* Fila de dispositivo encontrado en el scan. */
+.m-brew-dev {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-elev);
+  color: var(--fg);
+  text-align: left;
+}
+
+.m-brew-dev-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.m-brew-dev-addr {
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   1g · BODEGA (`.m-cafe-*`) — pantalla de entrada del tab Café.
+   Lo estructural (`.m-screen`, `.m-scr-*`, `.m-scroll`) lo da `shell.css`; las
+   cards, el label de sección y el mono, `mobile.css` (`.m-card` `.m-label`
+   `.m-mono`). Acá va sólo lo propio de la Bodega.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* Pill de tazas del día: el `.m-scr-pill` de la shell, en durazno. */
+.m-cafe-cups {
+  background: var(--c-peach);
+  border-color: transparent;
+  color: var(--c-peach-fg);
+}
+
+/* Cuerpo de las dos cards (`.m-card` pone fondo/borde/radio/sombra). */
+.m-cafe-card {
+  padding: 14px 15px;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+
+.m-cafe-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.m-cafe-card-aside {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg-muted);
+}
+
+/* ── filas de grano ─────────────────────────────────────────────────────────
+   `--fresh` (color de frescura) lo pone la fila en su `style`: sale de
+   `FRESHNESS_COLOR` (JS), no de CSS. */
+.m-cafe-bean {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 0;
+  border-top: 1px solid oklch(0.96 0.005 80);
+}
+
+.m-cafe-dot {
+  width: 9px;
+  height: 9px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--fresh, var(--fg-subtle));
+}
+
+.m-cafe-bean-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.m-cafe-bean-name {
+  font-size: 14.5px;
+  font-weight: 600;
+}
+
+.m-cafe-bean-meta {
+  font-size: 11.5px;
+  color: var(--fg-muted);
+}
+
+.m-cafe-bean-right {
+  flex: none;
+  text-align: right;
+}
+
+.m-cafe-weight {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.m-cafe-weight.is-low {
+  color: var(--warn);
+}
+
+.m-cafe-weight.is-empty {
+  color: var(--danger);
+}
+
+.m-cafe-fresh {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--fresh, var(--fg-muted));
+}
+
+/* Banner de stock bajo. */
+.m-cafe-alert {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  background: color-mix(in oklch, var(--danger) 10%, var(--bg));
+  border: 1px solid color-mix(in oklch, var(--danger) 30%, transparent);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--danger);
+}
+
+/* ── card "Último brew" ───────────────────────────────────────────────────── */
+.m-cafe-brew-badge {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  line-height: 1;
+  background: var(--c-sand);
+  color: var(--c-sand-fg);
+}
+
+.m-cafe-brew-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.m-cafe-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.m-cafe-stat {
+  background: var(--bg-sunken);
+  border-radius: 10px;
+  padding: 9px 6px;
+  text-align: center;
+}
+
+.m-cafe-stat-val {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.m-cafe-stat-label {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--fg-subtle);
+}
+
+.m-cafe-summary {
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+.m-cafe-note {
+  color: var(--ok);
+}
+
+/* Texto de estado vacío dentro de una card (`.m-empty` es demasiado alto acá). */
+.m-cafe-hint {
+  font-size: 12.5px;
+  color: var(--fg-muted);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   1h · BREW EN VIVO  →  `.m-live-*`   (agente de 1h)
+   Render de la fase `brewing` de `BrewView.tsx`. La fase `finish` sigue con
+   estilos inline (la conserva el usuario tal cual).
+
+   `--bg-base` y `--border-subtle` NO EXISTEN en `tokens.css` (bug latente:
+   `BrewView` era el único archivo del repo que las usaba). Acá se resuelven con
+   tokens reales — `--bg` y `--line` — sin agregar nada a `tokens.css`.
+
+   `--home-s` / `fluid()` son DESKTOP-ONLY: acá todo va en px fijos.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── overlay "Guardando…" (protege el guard de doble-tap) ─────────────────── */
+.m-live-saving {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  /* antes: color-mix(… var(--bg-base) …) ⇒ declaración inválida ⇒ transparente */
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+}
+
+/* ── barra de estado de la balanza ────────────────────────────────────────── */
+.m-live-scale {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 16px;
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--line);
+}
+
+.m-live-scale-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--fg-subtle);
+}
+
+.m-live-scale-dot.is-on {
+  background: var(--ok);
+}
+
+.m-live-scale-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.m-live-scale-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.m-live-scale-subrow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+}
+
+.m-live-scale-sub {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* batería + pava: sin slot en el diseño, pero el dato existe ⇒ no se trunca */
+.m-live-scale-meta {
+  flex: none;
+  display: flex;
+  gap: 7px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* (Acá vivía `.m-live-scale-btn`, el "Desconectar" de la barra de la balanza
+   durante el brew. Se sacó junto con el botón: desconectar a mano con agua en el
+   filtro descarta la sesión, así que el botón era una trampa. La barra de
+   `brewing` ya no tiene acciones.) */
+
+/* ── cuerpo scrolleable ───────────────────────────────────────────────────── */
+.m-live-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  /* 34px abajo: el FAB de la nav sube 26px + 3px de borde y taparía el CTA. */
+  padding: 16px 16px 34px;
+}
+
+/* ── banner de auto-parada (filtro removido) ──────────────────────────────── */
+.m-live-alert {
+  flex: none;
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: var(--accent-soft);
+}
+
+.m-live-alert-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.m-live-alert-sub {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+/* variante de aviso: se cayó la balanza ⇒ el brew sigue pero la sesión no se
+   guarda. No hay token `--warn-soft`, se deriva de `--warn` con color-mix (así
+   funciona en los dos temas sin agregar tokens). */
+.m-live-alert--warn {
+  border-color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+}
+
+.m-live-alert--warn .m-live-alert-title {
+  color: var(--warn);
+}
+
+/* ── card oscura de peso ──────────────────────────────────────────────────── */
+.m-live-weight {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px;
+  border-radius: 18px;
+  background: var(--fg);
+  color: #fff;
+  box-shadow: 0 18px 40px -20px rgba(20, 20, 20, 0.5);
+}
+
+.m-live-weight-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.m-live-weight-label {
+  flex: 1;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: oklch(0.72 0.02 250);
+}
+
+.m-live-weight-target {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: oklch(0.8 0.03 250);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.m-live-weight-num {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  font-family: var(--font-mono);
+  font-size: 62px;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  line-height: 0.9;
+}
+
+.m-live-weight-unit {
+  font-family: var(--font-ui);
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: normal;
+  color: oklch(0.72 0.02 250);
+  padding-bottom: 8px;
+}
+
+.m-live-bar {
+  height: 8px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.14);
+  overflow: hidden;
+}
+
+.m-live-bar-fill {
+  height: 100%;
+  border-radius: 99px;
+  background: oklch(0.68 0.14 250);
+  transition: width 0.4s ease-out;
+}
+
+.m-live-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 9px;
+}
+
+.m-live-stat {
+  border-radius: 11px;
+  padding: 10px;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.m-live-stat-val {
+  font-family: var(--font-mono);
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.m-live-stat-label {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: oklch(0.72 0.02 250);
+}
+
+/* Banda de flujo ±30% (`lib/coffeeFlow.ts`). Sobre fondo OSCURO ⇒ versiones
+   claras de --ok / --warn / --danger, que sobre var(--fg) no se leen. */
+.m-live-flow {
+  font-weight: 700;
+}
+
+.m-live-flow.is-ok {
+  color: oklch(0.72 0.16 145);
+}
+
+.m-live-flow.is-slow {
+  color: oklch(0.8 0.14 75);
+}
+
+.m-live-flow.is-fast {
+  color: oklch(0.72 0.16 25);
+}
+
+/* ── "esperando agua" (el timer arranca solo con el primer vertido) ───────── */
+.m-live-wait {
+  flex: none;
+  padding: 10px 14px;
+  border-radius: 11px;
+  background: var(--bg-sunken);
+  color: var(--fg-muted);
+  font-size: 12.5px;
+  text-align: center;
+}
+
+/* ── card de receta + paso en curso ───────────────────────────────────────── */
+.m-live-recipe {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 15px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--bg-elev);
+  box-shadow: var(--shadow-sm);
+}
+
+.m-live-recipe-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.m-live-recipe-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-muted);
+}
+
+.m-live-recipe-pill {
+  flex: none;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Segmentos = INDICADOR del paso (derivado del tiempo), no un control. */
+.m-live-segs {
+  display: flex;
+  gap: 5px;
+}
+
+.m-live-seg {
+  flex: 1;
+  height: 6px;
+  border-radius: 99px;
+  background: var(--line);
+  transition: background 0.18s ease-out;
+}
+
+.m-live-seg.is-done {
+  background: var(--ok);
+}
+
+.m-live-seg.is-current {
+  background: var(--accent);
+}
+
+.m-live-step {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 15px;
+  border: 1.5px solid var(--accent);
+  border-radius: 13px;
+  background: var(--accent-soft);
+}
+
+.m-live-step-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.m-live-step-num {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.m-live-step-titles {
+  flex: 1;
+  min-width: 0;
+}
+
+.m-live-step-title {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.m-live-step-meta {
+  font-size: 12.5px;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.m-live-step-bar {
+  height: 7px;
+  border-radius: 99px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.m-live-step-fill {
+  height: 100%;
+  border-radius: 99px;
+  background: var(--accent);
+  transition: width 0.3s ease-out;
+}
+
+.m-live-step-fill.is-done {
+  background: var(--ok);
+}
+
+.m-live-step-foot {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+.m-live-step-hint {
+  flex: 1;
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.m-live-step-target {
+  flex: none;
+  font-weight: 600;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.m-live-next {
+  font-size: 12.5px;
+  color: var(--fg-muted);
+}
+
+.m-live-next b {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+/* ── CTA: "Tara + Start" + ✓ (cerrar el brew) ─────────────────────────────── */
+.m-live-cta-row {
+  flex: none;
+  display: flex;
+  gap: 9px;
+}
+
+.m-live-cta {
+  flex: 1;
+  min-width: 0;
+  height: 54px;
+  border: none;
+  border-radius: 12px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.m-live-cta:disabled {
+  background: var(--bg-sunken);
+  color: var(--fg-subtle);
+  border: 1px solid var(--line);
+}
+
+.m-live-done {
+  flex: none;
+  width: 54px;
+  height: 54px;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--bg-elev);
+  color: var(--fg);
+  font-size: 19px;
+}
+
+.m-live-done:disabled {
+  opacity: 0.5;
+}

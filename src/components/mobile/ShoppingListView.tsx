@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useImperativeHandle, useMemo, useState, type CSSProperties } from "react";
 import {
   useCreateShoppingItem,
   useDeleteShoppingItem,
@@ -11,12 +11,13 @@ import {
   useShoppingItems,
 } from "../../lib/queries";
 import { findMergeTarget, mergeQuantities } from "../../lib/compras";
-import { weekStartOf } from "../../lib/date";
+import { weekStartOf, weekStartShortLabel } from "../../lib/date";
 import { DEFAULT_RATES_PER_USD, fmtMoney, fmtUsdFromDkk } from "../../lib/money";
 import { buildPriceHistory, estimatedUnitPrice, type PriceEntry } from "../../lib/priceHistory";
 import { baseUnit, formatQuantity, parseQuantity } from "../../lib/units";
 import { useUsdRate } from "../../lib/useUsdRate";
 import { useToggleBought } from "../../lib/useToggleBought";
+import type { MobileScreenProps } from "./shell";
 import type {
   Ingredient,
   IngredientDimension,
@@ -72,6 +73,14 @@ function historyUnitPrice(
   return estimatedUnitPrice(ingredientId, history, presentations);
 }
 
+/** Qué se dibuja en la línea de precio de una fila cuando no hay precio
+ *  estimable (`itemCost` da null: el ítem no eligió variante, la variante no
+ *  tiene `price` y no hay historial, o el ítem a granel no tiene cantidad).
+ *  El diseño dibuja SIEMPRE esa línea pero no define el caso. Se elige lo más
+ *  discreto —una raya— y se centraliza acá.
+ *  TODO(1j · decide el usuario): ¿raya, "sin precio", o línea oculta? */
+const NO_PRICE_LABEL = "—";
+
 /** Texto del chip de una variante: precio del paquete, o precio por kg/L/u. */
 function presentationChipDetail(p: IngredientPresentation, dim: IngredientDimension): string {
   // La plata de la app es DKK/da-DK: `fmtMoney` (como en el resto del archivo y
@@ -82,7 +91,19 @@ function presentationChipDetail(p: IngredientPresentation, dim: IngredientDimens
   return ` · ${fmtMoney(p.price * u.perBase)}/${u.label}`;
 }
 
-export function ShoppingListView() {
+/** 1j · Compras — lista de la semana (handoff §1j).
+ *
+ *  Contrato de `shell.ts`: root `.m-screen`, header propio `.m-scr-head` (que
+ *  ya resuelve la safe-area de arriba, por eso NO va `--top-safe`), un único
+ *  scroller `.m-scroll --flush` (filas full-bleed) y sin FAB propio — el FAB es
+ *  el de la nav y abre el `AddSheet` por `onFab`.
+ *
+ *  La barra de total va ENTRE el header y el scroller como bloque `flex:none`
+ *  (queda fija mientras la lista scrollea, como en el prototipo). Es un tercer
+ *  hijo de `.m-screen`, permitido por la nota de `styles/mobile/compras.css`.
+ *
+ *  Toda la capa de datos es la de siempre; el rediseño es render + CSS. */
+export function ShoppingListView({ ref }: MobileScreenProps) {
   const itemsQ = useShoppingItems();
   const presentationsQ = useIngredientPresentations();
   const ingredientsQ = useIngredients();
@@ -91,6 +112,11 @@ export function ShoppingListView() {
   const toggleBought = useToggleBought();
   const usdRate = useUsdRate();
   const [sheetOpen, setSheetOpen] = useState(false);
+
+  // El FAB de la bottom nav abre el sheet de agregar (contrato §6: el `AddSheet`
+  // y su estado viven acá, así que compras expone `onFab` en vez de usar el
+  // default de la shell).
+  useImperativeHandle(ref, () => ({ onFab: () => setSheetOpen(true) }), []);
 
   // Historial de precios: mismo cálculo que en escritorio (lib/priceHistory),
   // con las cotizaciones vivas de Finanzas para normalizar gastos en otra moneda.
@@ -162,68 +188,95 @@ export function ShoppingListView() {
     }
   };
 
-  return (
-    <div className="m-shopping">
-      {total > 0 && (
-        <div className="m-total">
-          <span>Total · {items.length} {items.length === 1 ? "ítem" : "ítems"}</span>
-          <span>
-            <strong>{fmtMoney(total)}</strong> <span style={{ color: "var(--fg-subtle)" }}>≈ {fmtUsdFromDkk(total, usdRate)}</span>
-          </span>
-        </div>
-      )}
-      {itemsQ.isLoading ? (
-        <p className="m-empty">Cargando…</p>
-      ) : items.length === 0 ? (
-        <p className="m-empty">La lista está vacía. Tocá el botón + para agregar.</p>
-      ) : (
-        <ul className="m-list">
-          {pending.map((it) => (
-            <ItemRow
-              key={it.id}
-              item={it}
-              price={itemPrice(it)}
-              bulkLabel={bulkLabel(it)}
-              usdRate={usdRate}
-              onToggle={() => toggleBought(it, !it.bought)}
-              onSetQty={(n) => setQtyAbs(it, n)}
-              onDelete={() =>
-                deleteItem.mutateAsync(it.id).catch((err) =>
-                  window.alert(err instanceof Error ? err.message : "No se pudo borrar"),
-                )
-              }
-            />
-          ))}
-          {bought.length > 0 && (
-            <li className="m-section-head">
-              <span>Comprados ({bought.length})</span>
-              <button className="m-clear-btn" type="button" onClick={clearBought}>
-                Vaciar comprados
-              </button>
-            </li>
-          )}
-          {bought.map((it) => (
-            <ItemRow
-              key={it.id}
-              item={it}
-              price={itemPrice(it)}
-              bulkLabel={bulkLabel(it)}
-              usdRate={usdRate}
-              onToggle={() => toggleBought(it, !it.bought)}
-              onSetQty={(n) => setQtyAbs(it, n)}
-              onDelete={() =>
-                deleteItem.mutateAsync(it.id).catch((err) =>
-                  window.alert(err instanceof Error ? err.message : "No se pudo borrar"),
-                )
-              }
-            />
-          ))}
-        </ul>
-      )}
+  // "faltan N ítems" / "todo comprado" cuando no queda ninguno pendiente
+  // (mismo texto que el prototipo). El singular es gramática, no diseño.
+  const left = pending.length;
+  const leftLabel =
+    items.length > 0 && left === 0
+      ? "todo comprado"
+      : left === 1
+        ? "falta 1 ítem"
+        : `faltan ${left} ítems`;
 
-      <button className="m-fab" type="button" onClick={() => setSheetOpen(true)} aria-label="Agregar">
-        +
-      </button>
+  return (
+    <div className="m-screen">
+      <header className="m-scr-head m-compras-head">
+        <div className="m-scr-head-row">
+          <span
+            className="m-scr-badge"
+            style={{ "--badge-bg": "var(--c-blue)", "--badge-fg": "var(--c-blue-fg)" } as CSSProperties}
+          >
+            🛒
+          </span>
+          <div className="m-scr-titles">
+            <h1 className="m-scr-title">Lista de la compra</h1>
+            <span className="m-scr-sub">
+              Semana del {weekStartShortLabel(weekStart)} · {leftLabel}
+            </span>
+          </div>
+        </div>
+      </header>
+
+      {/* Barra de total: SIEMPRE visible (antes se ocultaba con `total > 0`). */}
+      <div className="m-total">
+        <span className="m-total-label">
+          Total · {items.length} {items.length === 1 ? "ítem" : "ítems"}
+        </span>
+        <span className="m-total-amount">{fmtMoney(total)}</span>
+        <span className="m-total-usd">≈ {fmtUsdFromDkk(total, usdRate)}</span>
+      </div>
+
+      <div className="m-scroll m-scroll--flush">
+        {itemsQ.isLoading ? (
+          <p className="m-empty">Cargando…</p>
+        ) : items.length === 0 ? (
+          <p className="m-empty">La lista está vacía. Tocá el botón + para agregar.</p>
+        ) : (
+          <ul className="m-list">
+            {pending.map((it) => (
+              <ItemRow
+                key={it.id}
+                item={it}
+                price={itemPrice(it)}
+                bulkLabel={bulkLabel(it)}
+                onToggle={() => toggleBought(it, !it.bought)}
+                onSetQty={(n) => setQtyAbs(it, n)}
+                onDelete={() =>
+                  deleteItem.mutateAsync(it.id).catch((err) =>
+                    window.alert(err instanceof Error ? err.message : "No se pudo borrar"),
+                  )
+                }
+              />
+            ))}
+            {bought.length > 0 && (
+              <li className="m-section-head">
+                <span>Comprados ({bought.length})</span>
+                <button className="m-clear-btn" type="button" onClick={clearBought}>
+                  Vaciar comprados
+                </button>
+              </li>
+            )}
+            {bought.map((it) => (
+              <ItemRow
+                key={it.id}
+                item={it}
+                price={itemPrice(it)}
+                bulkLabel={bulkLabel(it)}
+                onToggle={() => toggleBought(it, !it.bought)}
+                onSetQty={(n) => setQtyAbs(it, n)}
+                onDelete={() =>
+                  deleteItem.mutateAsync(it.id).catch((err) =>
+                    window.alert(err instanceof Error ? err.message : "No se pudo borrar"),
+                  )
+                }
+              />
+            ))}
+          </ul>
+        )}
+
+        {/* El FAB de 54px de la nav tapa ~32px del final del scroller. */}
+        <div className="m-scroll-tail" />
+      </div>
 
       {sheetOpen && <AddSheet onClose={() => setSheetOpen(false)} />}
     </div>
@@ -354,7 +407,6 @@ function ItemRow({
   item,
   price,
   bulkLabel,
-  usdRate,
   onToggle,
   onSetQty,
   onDelete,
@@ -363,7 +415,6 @@ function ItemRow({
   price: number | null;
   /** Item a granel: cuanto se compra ("750 g"). null = item por paquete. */
   bulkLabel: string | null;
-  usdRate: number;
   onToggle: () => void;
   onSetQty: (n: number) => void;
   onDelete: () => void;
@@ -381,18 +432,16 @@ function ItemRow({
       <button className="m-check" type="button" onClick={onToggle} aria-label="Marcar comprado">
         {item.bought ? "✓" : ""}
       </button>
-      <span className="m-item-name" onClick={onToggle}>
-        {item.name}
-        {price != null && (
-          <span className="m-item-price"> {fmtMoney(price)} · ≈{fmtUsdFromDkk(price, usdRate)}</span>
-        )}
-      </span>
+      {/* Nombre arriba, precio estimado abajo (el ≈USD por fila salió: el
+          diseño lo deja solo en la barra de total). */}
+      <div className="m-item-main" onClick={onToggle}>
+        <div className="m-item-name">{item.name}</div>
+        <div className="m-item-price">{price != null ? fmtMoney(price) : NO_PRICE_LABEL}</div>
+      </div>
       {bulkLabel != null ? (
         // A granel se compra un peso/volumen: "quantity ± 1" no significa nada.
         // El monto se edita desde la app de escritorio.
-        <span style={{ fontVariantNumeric: "tabular-nums", color: "var(--fg-muted)", whiteSpace: "nowrap" }}>
-          {bulkLabel}
-        </span>
+        <span className="m-item-bulk">{bulkLabel}</span>
       ) : (
         <div className="m-stepper">
           <button type="button" onClick={() => onSetQty(item.quantity - 1)} aria-label="Menos">−</button>
@@ -407,6 +456,9 @@ function ItemRow({
           <button type="button" onClick={() => onSetQty(item.quantity + 1)} aria-label="Más">+</button>
         </div>
       )}
+      {/* TODO(1j · decide el usuario): el diseño no dibuja este ✕, pero hoy es
+          la ÚNICA forma de sacar un ítem sin tildarlo y usar "Vaciar
+          comprados". Se conserva hasta que se defina el gesto (¿swipe?). */}
       <button className="m-del" type="button" onClick={onDelete} aria-label="Borrar">
         ✕
       </button>

@@ -1,0 +1,302 @@
+/* ════════════════════════════════════════════════════════════════════════════
+   1d · FINANZAS — archivo exclusivo del agente de 1d.
+
+   Lo estructural lo da `shell.css` (`.m-scr-head`, `.m-scr-badge`, `.m-scr-*`,
+   `.m-pager` / `.m-pager-btn`, `.m-scroll`, `.m-scroll-tail`) y lo compartido
+   `mobile.css` (`.m-empty`, `.m-mono`, `.m-sheet-*`, `.m-quick-grid`,
+   `.m-add-name`). Acá va SOLO lo propio de 1d:
+     · el donut de 236px (conic-gradient + disco interior de 172px)
+     · el total en mono 36px/700 y el pill de "<pct>% de <límite> kr"
+     · el grid de categorías de 2 columnas con su checkbox de color
+     · el bottom-sheet mobile de NUEVO GASTO
+
+   Sin `fluid()` ni `--home-s` (DESKTOP-ONLY): todo en px fijos + tokens.
+   Los valores que dependen de DATOS (el conic-gradient, el color del pill, el
+   color del checkbox por hue) van inline desde el TSX — acá sólo lo estable.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* ── header: pager de mes ────────────────────────────────────────────────────
+   `.m-pager` / `.m-pager-btn` son de la shell. Acá sólo el label y el área
+   táctil: el handoff dibuja flechas de 26×26 pero el propio README exige
+   toques >= 44px. Se agranda el blanco con un pseudo-elemento, sin tocar el
+   look ni el layout (el pseudo no participa del flujo). */
+.m-fin-pager-btn {
+  position: relative;
+}
+
+.m-fin-pager-btn::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 44px;
+  height: 44px;
+  transform: translate(-50%, -50%);
+}
+
+.m-fin-pager-label {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 0 2px;
+  white-space: nowrap;
+}
+
+/* ── donut ──────────────────────────────────────────────────────────────────
+   El `background` (el `conic-gradient`, o un color plano cuando no hay ningún
+   tope configurado) lo pone el TSX inline. */
+.m-fin-donut-wrap {
+  flex: none;
+  display: flex;
+  justify-content: center;
+  padding: 4px 0 2px;
+}
+
+.m-fin-donut {
+  width: 236px;
+  height: 236px;
+  flex: none;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+}
+
+.m-fin-donut-hole {
+  width: 172px;
+  height: 172px;
+  border-radius: 50%;
+  /* El agujero es del color del FONDO DE LA PANTALLA, no `--bg-elev`: el donut
+     va suelto sobre `.m-scroll`, no dentro de una card. */
+  background: var(--bg);
+  display: grid;
+  place-items: center;
+  text-align: center;
+}
+
+.m-fin-total {
+  font-size: 36px;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  line-height: 1;
+}
+
+.m-fin-total-label {
+  font-size: 13px;
+  color: var(--fg-muted);
+  margin-top: 3px;
+}
+
+/* `color` y `background` (el tono por umbral: --ok <75% · --warn 75-94% ·
+   --danger >=95%) los pone el TSX inline. */
+.m-fin-pill {
+  display: inline-block;
+  margin-top: 7px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* ── grid de categorías ─────────────────────────────────────────────────── */
+.m-fin-grid {
+  flex: none;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 14px;
+}
+
+.m-fin-cat {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 9px 10px;
+  border-radius: 11px;
+  border: 1px solid var(--line);
+  background: var(--bg-elev);
+  color: inherit;
+  text-align: left;
+  /* Único movimiento que pide el handoff en esta pantalla. */
+  transition: background 0.18s ease-out;
+}
+
+.m-fin-cat.is-off {
+  border-color: transparent;
+  background: var(--bg-sunken);
+}
+
+/* El check: 22px radio 6px. `border-color` y `background` salen del hue de la
+   categoría (`colorsForHue(hue).fg`), inline desde el TSX. */
+.m-fin-cat-box {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  border-radius: 6px;
+  border: 1.8px solid var(--line-strong);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+}
+
+.m-fin-cat-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.m-fin-cat-name {
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.m-fin-cat.is-off .m-fin-cat-name {
+  color: var(--fg-subtle);
+}
+
+.m-fin-cat-amount {
+  font-size: 11px;
+  color: var(--fg-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+/* HUECO DEL EMOJI POR CATEGORÍA — la clase está lista, el TSX todavía no la
+   renderiza porque `ExpenseCategory` NO tiene de dónde sacar el emoji (ver el
+   TODO en `FinanzasMobileView.tsx`). Cuando el usuario decida la fuente, es
+   una línea de TSX y esto ya calza. */
+.m-fin-cat-icon {
+  font-size: 14px;
+  flex: none;
+  line-height: 1;
+}
+
+/* El emoji no se tiñe con `color` — apagado se resuelve con filtro. */
+.m-fin-cat.is-off .m-fin-cat-icon {
+  filter: grayscale(1) opacity(0.5);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   BOTTOM-SHEET DE NUEVO GASTO (`ExpenseSheetMobile.tsx`)
+   El contenedor (`.m-sheet-backdrop`, `.m-sheet`, `.m-sheet-head`,
+   `.m-sheet-section`) es compartido; acá van sólo los campos.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.m-fin-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.m-fin-amount-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  height: 56px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+
+.m-fin-amount {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: none;
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  /* >=16px o Android hace zoom al enfocar el input. */
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.m-fin-amount:focus {
+  outline: none;
+}
+
+.m-fin-amount-cur {
+  flex: none;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-subtle);
+}
+
+.m-fin-hint {
+  font-size: 12px;
+  color: var(--fg-subtle);
+}
+
+/* Chip de categoría / cuenta. Cuando está activo el color de la categoría lo
+   pisa inline el TSX. */
+.m-fin-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  /* 40px de alto + el padding del contenedor: dedo cómodo. */
+  min-height: 40px;
+  padding: 9px 13px;
+  border: 1px solid var(--line-strong);
+  border-radius: 20px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 14px;
+}
+
+.m-fin-chip.is-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.m-fin-chip-dot {
+  width: 9px;
+  height: 9px;
+  flex: none;
+  border-radius: 50%;
+}
+
+.m-fin-date {
+  height: 48px;
+  padding: 0 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 16px;
+  font-family: var(--font-ui);
+}
+
+.m-fin-error {
+  padding: 9px 11px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--danger);
+  background: color-mix(in oklch, var(--danger) 12%, var(--bg));
+  border: 1px solid color-mix(in oklch, var(--danger) 30%, transparent);
+}
+
+.m-fin-save {
+  height: 52px;
+  flex: none;
+  margin-top: 2px;
+  border: none;
+  border-radius: 12px;
+  background: var(--fg);
+  color: #fff;
+  font-size: 15.5px;
+  font-weight: 600;
+}
+
+.m-fin-save:disabled {
+  opacity: 0.4;
+}
