@@ -1,11 +1,13 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useState, type MouseEvent } from "react";
 import { convertViaUsd, fmtMoneyIn, parseMoney } from "../../lib/money";
+import { todayYmd } from "../../lib/date";
 import { computeNetWorth } from "../../lib/netWorth";
 import { useAutoExchangeRates } from "../../lib/exchangeRates";
 import { useNetWorthSnapshot } from "../../lib/useNetWorthSnapshot";
 import {
   useAccounts,
   useCreateAccount,
+  useCreateAccountTransfer,
   useDeleteAccount,
   useFinanzasSettings,
   usePatchAccount,
@@ -314,6 +316,7 @@ function AccountEditor({
   const create = useCreateAccount();
   const patch = usePatchAccount();
   const remove = useDeleteAccount();
+  const createTransfer = useCreateAccountTransfer();
 
   const existing = mode === "edit" && accountId
     ? (accountsQ.data ?? []).find((a) => a.id === accountId)
@@ -335,17 +338,22 @@ function AccountEditor({
           isInvestmentTarget: false,
         },
   );
-  const [balanceText, setBalanceText] = useState<string>(() =>
-    existing && existing.balance !== 0 ? existing.balance.toString().replace(".", ",") : "",
-  );
+  const moneyText = (n: number) => (n !== 0 ? (Math.round(n * 100) / 100).toString().replace(".", ",") : "");
+  const [balanceText, setBalanceText] = useState<string>(() => (existing ? moneyText(existing.balance) : ""));
+  // Solo en edicion: el saldo inicial (al balanceAsOf) se corrige aparte del actual.
+  const [openingText, setOpeningText] = useState<string>(() => (existing ? moneyText(existing.openingBalance) : ""));
   const [confirmDelete, setConfirmDelete] = useState(false);
 
+  // Se carga UNA vez por cuenta: el saldo derivado refetchea con cada gasto/tasa/realtime,
+  // y re-sincronizar aca pisaria lo que el usuario esta escribiendo.
   useEffect(() => {
     if (existing) {
       setDraft(fromAccount(existing));
-      setBalanceText(existing.balance !== 0 ? existing.balance.toString().replace(".", ",") : "");
+      setBalanceText(moneyText(existing.balance));
+      setOpeningText(moneyText(existing.openingBalance));
     }
-  }, [existing]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [existing?.id]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -363,7 +371,7 @@ function AccountEditor({
 
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const isBusy = create.isPending || patch.isPending || remove.isPending || saving;
+  const isBusy = create.isPending || patch.isPending || remove.isPending || createTransfer.isPending || saving;
 
   const withTimeout = <T,>(p: Promise<T>): Promise<T> =>
     Promise.race([
@@ -379,11 +387,23 @@ function AccountEditor({
     setError(null);
     try {
       if (mode === "edit" && existing) {
-        // A manual balance edit must also move the opening_balance/balance_as_of
-        // anchor to today, or the next reconcileAccountBalances() self-heal
-        // (runs on every app start) recomputes from the OLD anchor and overwrites
-        // this edit right back to the stale value.
-        const balanceChanged = balance !== existing.balance;
+        // El saldo mostrado es DERIVADO (lib/accountBalance.ts), asi que hay dos
+        // formas de corregirlo (pedido del usuario):
+        //  - "Saldo inicial": cambia el original, manteniendo su fecha.
+        //  - "Saldo actual": crea un ajuste invisible (transfer kind "adjustment",
+        //    una sola pata) por la diferencia, fechado hoy — asi lo que escribis es
+        //    lo que se ve, con los gastos de hoy ya incluidos.
+        const opening = parseMoney(openingText) ?? 0;
+        const openingChanged = Math.abs(opening - existing.openingBalance) > 0.005;
+        // Solo hay ajuste si se toco "Saldo actual"; si no, corregir el inicial
+        // quedaria anulado por un ajuste igual y contrario.
+        const currentEdited = balanceText.trim() !== moneyText(existing.balance);
+        const adjustment = currentEdited ? balance - (existing.balance + (opening - existing.openingBalance)) : 0;
+        // Los montos de los saldos estan en la moneda vieja: mezclar ambos cambios
+        // en un guardado daria un saldo distinto al escrito.
+        if (draft.currency !== existing.currency && (openingChanged || currentEdited)) {
+          throw new Error("Cambiá la moneda y el saldo en dos guardados distintos");
+        }
         await withTimeout(
           patch.mutateAsync({
             id: existing.id,
@@ -393,10 +413,7 @@ function AccountEditor({
               type: draft.type,
               currency: draft.currency,
               balance,
-              ...(balanceChanged && {
-                openingBalance: balance,
-                balanceAsOf: new Date().toISOString().slice(0, 10),
-              }),
+              ...(openingChanged && { openingBalance: opening }),
               institution: draft.institution.trim(),
               note: draft.note.trim(),
               receivesIncome: draft.receivesIncome,
@@ -406,6 +423,19 @@ function AccountEditor({
             },
           }),
         );
+        if (Math.abs(adjustment) > 0.005) {
+          await withTimeout(
+            createTransfer.mutateAsync({
+              fromAccountId: adjustment < 0 ? existing.id : null,
+              toAccountId: adjustment > 0 ? existing.id : null,
+              amount: Math.round(Math.abs(adjustment) * 100) / 100,
+              currency: draft.currency,
+              transferredOn: todayYmd(),
+              kind: "adjustment",
+              note: "Ajuste de saldo",
+            }),
+          );
+        }
       } else {
         // Phase B: opening balance = balance.
         await withTimeout(
@@ -416,7 +446,7 @@ function AccountEditor({
             currency: draft.currency,
             balance,
             openingBalance: balance,
-            balanceAsOf: new Date().toISOString().slice(0, 10),
+            balanceAsOf: todayYmd(),
             institution: draft.institution.trim(),
             note: draft.note.trim(),
             receivesIncome: draft.receivesIncome,
@@ -555,8 +585,27 @@ function AccountEditor({
             </div>
           </div>
 
+          {mode === "edit" && existing && (
+            <div className="field">
+              <label>Saldo inicial{existing.balanceAsOf ? ` (al ${existing.balanceAsOf})` : ""}</label>
+              <div className="control">
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0,00"
+                  value={openingText}
+                  onChange={(e) => setOpeningText(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") save(); }}
+                  className="input"
+                  title="Corrige el saldo original, sin cambiar su fecha"
+                  style={{ width: 140, fontVariantNumeric: "tabular-nums", textAlign: "right" }}
+                />
+              </div>
+            </div>
+          )}
+
           <div className="field">
-            <label>Saldo</label>
+            <label>{mode === "edit" ? "Saldo actual" : "Saldo"}</label>
             <div className="control" style={{ alignItems: "stretch" }}>
               <input
                 type="text"

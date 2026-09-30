@@ -39,7 +39,6 @@ import { useRealtimeSync } from "./lib/realtime";
 import { useRollForwardRecurringTasks } from "./lib/rollForward";
 import { useSeedDefaultCategories } from "./lib/seedCategories";
 import { useSeedDefaultExpenseCategories } from "./lib/seedExpenseCategories";
-import { useReconcileAccountBalances } from "./lib/reconcileBalances";
 import { useExternalChangesPoller } from "./lib/externalChanges";
 import { useSyncEngine } from "./lib/sync";
 import { useEventNotifications } from "./lib/useEventNotifications";
@@ -93,7 +92,6 @@ function App() {
   useEventNotifications();
   useSeedDefaultCategories(session?.user.id);
   useSeedDefaultExpenseCategories(session?.user.id);
-  useReconcileAccountBalances(session?.user.id);
   useRollForwardRecurringTasks(
     tasksQ.data,
     Boolean(session?.user.id) && tasksQ.isSuccess,

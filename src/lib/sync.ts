@@ -1,6 +1,7 @@
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { getDb } from "./db";
+import { repo } from "./repo";
 import { supabase } from "./supabase";
 
 export type SyncStatus = "idle" | "syncing" | "offline" | "error";
@@ -338,6 +339,14 @@ export async function pullDeltas(userId: string, qc: QueryClient): Promise<void>
       qc.invalidateQueries({ queryKey: ["events"] });
       qc.invalidateQueries({ queryKey: ["automations"] });
       qc.invalidateQueries({ queryKey: ["ingredient_categories"] });
+    }
+    // Fix unico de los snapshots de patrimonio tomados con el saldo incremental roto:
+    // recien despues de un pull exitoso, para no recalcular sobre un ledger viejo.
+    try {
+      await repo.recomputeNetWorthSnapshots();
+      qc.invalidateQueries({ queryKey: ["net_worth_snapshots"] });
+    } catch (e) {
+      console.warn("net_worth_snapshots recompute skipped:", e);
     }
     if (currentStatus === "syncing") setStatus("idle");
   } catch (e) {
@@ -804,6 +813,10 @@ export async function applyRealtime(
 ): Promise<void> {
   await upsertLocal(entity, row);
   qc.invalidateQueries({ queryKey: [entity] });
+  // El saldo de las cuentas se deriva de estos movimientos (y de las tasas).
+  if (entity === "expenses" || entity === "incomes" || entity === "account_transfers" || entity === "finanzas_settings") {
+    qc.invalidateQueries({ queryKey: ["accounts"] });
+  }
 }
 
 /** React hook: kicks off sync + listens for online/offline + outbox enqueues. */

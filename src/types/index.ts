@@ -534,7 +534,9 @@ export interface Account {
   version: number;
 }
 
-export type TransferKind = "transfer" | "savings" | "investment";
+/** "adjustment" = ajuste de saldo invisible (una sola pata; la otra cuenta en null). Lo crea
+ *  editar el "saldo actual" de una cuenta; no aparece en las listas de transferencias. */
+export type TransferKind = "transfer" | "savings" | "investment" | "adjustment";
 
 export interface AccountTransfer {
   id: string;

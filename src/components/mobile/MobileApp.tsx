@@ -3,7 +3,6 @@ import { useSession } from "../../lib/auth";
 import { useMaterializeRecurringExpenses } from "../../lib/materializeRecurringExpenses";
 import { useTasks } from "../../lib/queries";
 import { useRealtimeSync } from "../../lib/realtime";
-import { useReconcileAccountBalances } from "../../lib/reconcileBalances";
 import { useRollForwardRecurringTasks } from "../../lib/rollForward";
 import { useApp, MOBILE_ROUTE_TTL_MS } from "../../lib/store";
 import { useSyncEngine } from "../../lib/sync";
@@ -57,18 +56,9 @@ export function MobileApp() {
   // NO se montan los seeds (`useSeedDefaultCategories`,
   // `useSeedDefaultExpenseCategories`) ni `useExternalChangesPoller`: el usuario
   // pidió el roll-forward y la materialización, no aquéllos.
-  //
-  // `useReconcileAccountBalances` SÍ va, y es consecuencia directa de montar
-  // `useMaterializeRecurringExpenses`: materializar un gasto TOCA EL SALDO de la
-  // cuenta, y ese ajuste no es transaccional con el INSERT del gasto (ver el
-  // comentario largo en `createExpense`, en `lib/repo/local.ts`). El reconcile
-  // es justamente el que recalcula el saldo desde el ledger y repara la deriva.
-  // Dejar que el celular escriba gastos sin montarlo era abrir el agujero sin
-  // poner el parche que ya existe.
   const tasksQ = useTasks();
   useRollForwardRecurringTasks(tasksQ.data, Boolean(session?.user.id) && tasksQ.isSuccess);
   useMaterializeRecurringExpenses(session?.user.id);
-  useReconcileAccountBalances(session?.user.id);
 
   const mobileTab = useApp((s) => s.mobileTab);
   const setMobileTab = useApp((s) => s.setMobileTab);

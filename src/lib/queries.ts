@@ -914,7 +914,10 @@ export function useUpsertFinanzasSettings() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: FinanzasSettingsUpsert) => repo.upsertFinanzasSettings(input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.finanzasSettings }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEYS.finanzasSettings });
+      qc.invalidateQueries({ queryKey: KEYS.accounts }); // saldo derivado: convierte con estas tasas
+    },
   });
 }
 

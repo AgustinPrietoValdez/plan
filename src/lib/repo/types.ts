@@ -348,10 +348,6 @@ export interface Repo {
   createAccount(input: AccountCreate): Promise<Account>;
   patchAccount(id: string, patch: AccountPatch): Promise<Account>;
   deleteAccount(id: string): Promise<void>;
-  /** Recompute each account's balance from openingBalance + the ledger
-   *  (expenses/incomes/transfers) since balanceAsOf, and self-heal any drift
-   *  found (e.g. from a process kill mid-write). Safe to call repeatedly. */
-  reconcileAccountBalances(): Promise<void>;
 
   listAccountTransfers(): Promise<AccountTransfer[]>;
   createAccountTransfer(input: AccountTransferCreate): Promise<AccountTransfer>;
@@ -427,6 +423,12 @@ export interface Repo {
 
   listNetWorthSnapshots(): Promise<NetWorthSnapshot[]>;
   upsertNetWorthSnapshot(input: NetWorthSnapshotUpsert): Promise<NetWorthSnapshot>;
+  /** Recalcula snapshots desde el ledger: saldo de cada cuenta (no archivada) al
+   *  cierre de su mes, convertido con las tasas actuales. `months` = cuales; sin
+   *  argumento, todos los existentes UNA sola vez por dispositivo (fix de los
+   *  snapshots tomados con el saldo incremental roto, set 2026). Salta los meses
+   *  en que alguna cuenta todavia no tenia saldo inicial. */
+  recomputeNetWorthSnapshots(months?: string[]): Promise<void>;
 
   listEvents(): Promise<CalendarEvent[]>;
   createEvent(input: EventCreate): Promise<CalendarEvent>;

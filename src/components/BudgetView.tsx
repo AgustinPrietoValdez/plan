@@ -31,7 +31,7 @@ import {
   useUpsertIncome,
   useUpsertSavingsContribution,
 } from "../lib/queries";
-import { effectivePercent, overflowPercent as computeOverflowPercent } from "../lib/savingsAllocation";
+import { allocateMonth } from "../lib/savingsAllocation";
 import { budgetsInScope, expensesInScope, totalSpentIn } from "../lib/spending";
 import { useApp } from "../lib/store";
 import type {
@@ -318,28 +318,30 @@ function IncomeByAccountCard({
 // ── Savings % editor row (only active goals — el resto del ciclo de vida vive en Ahorros) ──
 function GoalMonthRow({
   goal,
-  overflowPct,
-  leftover,
+  pct,
+  allocated,
   onPatchPercent,
   onToggleOverflow,
 }: {
   goal: SavingsGoal;
-  overflowPct: number;
-  leftover: number;
+  /** % efectivo: savingsPercent bajado al maximo si pasaria el objetivo. */
+  pct: number;
+  allocated: number;
   onPatchPercent: (pct: number) => void;
   onToggleOverflow: () => void;
 }) {
-  const eff = effectivePercent(goal, overflowPct);
-  const allocated = leftover > 0 ? (eff / 100) * leftover : 0;
-  const [pctText, setPctText] = useState(goal.savingsPercent.toString());
-  useEffect(() => setPctText(goal.savingsPercent.toString()), [goal.id, goal.savingsPercent]);
+  const capped = pct < goal.savingsPercent;
+  const shown = (Math.round(pct * 10) / 10).toString();
+  const [pctText, setPctText] = useState(shown);
+  useEffect(() => setPctText(shown), [goal.id, shown]);
   const commitPct = () => {
     const val = parseInt(pctText, 10);
-    if (!isNaN(val) && val >= 0 && val <= 100) {
-      if (val !== goal.savingsPercent) onPatchPercent(val);
-    } else {
-      setPctText(goal.savingsPercent.toString());
-    }
+    // Si no cambio lo que se ve, no pisar el % pedido (que puede ser mayor al tope).
+    if (pctText.trim() === shown) return;
+    if (!isNaN(val) && val >= 0 && val <= 100 && val !== goal.savingsPercent) onPatchPercent(val);
+    // Siempre volver a lo efectivo: si lo nuevo tambien pasa el tope, `shown` no cambia
+    // y el effect no dispararia, dejando el valor tipeado al lado de "% máx".
+    setPctText(shown);
   };
 
   return (
@@ -363,7 +365,12 @@ function GoalMonthRow({
           className="input"
           style={{ ...fieldChrome, width: fluid(38), textAlign: "right", padding: `${fluid(3)} ${fluid(5)}`, fontSize: fluid(11) }}
         />
-        <span style={{ fontSize: fluid(10), color: "var(--fg-muted)" }}>%</span>
+        <span
+          style={{ fontSize: fluid(10), color: capped ? "var(--ok)" : "var(--fg-muted)" }}
+          title={capped ? `Pediste ${goal.savingsPercent}% — se limita al maximo para no pasar el objetivo` : undefined}
+        >
+          {capped ? "% máx" : "%"}
+        </span>
         <button className="btn ghost" style={{ width: fluid(58), padding: `${fluid(1)} 0`, fontSize: fluid(9.5), textAlign: "center" }} onClick={onToggleOverflow}>
           {goal.isOverflowTarget ? "unset" : "overflow"}
         </button>
@@ -435,7 +442,7 @@ function TransfersCard({
   onDelete: (id: string) => void;
 }) {
   const nameOf = (id: string | null) => (id ? accounts.find((a) => a.id === id)?.name ?? "—" : "—");
-  const monthTransfers = transfers.filter((t) => t.transferredOn.slice(0, 7) === month && !t.deletedAt);
+  const monthTransfers = transfers.filter((t) => t.transferredOn.slice(0, 7) === month && !t.deletedAt && t.kind !== "adjustment");
 
   return (
     <div style={{
@@ -663,24 +670,27 @@ export function BudgetView() {
       .filter((g) => g.active && !g.purchasedAt && !g.deletedAt)
       .sort((a, b) => rank(a) - rank(b) || a.position - b.position);
   }, [goals]);
-  const overflowPercent = computeOverflowPercent(activeGoals);
-  const totalAllocated = leftover > 0
-    ? activeGoals.reduce((s, g) => s + (effectivePercent(g, overflowPercent) / 100) * leftover, 0)
-    : 0;
-
   // This month's savings target per active goal (% of leftover), and what's already
   // been recorded for it this month via savings_contributions (see Ahorros/TransferModal —
   // one real bank transfer can cover several goals sharing a destination account).
+  // Goals con objetivo: el % se baja solo al maximo que no pasa la compra (se recalcula
+  // si cambia el leftover); el % que sobra va al overflow, y si el overflow se llena pasa al goal siguiente
+  // (ver allocateMonth). savingsPercent guarda lo pedido.
   const contributionsQ = useSavingsContributions();
   const contributions = useMemo(() => contributionsQ.data ?? [], [contributionsQ.data]);
   const goalMonthTarget = useMemo(() => {
-    return activeGoals.map((g) => {
-      const target = leftover > 0 ? (effectivePercent(g, overflowPercent) / 100) * leftover : 0;
-      const contributedThisMonth = contributions.find((c) => c.goalId === g.id && c.month === activeMonth && !c.deletedAt)?.amount ?? 0;
+    const rows = activeGoals.map((g) => {
+      const own = contributions.filter((c) => c.goalId === g.id && !c.deletedAt);
+      const contributedThisMonth = own.find((c) => c.month === activeMonth)?.amount ?? 0;
+      // Excluye el aporte de este mes: si no, el tope se achica apenas se registra la transferencia.
+      const savedBefore = own.filter((c) => c.month !== activeMonth).reduce((s, c) => s + c.amount, 0);
       const destAccount = g.destinationAccountId ? allAccounts.find((a) => a.id === g.destinationAccountId) ?? null : null;
-      return { goal: g, target, contributedThisMonth, destAccount };
+      return { goal: g, savedBefore, contributedThisMonth, destAccount };
     });
-  }, [activeGoals, leftover, overflowPercent, contributions, activeMonth, allAccounts]);
+    const alloc = allocateMonth(rows, leftover);
+    return rows.map((r, i) => ({ ...r, pct: alloc[i].pct, target: alloc[i].amount }));
+  }, [activeGoals, leftover, contributions, activeMonth, allAccounts]);
+  const totalAllocated = goalMonthTarget.reduce((s, t) => s + t.target, 0);
 
   // Group by destination account: one real transfer can cover several goals at once.
   const pendingByAccount = useMemo(() => {
@@ -881,12 +891,12 @@ export function BudgetView() {
               {/* Cap la lista a ~3 filas visibles y scrollea adentro — asi Transferencias
                   (debajo) no se queda sin espacio cuando hay muchos goals activos. */}
               <div className="fz-col" style={{ display: "flex", flexDirection: "column", gap: fluid(6), maxHeight: fluid(130), overflowY: "auto", paddingRight: fluid(4) }}>
-                {goalMonthTarget.map(({ goal }) => (
+                {goalMonthTarget.map(({ goal, pct, target }) => (
                   <GoalMonthRow
                     key={goal.id}
                     goal={goal}
-                    overflowPct={overflowPercent}
-                    leftover={leftover}
+                    pct={pct}
+                    allocated={target}
                     onPatchPercent={(pct) =>
                       patchGoal.mutateAsync({ id: goal.id, patch: { savingsPercent: pct } }).catch((err) =>
                         window.alert(err instanceof Error ? err.message : "No se pudo guardar"),

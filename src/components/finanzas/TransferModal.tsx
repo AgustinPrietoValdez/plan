@@ -9,6 +9,7 @@ export const KIND_LABEL: Record<TransferKind, string> = {
   transfer: "Transferencia",
   savings: "Ahorro",
   investment: "Inversion",
+  adjustment: "Ajuste de saldo",
 };
 export const KIND_OPTIONS: TransferKind[] = ["transfer", "savings", "investment"];
 

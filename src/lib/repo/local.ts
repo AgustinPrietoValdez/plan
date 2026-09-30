@@ -93,7 +93,8 @@ import type {
   TaskCreate,
 } from "./types";
 import { convertViaUsd, CURRENCY, DEFAULT_RATES_PER_USD } from "../money";
-import { fromYmd, ymd } from "../date";
+import { fromYmd, todayYmd, ymd } from "../date";
+import { deriveAccountBalances } from "../accountBalance";
 
 interface DbTaskRow {
   id: string;
@@ -305,45 +306,48 @@ async function enqueue(
   window.dispatchEvent(new CustomEvent("outbox:enqueued"));
 }
 
-// ── Account balance auto-calculation (Phase C) ────────────────────────────────
-//
-// Movements (incomes, expenses, transfers) keep account balances in sync by
-// applying a signed delta to the linked account and enqueueing the account
-// update so it syncs like any other change. Everything is centralized here so
-// the create / patch / delete call-sites stay small and consistent:
-//   * create  -> apply the effect once
-//   * patch   -> reverse the OLD row's effect, then apply the NEW row's effect
-//   * delete  -> reverse the effect (the money "comes back")
-// Accounts are nullable everywhere, so when no account is linked we simply do
-// nothing — those movements behave exactly as before Phase C.
+// ── Account balance: DERIVED, never accumulated ──────────────────────────────
+// Ver `lib/accountBalance.ts` (el porqué y la matemática). Acá solo se leen las
+// filas; la columna `accounts.balance` quedó como cache sin lectores.
 
 type Db = Awaited<ReturnType<typeof getDb>>;
 
-/** Read current balance, add `delta`, bump version and enqueue the account update. */
-async function adjustAccountBalance(
+/** Saldo de cada cuenta al día `upTo` (inclusive), derivado del ledger. */
+async function computeAccountBalances(
   db: Db,
   userId: string,
-  accountId: string | null,
-  delta: number,
-): Promise<void> {
-  if (!accountId || !delta) return;
-  const rows = await db.select<DbAccountRow[]>(
-    "SELECT * FROM accounts WHERE id = ? AND user_id = ? AND deleted_at IS NULL LIMIT 1",
-    [accountId, userId],
+  accounts: Account[],
+  upTo: string = todayYmd(),
+): Promise<Map<string, number>> {
+  if (accounts.length === 0) return new Map();
+  const rates = await readRates(db, userId);
+  const expenses = await db.select<{ account_id: string; amount: number; currency: string; spent_on: string }[]>(
+    "SELECT account_id, amount, currency, spent_on FROM expenses WHERE user_id = ? AND deleted_at IS NULL AND account_id IS NOT NULL",
+    [userId],
   );
-  if (!rows[0]) return; // account missing or archived/deleted — skip silently
-  const acc = fromDbAccount(rows[0]);
-  const updated: Account = {
-    ...acc,
-    balance: acc.balance + delta,
-    updatedAt: now(),
-    version: acc.version + 1,
-  };
-  await db.execute(
-    "UPDATE accounts SET balance = ?, updated_at = ?, version = ? WHERE id = ? AND user_id = ?",
-    [updated.balance, updated.updatedAt, updated.version, accountId, userId],
+  const incomes = await db.select<{ account_id: string; amount: number; currency: string; month: string }[]>(
+    "SELECT account_id, amount, currency, month FROM incomes WHERE user_id = ? AND deleted_at IS NULL AND account_id IS NOT NULL",
+    [userId],
   );
-  await enqueue(userId, "update", "accounts", accountId, accountToWire(updated, userId));
+  const transfers = await db.select<
+    { from_account_id: string | null; to_account_id: string | null; amount: number; currency: string; transferred_on: string }[]
+  >(
+    "SELECT from_account_id, to_account_id, amount, currency, transferred_on FROM account_transfers WHERE user_id = ? AND deleted_at IS NULL",
+    [userId],
+  );
+  return deriveAccountBalances(
+    accounts,
+    {
+      expenses: expenses.map((e) => ({ accountId: e.account_id, amount: e.amount, currency: e.currency, spentOn: e.spent_on })),
+      incomes: incomes.map((i) => ({ accountId: i.account_id, amount: i.amount, currency: i.currency, month: i.month })),
+      transfers: transfers.map((t) => ({
+        fromAccountId: t.from_account_id, toAccountId: t.to_account_id,
+        amount: t.amount, currency: t.currency, transferredOn: t.transferred_on,
+      })),
+    },
+    rates,
+    upTo,
+  );
 }
 
 /** Units of each currency per 1 USD, from synced finanzas_settings (falls back to
@@ -362,48 +366,6 @@ async function readRates(db: Db, userId: string): Promise<Record<string, number>
     EUR: (r?.rate_eur_per_usd ?? 0) > 0 ? r.rate_eur_per_usd : DEFAULT_RATES_PER_USD.EUR,
     ARS: (r?.rate_ars_per_usd ?? 0) > 0 ? r.rate_ars_per_usd : DEFAULT_RATES_PER_USD.ARS,
   };
-}
-
-async function accountCurrency(db: Db, userId: string, id: string | null): Promise<string | null> {
-  if (!id) return null;
-  const rows = await db.select<{ currency: string }[]>(
-    "SELECT currency FROM accounts WHERE id = ? AND user_id = ? LIMIT 1",
-    [id, userId],
-  );
-  return rows[0]?.currency ?? null;
-}
-
-/**
- * Apply (sign = +1) or reverse (sign = -1) a transfer's effect on both accounts.
- * Money leaves `from` in its own currency and arrives at `to` converted to the
- * destination currency (no-op conversion when both share a currency).
- */
-async function applyTransferEffect(
-  db: Db,
-  userId: string,
-  t: AccountTransfer,
-  sign: 1 | -1,
-): Promise<void> {
-  const rates = await readRates(db, userId);
-  const fromCur = (await accountCurrency(db, userId, t.fromAccountId)) ?? t.currency;
-  const toCur = (await accountCurrency(db, userId, t.toAccountId)) ?? fromCur;
-  const converted = convertViaUsd(t.amount, fromCur, toCur, rates);
-  await adjustAccountBalance(db, userId, t.fromAccountId, sign * -t.amount);
-  await adjustAccountBalance(db, userId, t.toAccountId, sign * converted);
-}
-
-/** Convert `amount` (in `fromCur`) into the currency of account `accountId`, if any. */
-async function toAccountCurrency(
-  db: Db,
-  userId: string,
-  accountId: string | null,
-  amount: number,
-  fromCur: string,
-): Promise<number> {
-  const acctCur = await accountCurrency(db, userId, accountId);
-  if (!acctCur || acctCur === fromCur) return amount;
-  const rates = await readRates(db, userId);
-  return convertViaUsd(amount, fromCur, acctCur, rates);
 }
 
 /**
@@ -465,8 +427,7 @@ async function evaluateGoalPurchase(
 //
 // REGLA: `source_line_item_id` es una ETIQUETA DE PROCEDENCIA, no una clave de
 // proyección. Los deltas se aplican en el momento de escribir; los lotes nunca
-// se re-derivan a partir de las líneas. Misma forma que
-// `adjustAccountBalance`: leer lo viejo -> escribir -> aplicar el delta.
+// se re-derivan a partir de las líneas: leer lo viejo -> escribir -> aplicar el delta.
 //
 //   create  -> +base (un solo lote, no N)
 //   patch   -> delta = baseNuevo − baseViejo (leído de la DB, no de un cache)
@@ -511,8 +472,7 @@ async function lotExpiryFor(
 /** Re-fecha los lotes que salieron de las líneas de un gasto al que le cambiaron
  *  la fecha. El vencimiento se calcula UNA vez, al escribir la línea
  *  (`lotExpiryFor`), así que mover el gasto de día dejaba lotes venciendo desde
- *  la fecha vieja. Misma forma que `adjustAccountBalance`: leer de la DB ->
- *  escribir -> encolar.
+ *  la fecha vieja. Leer de la DB -> escribir -> encolar.
  *
  *  Sólo re-fecha: no toca cantidades (un lote a medio comer conserva lo que le
  *  queda) ni resucita lotes que el usuario ya consumió o borró. Un ingrediente
@@ -1187,21 +1147,8 @@ export const localRepo: Repo = {
     const ts = now();
     // Mismo criterio que `createTask` (ver ahí el porqué largo). Con id
     // explícito —instancias de gastos recurrentes— el create es idempotente: si
-    // el gasto ya existe vivo se devuelve TAL CUAL, sin volver a tocar el saldo
-    // de la cuenta ni re-evaluar la meta; si existe borrado, se revive.
-    //
-    // SALDO: el INSERT y el `adjustAccountBalance` de abajo NO son una
-    // transacción (el pool de tauri-plugin-sql no garantiza que dos `execute`
-    // caigan en la misma conexión, así que un BEGIN/COMMIT partido en dos
-    // llamadas sería mentira). Si el proceso muere entre los dos, la fila queda
-    // creada y el saldo corto — y este early-return hace que el reintento sea un
-    // no-op, así que la deriva NO se arregla sola acá. Quien la arregla es
-    // `reconcileAccountBalances()`, que recalcula el saldo desde el ledger y
-    // corre una vez por sesión (`useReconcileAccountBalances`, montado tanto en
-    // `App.tsx` como en `components/mobile/MobileApp.tsx`). Ese hook cubre las
-    // dos mitades del corte (fila sin efecto y efecto sin fila), porque no
-    // acumula deltas: recalcula el total. Por eso montarlo en el celular es
-    // parte de este fix y no un extra.
+    // el gasto ya existe vivo se devuelve TAL CUAL, sin re-evaluar la meta; si
+    // existe borrado, se revive.
     //
     // LÍNEAS Y LOTES: revivir la fila `expenses` NO revive sus
     // `expense_line_items` ni deshace la reversión de stock que hizo
@@ -1266,10 +1213,6 @@ export const localRepo: Repo = {
     // ⇒ `create` ("crear si no existe", nunca pisar) en vez de `insert` (que
     // rebotaría por PK) o `update` (que borraría la edición del usuario).
     await enqueue(userId, input.id ? "create" : "insert", "expenses", exp.id, expenseToWire(exp, userId));
-    // Auto-calc: an expense leaves the paying account, converted to the account's currency
-    // when it was entered in a different one (e.g. an EUR purchase against a DKK account).
-    const effect = await toAccountCurrency(db, userId, exp.accountId, exp.amount, exp.currency);
-    await adjustAccountBalance(db, userId, exp.accountId, -effect);
     if (exp.goalId) await evaluateGoalPurchase(db, userId, exp.goalId, exp.amount, exp.currency);
     return exp;
   },
@@ -1310,16 +1253,8 @@ export const localRepo: Repo = {
     if (updated.spentOn !== existing.spentOn) {
       await redateLotsForExpense(db, userId, id, updated.spentOn);
     }
-    // Auto-calc: reverse the old expense's effect, then apply the new one (each converted
-    // to its own account's currency).
-    const oldEffect = await toAccountCurrency(db, userId, existing.accountId, existing.amount, existing.currency);
-    await adjustAccountBalance(db, userId, existing.accountId, oldEffect);
-    if (!updated.deletedAt) {
-      const newEffect = await toAccountCurrency(db, userId, updated.accountId, updated.amount, updated.currency);
-      await adjustAccountBalance(db, userId, updated.accountId, -newEffect);
-      if (updated.goalId) {
-        await evaluateGoalPurchase(db, userId, updated.goalId, updated.amount, updated.currency);
-      }
+    if (!updated.deletedAt && updated.goalId) {
+      await evaluateGoalPurchase(db, userId, updated.goalId, updated.amount, updated.currency);
     }
     return updated;
   },
@@ -1328,11 +1263,6 @@ export const localRepo: Repo = {
     const userId = await requireUserId();
     const db = await getDb();
     const ts = now();
-    // Read first so we can reverse the balance effect of the expense being removed.
-    const rows = await db.select<DbExpenseRow[]>(
-      "SELECT * FROM expenses WHERE id = ? AND user_id = ? AND deleted_at IS NULL LIMIT 1",
-      [id, userId],
-    );
     // Cascade: the line items belong to the expense, so soft-delete them too —
     // one enqueue each, otherwise the server keeps orphaned rows alive and the
     // next pull resurrects them locally.
@@ -1356,11 +1286,6 @@ export const localRepo: Repo = {
       [ts, ts, id, userId],
     );
     await enqueue(userId, "delete", "expenses", id, null);
-    if (rows[0]) {
-      const old = fromDbExpense(rows[0]);
-      const effect = await toAccountCurrency(db, userId, old.accountId, old.amount, old.currency);
-      await adjustAccountBalance(db, userId, old.accountId, effect);
-    }
   },
 
   // ---------- expense_line_items ----------
@@ -1725,7 +1650,9 @@ export const localRepo: Repo = {
       "SELECT * FROM accounts WHERE user_id = ? AND deleted_at IS NULL ORDER BY position ASC, created_at ASC",
       [userId],
     );
-    return rows.map(fromDbAccount);
+    const accounts = rows.map(fromDbAccount);
+    const balances = await computeAccountBalances(db, userId, accounts);
+    return accounts.map((a) => ({ ...a, balance: balances.get(a.id) ?? a.openingBalance }));
   },
 
   async createAccount(input: AccountCreate) {
@@ -1827,65 +1754,6 @@ export const localRepo: Repo = {
     await enqueue(userId, "delete", "accounts", id, null);
   },
 
-  /** Self-healing safety net for the account-balance drift bug: `balance` is
-   *  maintained incrementally (adjustAccountBalance) across separate, non-
-   *  transactional writes, so a process kill mid-write can leave it out of
-   *  sync with the actual expense/income/transfer history. Recompute the
-   *  truth from openingBalance + the ledger since balanceAsOf and correct
-   *  any drift found. Mirrors the exact per-entity effect math already used
-   *  by adjustAccountBalance's call sites so it doesn't fight the live code. */
-  async reconcileAccountBalances() {
-    const userId = await requireUserId();
-    const db = await getDb();
-    const accounts = await this.listAccounts();
-    if (accounts.length === 0) return;
-    const currencyById = new Map(accounts.map((a) => [a.id, a.currency]));
-    const rates = await readRates(db, userId);
-
-    for (const acc of accounts) {
-      const floorDay = acc.balanceAsOf ?? "0000-00-00";
-      const floorMonth = floorDay.slice(0, 7);
-
-      const expenseRows = await db.select<{ amount: number; currency: string }[]>(
-        "SELECT amount, currency FROM expenses WHERE user_id = ? AND account_id = ? AND deleted_at IS NULL AND spent_on >= ?",
-        [userId, acc.id, floorDay],
-      );
-      const incomeRows = await db.select<{ amount: number }[]>(
-        "SELECT amount FROM incomes WHERE user_id = ? AND account_id = ? AND deleted_at IS NULL AND month >= ?",
-        [userId, acc.id, floorMonth],
-      );
-      const transfersOut = await db.select<{ amount: number }[]>(
-        "SELECT amount FROM account_transfers WHERE user_id = ? AND from_account_id = ? AND deleted_at IS NULL AND transferred_on >= ?",
-        [userId, acc.id, floorDay],
-      );
-      const transfersIn = await db.select<{ amount: number; currency: string; from_account_id: string | null }[]>(
-        "SELECT amount, currency, from_account_id FROM account_transfers WHERE user_id = ? AND to_account_id = ? AND deleted_at IS NULL AND transferred_on >= ?",
-        [userId, acc.id, floorDay],
-      );
-
-      let expected = acc.openingBalance;
-      for (const e of expenseRows) expected -= convertViaUsd(e.amount, e.currency, acc.currency, rates);
-      for (const i of incomeRows) expected += i.amount; // matches upsertIncome: not currency-converted today
-      for (const t of transfersOut) expected -= t.amount; // leaves in the from-account's own currency
-      for (const t of transfersIn) {
-        const fromCur = (t.from_account_id && currencyById.get(t.from_account_id)) || t.currency;
-        expected += convertViaUsd(t.amount, fromCur, acc.currency, rates);
-      }
-
-      if (Math.abs(expected - acc.balance) > 0.005) {
-        console.warn(
-          `Account balance drift corrected for ${acc.id}: ${acc.balance} -> ${expected}`,
-        );
-        const updated: Account = { ...acc, balance: expected, updatedAt: now(), version: acc.version + 1 };
-        await db.execute(
-          "UPDATE accounts SET balance = ?, updated_at = ?, version = ? WHERE id = ? AND user_id = ?",
-          [updated.balance, updated.updatedAt, updated.version, acc.id, userId],
-        );
-        await enqueue(userId, "update", "accounts", acc.id, accountToWire(updated, userId));
-      }
-    }
-  },
-
   // ---------- account_transfers ----------
   async listAccountTransfers() {
     const userId = await requireUserId();
@@ -1927,8 +1795,6 @@ export const localRepo: Repo = {
       ],
     );
     await enqueue(userId, "insert", "account_transfers", transfer.id, accountTransferToWire(transfer, userId));
-    // Auto-calc: money leaves `from` and arrives (converted) into `to`.
-    await applyTransferEffect(db, userId, transfer, 1);
     return transfer;
   },
 
@@ -1961,9 +1827,6 @@ export const localRepo: Repo = {
       ],
     );
     await enqueue(userId, "update", "account_transfers", id, accountTransferToWire(updated, userId));
-    // Auto-calc: reverse the old movement, then apply the new one.
-    await applyTransferEffect(db, userId, existing, -1);
-    if (!updated.deletedAt) await applyTransferEffect(db, userId, updated, 1);
     return updated;
   },
 
@@ -1971,19 +1834,11 @@ export const localRepo: Repo = {
     const userId = await requireUserId();
     const db = await getDb();
     const ts = now();
-    const rows = await db.select<DbAccountTransferRow[]>(
-      "SELECT * FROM account_transfers WHERE id = ? AND user_id = ? AND deleted_at IS NULL LIMIT 1",
-      [id, userId],
-    );
     await db.execute(
       "UPDATE account_transfers SET deleted_at = ?, updated_at = ?, version = version + 1 WHERE id = ? AND user_id = ?",
       [ts, ts, id, userId],
     );
     await enqueue(userId, "delete", "account_transfers", id, null);
-    if (rows[0]) {
-      const old = fromDbAccountTransfer(rows[0]);
-      await applyTransferEffect(db, userId, old, -1);
-    }
   },
 
   // ---------- incomes ----------
@@ -2029,9 +1884,6 @@ export const localRepo: Repo = {
         [updated.amount, updated.currency, updated.note, updated.updatedAt, updated.version, updated.id, userId],
       );
       await enqueue(userId, "update", "incomes", updated.id, incomeToWire(updated, userId));
-      // Auto-calc: reverse the prior income, then apply the new amount.
-      await adjustAccountBalance(db, userId, prev.accountId, -prev.amount);
-      await adjustAccountBalance(db, userId, updated.accountId, updated.amount);
       return updated;
     }
     const created: Income = {
@@ -2054,8 +1906,6 @@ export const localRepo: Repo = {
        created.createdAt, created.updatedAt, null, 1],
     );
     await enqueue(userId, "insert", "incomes", created.id, incomeToWire(created, userId));
-    // Auto-calc: income arrives into the receiving account.
-    await adjustAccountBalance(db, userId, created.accountId, created.amount);
     return created;
   },
 
@@ -2063,20 +1913,11 @@ export const localRepo: Repo = {
     const userId = await requireUserId();
     const db = await getDb();
     const ts = now();
-    const rows = await db.select<DbIncomeRow[]>(
-      "SELECT * FROM incomes WHERE id = ? AND user_id = ? AND deleted_at IS NULL LIMIT 1",
-      [id, userId],
-    );
     await db.execute(
       "UPDATE incomes SET deleted_at = ?, updated_at = ?, version = version + 1 WHERE id = ? AND user_id = ?",
       [ts, ts, id, userId],
     );
     await enqueue(userId, "delete", "incomes", id, null);
-    if (rows[0]) {
-      const old = fromDbIncome(rows[0]);
-      // Reverse the income that was applied to the receiving account.
-      await adjustAccountBalance(db, userId, old.accountId, -old.amount);
-    }
   },
 
   // ---------- habit_logs ----------
@@ -3069,6 +2910,41 @@ export const localRepo: Repo = {
       await enqueue(userId, "insert", "net_worth_snapshots", merged.id, netWorthSnapshotToWire(merged, userId));
     }
     return merged;
+  },
+
+  async recomputeNetWorthSnapshots(months) {
+    const userId = await requireUserId();
+    const db = await getDb();
+    const ONCE_KEY = "net_worth_snapshots_recomputed_v1";
+    if (!months) {
+      const done = await db.select<{ value: string | null }[]>("SELECT value FROM meta WHERE key = ?", [ONCE_KEY]);
+      if (done[0]?.value) return;
+    }
+    const snapshots = (await this.listNetWorthSnapshots()).filter((s) => !months || months.includes(s.month));
+    const accountRows = await db.select<DbAccountRow[]>(
+      "SELECT * FROM accounts WHERE user_id = ? AND deleted_at IS NULL AND archived = 0",
+      [userId],
+    );
+    const accounts = accountRows.map(fromDbAccount);
+    const rates = await readRates(db, userId);
+    for (const snap of snapshots) {
+      // "YYYY-MM-31" como tope: en comparacion de strings cubre cualquier dia del mes.
+      const monthEnd = `${snap.month}-31`;
+      // Si alguna cuenta se ancla despues del cierre, el ledger no sabe cuanto tenia
+      // ese mes: se deja el snapshot como se tomo.
+      if (accounts.some((a) => (a.balanceAsOf ?? "") > monthEnd)) continue;
+      const balances = await computeAccountBalances(db, userId, accounts, monthEnd);
+      const amount = accounts.reduce(
+        (s, a) => s + convertViaUsd(balances.get(a.id) ?? 0, a.currency, snap.currency, rates),
+        0,
+      );
+      if (Math.abs(amount - snap.amount) > 0.005) {
+        await this.upsertNetWorthSnapshot({ month: snap.month, amount, currency: snap.currency });
+      }
+    }
+    if (!months) {
+      await db.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", [ONCE_KEY, now()]);
+    }
   },
 
   async listEvents() {
